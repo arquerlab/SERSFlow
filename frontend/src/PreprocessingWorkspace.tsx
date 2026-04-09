@@ -25,42 +25,43 @@ export default function PreprocessingWorkspace() {
   }, []);
 
   return (
-    <div style={{ padding: 6 }}>
-      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <label style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-          Plot mode
-          <select value={mode} onChange={(e) => setMode(e.target.value as any)}>
-            <option value="overlay">Overlay</option>
-            <option value="stack">Stack</option>
-          </select>
-        </label>
-        <label style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-          Stack sep
-          <input type="number" value={sep} onChange={(e) => setSep(Number(e.target.value || 0))} />
-        </label>
-        <label style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-          <input type="checkbox" checked={ghost} onChange={(e) => setGhost(e.target.checked)} />
-          Ghost overlay
-        </label>
+    <div className="preprocess-grid">
+      <div className="preprocess-top card">
+        <div className="section-title">Plot controls</div>
+        <div className="row">
+          <label className="inline">
+            Plot mode
+            <select value={mode} onChange={(e) => setMode(e.target.value as any)}>
+              <option value="overlay">Overlay</option>
+              <option value="stack">Stack</option>
+            </select>
+          </label>
+          <label className="inline">
+            Stack separation
+            <input type="number" value={sep} onChange={(e) => setSep(Number(e.target.value || 0))} />
+          </label>
+          <label className="inline">
+            <input type="checkbox" checked={ghost} onChange={(e) => setGhost(e.target.checked)} />
+            Ghost overlay
+          </label>
+        </div>
       </div>
 
-      <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "360px 1fr", gap: 14, alignItems: "start" }}>
-        <div>
-          <h2 style={{ margin: "8px 0" }}>Uploads</h2>
-          <SpectrumCheckboxListWrapper onSelectionChange={setSelected} />
-          <div style={{ marginTop: 10, opacity: 0.8, fontSize: 13 }}>
-            Selected: {selected.length}
-          </div>
-        </div>
-        <div>
-          <h2 style={{ margin: "8px 0" }}>Plot</h2>
-          <PlotlyWrapper
-            figure={fig}
-            previousFigure={fig}
-            plotStyle={{ mode, stackSep: sep }}
-            ghostOverlayEnabled={ghost}
-          />
-        </div>
+      <div className="preprocess-left card">
+        <div className="section-title">Uploads</div>
+        <SpectrumCheckboxListWrapper onSelectionChange={setSelected} />
+        <div className="hint">Selected: {selected.length}</div>
+      </div>
+
+      <div className="preprocess-center card">
+        <div className="section-title">Plot</div>
+        <PlotlyWrapper
+          figure={fig}
+          previousFigure={fig}
+          plotStyle={{ mode, stackSep: sep }}
+          ghostOverlayEnabled={ghost}
+          className="plot"
+        />
       </div>
     </div>
   );

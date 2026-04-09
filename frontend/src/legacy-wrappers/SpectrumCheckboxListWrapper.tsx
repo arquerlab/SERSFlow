@@ -46,8 +46,8 @@ export function SpectrumCheckboxListWrapper({
 
   return (
     <div>
-      <div ref={metaRef} style={{ fontFamily: "ui-monospace, Consolas, monospace", fontSize: 12 }} />
-      <div style={{ maxHeight: 240, overflow: "auto", border: "1px solid #2e303a", borderRadius: 8, padding: 10 }}>
+      <div ref={metaRef} className="uploads-meta" />
+      <div className="scrollbox">
         <div ref={listRef} />
       </div>
     </div>

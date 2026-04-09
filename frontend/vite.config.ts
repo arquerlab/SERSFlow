@@ -19,7 +19,10 @@ export default defineConfig({
       "/metrics": "http://localhost:8000",
       "/io": "http://localhost:8000",
       "/plot": "http://localhost:8000",
-      "/static": "http://localhost:8000",
+      // Only proxy legacy static assets we still depend on at runtime.
+      // IMPORTANT: do NOT proxy `/static/preprocess-dist/` because Vite serves the React app at that base path in dev.
+      "/static/styles.css": "http://localhost:8000",
+      "/static/ui": "http://localhost:8000",
     },
   },
 });

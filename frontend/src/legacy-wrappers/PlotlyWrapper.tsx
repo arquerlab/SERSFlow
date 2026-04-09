@@ -65,6 +65,6 @@ export function PlotlyWrapper({
     Plotly.react(el, combined.data, combined.layout, { responsive: true });
   }, [combined]);
 
-  return <div ref={divRef} className={className} style={{ minHeight: 420 }} />;
+  return <div ref={divRef} className={className} />;
 }
 
