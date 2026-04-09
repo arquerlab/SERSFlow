@@ -1,0 +1,44 @@
+Metadata-Version: 2.4
+Name: sersflow
+Version: 0.1.0
+Summary: SERSFlow: loaders and API for SERS/Raman datasets
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi
+Requires-Dist: uvicorn[standard]
+Requires-Dist: python-multipart
+Requires-Dist: pandas
+Requires-Dist: numpy
+Requires-Dist: renishawWiRE
+
+# SERSFlow
+
+## Run the API
+
+Install dependencies:
+
+```bash
+pip install -e .
+```
+
+Start the server:
+
+```bash
+sersflow-api
+```
+
+Alternatively (less recommended), you can run:
+
+```bash
+python src/api/main.py
+```
+
+Health check:
+
+- `GET /health`
+
+Load a file (upload):
+
+- `POST /io/load` (multipart form field: `file`)
+  - Returns measurement kind, shapes, and small previews.
+

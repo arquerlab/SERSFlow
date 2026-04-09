@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SERSFlow • Preprocessing</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>SERSFlow</h1>
+        <div class="links">
+          <a href="/">Legacy UI</a>
+          <a href="/docs">Docs</a>
+          <a href="/openapi.json">OpenAPI</a>
+          <a href="/health">Health</a>
+        </div>
+      </header>
+
+      <div id="preprocess-root">
+        <div class="card">
+          <div class="section-title">Loading preprocessing workspace…</div>
+          <div class="hint">
+            If this stays blank, the page may be failing to load required JavaScript modules. An error box will appear
+            below if we can capture it.
+          </div>
+          <div id="preprocess-errors" class="err" style="margin-top: 12px"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Kept minimal; production preprocess assets are injected from Vite manifest by FastAPI.
+      // If preprocess-dist is missing, meta.py will serve this file as a fallback.
+      (function () {
+        const errEl = document.getElementById("preprocess-errors");
+        if (!errEl) return;
+        errEl.textContent = "preprocess-dist not built yet. Run: cd frontend && npm run build";
+      })();
+    </script>
+  </body>
+</html>
+

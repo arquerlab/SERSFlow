@@ -1,0 +1,58 @@
+# SERSFlow
+
+## Run the API
+
+Install dependencies:
+
+```bash
+pip install -e .
+```
+
+## Build the Preprocess (React) UI
+
+The Preprocess tab loads a Vite-built React bundle from:
+
+- `src/sersflow/api/web/preprocess-dist/`
+
+To build it:
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+This creates/updates:
+
+- `/static/preprocess-dist/.vite/manifest.json`
+- `/static/preprocess-dist/assets/index-*.js` (hashed)
+- `/static/preprocess-dist/assets/index-*.css` (hashed)
+
+Start the server:
+
+```bash
+sersflow-api
+```
+
+Alternatively (less recommended), you can run:
+
+```bash
+python src/api/main.py
+```
+
+Health check:
+
+- `GET /health`
+
+Upload file(s):
+
+- `POST /io/upload` (multipart form field(s): `files`)
+  - Saves files on disk for later plotting.
+
+## Debugging checklist (tabs + preprocess embed)
+
+- **Manifest reachable**: open `GET /static/preprocess-dist/.vite/manifest.json` (should be 200)
+- **Mount point exists**: the main page (`GET /`) contains `#preprocess-root` inside the Preprocess tab panel
+- **No console errors**: open browser devtools on `/` and confirm no failed module loads
+- **Tab switching**: uploads/raw tabs still work; Preprocess shows React UI when opened
+

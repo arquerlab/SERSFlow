@@ -1,0 +1,68 @@
+/* Embedded mode: keep preprocess visually consistent with the legacy dark UI.
+   Avoid global resets and avoid full-page layout assumptions. */
+.preprocess-scope {
+  font: inherit;
+  letter-spacing: normal;
+  color: inherit;
+  background: transparent;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  /* No-op: legacy app controls theme. */
+}
+
+.preprocess-scope #preprocess-root,
+.preprocess-scope #root {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  text-align: left;
+  border: 0;
+  min-height: 0;
+  display: block;
+  box-sizing: border-box;
+}
+
+.preprocess-scope body {
+  margin: 0;
+}
+
+.preprocess-scope h1,
+.preprocess-scope h2 {
+  font-family: inherit;
+  font-weight: 700;
+  color: inherit;
+}
+
+.preprocess-scope h1 {
+  font-size: 22px;
+  letter-spacing: 0;
+  margin: 0;
+}
+.preprocess-scope h2 {
+  font-size: 14px;
+  line-height: 1.2;
+  letter-spacing: 0;
+  margin: 0 0 8px;
+}
+.preprocess-scope p {
+  margin: 0;
+}
+
+.preprocess-scope code,
+.preprocess-scope .counter {
+  font-family: ui-monospace, Consolas, monospace;
+  display: inline-flex;
+  border-radius: 4px;
+  color: inherit;
+}
+
+.preprocess-scope code {
+  font-size: 15px;
+  line-height: 135%;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.18);
+}

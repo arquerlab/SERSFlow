@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SERSFlow</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>SERSFlow</h1>
+        <div class="links">
+          <a href="/docs">Docs</a>
+          <a href="/openapi.json">OpenAPI</a>
+          <a href="/health">Health</a>
+        </div>
+      </header>
+
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-tab="uploads" type="button">Uploads</button>
+        <button class="tab" data-tab="raw" type="button">Raw visualization</button>
+        <button class="tab" data-tab="preprocess" type="button" title="Open preprocessing workspace">Preprocess</button>
+      </nav>
+
+      <section class="panel active" id="tab-uploads">
+        <div class="card">
+          <div class="section-title">Upload files</div>
+          <div id="drop" class="drop">
+            <div class="row">
+              <input id="files" type="file" accept=".txt,.wdf" multiple />
+              <button id="uploadBtn" type="button">Upload</button>
+              <button id="refreshBtn" type="button">Refresh list</button>
+            </div>
+            <div class="hint">
+              Drag & drop <b>multiple</b> <b>.txt</b> / <b>.wdf</b> files here, or use the file picker. Files are stored on the server; no parsing is performed.
+            </div>
+            <div class="status" id="status"></div>
+            <ul class="files" id="fileList"></ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-title">Uploaded files (server)</div>
+          <div class="uploads-toolbar">
+            <button id="selectAllBtn" type="button">Select all</button>
+            <button id="selectNoneBtn" type="button">Select none</button>
+            <button id="unloadBtn" class="danger" type="button">Unload selected</button>
+            <button id="unloadAllBtn" class="danger" type="button">Unload all</button>
+            <div class="uploads-meta" id="uploadsMeta"></div>
+          </div>
+          <div class="scrollbox">
+            <div id="uploadedList"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="tab-raw">
+        <div class="card">
+          <div class="section-title">Raw visualization</div>
+          <div class="row">
+            <button id="rawRefreshBtn" type="button">Refresh uploads</button>
+            <button id="plotSpectrumBtn" type="button">Plot spectrum</button>
+            <button id="plotSeriesHeatmapBtn" type="button">Series heatmap</button>
+            <label class="inline">
+              Plot mode
+              <select id="plotMode">
+                <option value="overlay" selected>Overlay</option>
+                <option value="stack">Stack</option>
+              </select>
+            </label>
+            <label class="inline">
+              Stack separation
+              <input id="stackSep" type="number" value="1000" />
+            </label>
+          </div>
+          <div class="hint">
+            Select files in the left column, then choose a plotting action.
+          </div>
+          <div class="raw-layout">
+            <aside class="raw-left">
+              <div class="raw-selectors card-inner">
+                <div class="row raw-selectors-head">
+                  <div class="section-title" style="margin: 0">Files to plot</div>
+                  <button id="addPlotFileBtn" class="mini" type="button" title="Add file selector">+</button>
+                </div>
+                <div id="plotFileSelectors" class="selectors"></div>
+              </div>
+            </aside>
+            <main class="raw-right">
+              <div class="raw-plot card-inner">
+                <div class="section-title">Plot</div>
+                <div id="plot" class="plot"></div>
+              </div>
+            </main>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="tab-preprocess">
+        <div class="card">
+          <div class="section-title">Preprocess</div>
+          <div class="preprocess-scope">
+            <div id="preprocess-root"></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="card">
+        <div class="section-title">Errors</div>
+        <div style="height: 10px"></div>
+        <div id="error" class="err" style="display:none"></div>
+      </div>
+    </div>
+
+    <script type="module" src="/static/app.js"></script>
+    <script type="module">
+      // Load the Vite-built preprocess bundle (hashed filenames) into the legacy tabbed UI.
+      // Uses the Vite manifest produced at build time.
+      async function loadPreprocessBundle() {
+        const root = document.getElementById("preprocess-root");
+        if (!root) return;
+
+        const res = await fetch("/static/preprocess-dist/.vite/manifest.json", { cache: "no-cache" });
+        if (!res.ok) {
+          root.textContent = "Preprocess UI not available. Build the frontend first.";
+          return;
+        }
+        const manifest = await res.json();
+        const entry = manifest["index.html"];
+        if (!entry || !entry.file) {
+          root.textContent = "Preprocess UI manifest is invalid.";
+          return;
+        }
+
+        for (const href of entry.css || []) {
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = `/static/preprocess-dist/${href}`;
+          document.head.appendChild(link);
+        }
+
+        const script = document.createElement("script");
+        script.type = "module";
+        script.src = `/static/preprocess-dist/${entry.file}`;
+        document.body.appendChild(script);
+      }
+
+      loadPreprocessBundle().catch((e) => {
+        console.error(e);
+        const root = document.getElementById("preprocess-root");
+        if (root) root.textContent = "Failed to load Preprocess UI. See console for details.";
+      });
+    </script>
+  </body>
+</html>
+

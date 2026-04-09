@@ -1,0 +1,2 @@
+[console_scripts]
+sersflow-api = src.api.main:run
