@@ -1,5 +1,12 @@
 import { fetchJson, fetchText } from "./api.js";
 
+/** Size in mebibytes (1024²), fixed 3 decimals, suffixed with " MB". */
+export function formatFileSizeMb(bytes) {
+  const mb = (Number(bytes) || 0) / (1024 * 1024);
+  if (!Number.isFinite(mb) || mb <= 0) return "0.000 MB";
+  return `${mb.toFixed(3)} MB`;
+}
+
 export function createUploadsModel() {
   let uploadedItems = [];
   let selected = new Set();
@@ -68,10 +75,13 @@ export function createUploadsController({ uploadedListEl, uploadsMetaEl }) {
       });
 
       const label = document.createElement("label");
-      label.textContent = `${item.saved_at} | ${item.filename} (${Number(item.size_bytes || 0).toLocaleString()} bytes)`;
+      const sizeStr = formatFileSizeMb(item.size_bytes);
+      label.textContent = `${item.filename} (${sizeStr})`;
+      label.title = `${item.filename} — ${sizeStr}`;
       label.addEventListener("click", () => {
         cb.checked = !cb.checked;
-        cb.dispatchEvent(new Event("change"));
+        // Ensure the change event reaches any parent listeners (React wrapper listens on the container).
+        cb.dispatchEvent(new Event("change", { bubbles: true }));
       });
 
       row.appendChild(cb);

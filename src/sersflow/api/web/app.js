@@ -1,5 +1,5 @@
 import { $ } from "./ui/dom.js";
-import { createUploadsController } from "./ui/uploads.js";
+import { createUploadsController, formatFileSizeMb } from "./ui/uploads.js";
 import { fetchFigure, getSelectedPaths, plotFromEndpoint } from "./ui/plot.js";
 import { buildFileOptionsHtml, createMapUi, createSeriesUi } from "./ui/plot_selectors.js";
 
@@ -43,7 +43,8 @@ function listSelectedFiles(files) {
   if (!files || files.length === 0) return;
   for (const f of files) {
     const li = document.createElement("li");
-    li.textContent = `${f.name} (${f.size.toLocaleString()} bytes)`;
+    li.textContent = `${f.name} (${formatFileSizeMb(f.size)})`;
+    li.title = `${f.name} — ${formatFileSizeMb(f.size)}`;
     fileList.appendChild(li);
   }
 }
@@ -136,7 +137,7 @@ async function upload(files) {
   const fd = new FormData();
   for (const f of files) fd.append("files", f, f.name);
   const totalBytes = Array.from(files).reduce((acc, f) => acc + (f.size || 0), 0);
-  setStatus(`Uploading ${files.length} file(s) (${totalBytes.toLocaleString()} bytes)...`);
+  setStatus(`Uploading ${files.length} file(s) (${formatFileSizeMb(totalBytes)})...`);
   const res = await fetch(`/io/upload`, { method: "POST", body: fd });
   const text = await res.text();
   if (!res.ok) {

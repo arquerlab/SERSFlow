@@ -19,6 +19,12 @@ from sersflow.core.io.upload_registry import (
 
 router = APIRouter(prefix="/io", tags=["io"])
 
+def _format_mib_3(bytes_count: int | float) -> str:
+    mb = (float(bytes_count) if bytes_count else 0.0) / (1024.0 * 1024.0)
+    if not (mb > 0.0):
+        return "0.000 MB"
+    return f"{mb:.3f} MB"
+
 
 @router.post("/upload")
 async def upload_files(files: list[UploadFile] = File(...)) -> Response:
@@ -61,7 +67,7 @@ async def upload_files(files: list[UploadFile] = File(...)) -> Response:
 
     append_upload_registry(root_dir, registry_items)
     return Response(
-        content=f"Uploaded {saved} file(s) to batch {batch_id} ({total_bytes} bytes).",
+        content=f"Uploaded {saved} file(s) to batch {batch_id} ({_format_mib_3(total_bytes)}).",
         media_type="text/plain",
     )
 

@@ -26,3 +26,28 @@
   box-sizing: border-box;
 }
 
+/*
+ * Preprocess sidebar must never use `position: sticky` (unlike `.raw-left`).
+ * This file ships in the Vite CSS bundle, which loads after `/static/styles.css`
+ * on `/preprocess` and in the embedded tab, so these rules win in the cascade.
+ */
+.preprocess-grid > .preprocess-left {
+  position: static !important;
+  top: auto !important;
+  bottom: auto !important;
+}
+
+/* Keep the upload list contained: scroll inside the dark box. */
+.preprocess-grid > .preprocess-left .scrollbox {
+  /* `styles.css` defines the dark box. Here we ensure long lists/names don't overflow the card. */
+  max-height: min(40vh, 320px) !important;
+  overflow: auto !important;
+}
+
+.preprocess-grid > .preprocess-left.card {
+  min-height: 0;
+  max-height: min(85vh, 960px);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+

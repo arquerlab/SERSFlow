@@ -16,7 +16,8 @@ from sersflow.api.services.datasets_service import create_dataset_from_uploads
 from sersflow.core.metrics.compute import compute_metrics
 from sersflow.core.pipeline.cache import InProcessLRUCache
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
-from sersflow.infra.datasets_store import get_dataset, list_datasets, to_schema
+from sersflow.infra.datasets_store import delete_all_datasets, delete_dataset, get_dataset, list_datasets, to_schema
+from sersflow.infra.sessions_store import delete_all_sessions, delete_sessions_for_dataset
 
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -49,6 +50,23 @@ def get_dataset_endpoint(dataset_id: str) -> dict[str, Any]:
     if rec is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
     return {"dataset": to_schema(rec)}
+
+
+@router.delete("/{dataset_id}")
+def delete_dataset_endpoint(dataset_id: str) -> dict[str, Any]:
+    deleted = delete_dataset(dataset_id)
+    # sessions table has no FK, so cleanup explicitly
+    sessions_deleted = delete_sessions_for_dataset(dataset_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return {"deleted": True, "sessions_deleted": sessions_deleted}
+
+
+@router.delete("")
+def clear_all_datasets_endpoint() -> dict[str, Any]:
+    sessions_deleted = delete_all_sessions()
+    datasets_deleted = delete_all_datasets()
+    return {"deleted": True, "datasets_deleted": datasets_deleted, "sessions_deleted": sessions_deleted}
 
 
 @router.post("/{dataset_id}/metrics", response_model=DatasetMetricsResponse)

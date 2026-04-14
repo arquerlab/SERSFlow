@@ -2,16 +2,12 @@ import numpy as np
 from pybaselines import Baseline
 
 
-# Initialize pybaselines object for baseline correction
-_baseline_fitter = Baseline()
-
-
-def correct_baseline(intensity: np.ndarray, method: str = 'derpsalsa', **kwargs) -> tuple[np.ndarray, dict]:
+def correct_baseline(int: np.ndarray, method: str = 'derpsalsa', **kwargs) -> tuple[np.ndarray, dict]:
     """
     Apply baseline correction to a spectrum.
     
     Args:
-        intensity: Array of intensity values
+        int: Array of intensity values
         method: Baseline correction method. Options:
             'derpsalsa' - Derivative Peak-Screening Asymmetric Least Squares (default)
             'asls' - Asymmetric Least Squares
@@ -26,33 +22,36 @@ def correct_baseline(intensity: np.ndarray, method: str = 'derpsalsa', **kwargs)
             For 'snip': max_half_window, default: max_half_window=40
     
     Returns:
-        corrected_intensity: Baseline-corrected intensity
+        corrected_int: Baseline-corrected intensity
         params: Dictionary with baseline and other parameters returned by the method
     """
+    # New Baseline() per call: pybaselines stores input length on the instance; a shared
+    # singleton breaks when spectrum length changes (e.g. crop reorder vs full length).
+    fitter = Baseline()
     if method == 'derpsalsa':
         lam = kwargs.get('lam', 10**5.5)
         p = kwargs.get('p', 0.001)
-        baseline, params = _baseline_fitter.derpsalsa(intensity, lam=lam, p=p)
+        baseline, params = fitter.derpsalsa(int, lam=lam, p=p)
     elif method == 'asls':
         lam = kwargs.get('lam', 10**6)
         p = kwargs.get('p', 0.01)
-        baseline, params = _baseline_fitter.asls(intensity, lam=lam, p=p)
+        baseline, params = fitter.asls(int, lam=lam, p=p)
     elif method == 'arpls':
         lam = kwargs.get('lam', 10**5)
-        baseline, params = _baseline_fitter.arpls(intensity, lam=lam)
+        baseline, params = fitter.arpls(int, lam=lam)
     elif method == 'mor':
         half_window = kwargs.get('half_window', 30)
-        baseline, params = _baseline_fitter.mor(intensity, half_window=half_window)
+        baseline, params = fitter.mor(int, half_window=half_window)
     elif method == 'mormol':
         half_window = kwargs.get('half_window', 30)
-        baseline, params = _baseline_fitter.mormol(intensity, half_window=half_window)
+        baseline, params = fitter.mormol(int, half_window=half_window)
     elif method == 'snip':
         max_half_window = kwargs.get('max_half_window', 40)
-        baseline, params = _baseline_fitter.snip(intensity, max_half_window=max_half_window)
+        baseline, params = fitter.snip(int, max_half_window=max_half_window)
     else:
         raise ValueError(f"Unknown baseline correction method: {method}")
     
-    corrected_intensity = intensity - baseline
+    corrected_int = int - baseline
     params['baseline'] = baseline
     
-    return corrected_intensity, params
+    return corrected_int, params

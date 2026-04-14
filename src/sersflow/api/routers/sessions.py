@@ -21,7 +21,12 @@ from sersflow.api.schemas.sessions import (
 from sersflow.api.services.sessions_service import pipeline_hash, resolve_subset_indices, subset_hash
 from sersflow.core.metrics.compute import compute_metrics
 from sersflow.core.pipeline.cache import InProcessLRUCache
-from sersflow.core.pipeline.engine import EngineConfig, run_pipeline, run_pipeline_with_intermediates
+from sersflow.core.pipeline.engine import (
+    EngineConfig,
+    run_pipeline,
+    run_pipeline_parallel_no_cache,
+    run_pipeline_with_intermediates,
+)
 from sersflow.infra.datasets_store import get_dataset
 from sersflow.infra.sessions_store import (
     create_session,
@@ -130,7 +135,20 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest) -> dict[st
         return {"items": items}
 
     retm = cast(SessionRunReturnMetricsOnly, payload.return_)
-    final = run_pipeline(inputs=refs, pipeline=rec.pipeline, cache=_cache, config=cfg, up_to_step=payload.up_to_step)
+    # Batch performance: for full-dataset metrics runs, parallelize without shared cache.
+    # Cache is in-process only and not shared across processes.
+    if payload.scope == "all":
+        inputs = [
+            {"spectrum_id": r.spectrum_id, "relative_path": r.relative_path, "record_index": r.record_index}
+            for r in refs
+        ]
+        steps = [
+            {"name": s.name, "params": s.params, "enabled": s.enabled, "impl_version": s.impl_version}
+            for s in rec.pipeline.steps
+        ]
+        final = run_pipeline_parallel_no_cache(inputs=inputs, pipeline_steps=steps, config=cfg, up_to_step=payload.up_to_step)
+    else:
+        final = run_pipeline(inputs=refs, pipeline=rec.pipeline, cache=_cache, config=cfg, up_to_step=payload.up_to_step)
     items = []
     for sid, xy in final.items():
         ms = compute_metrics(xy, retm.metrics)

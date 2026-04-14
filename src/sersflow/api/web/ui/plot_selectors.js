@@ -1,13 +1,17 @@
 import { escapeHtml } from "./dom.js";
+import { formatFileSizeMb } from "./uploads.js";
 
 export function buildFileOptionsHtml(uploadedItems, selectedValue) {
   const opts = [];
   opts.push(`<option value="">Select a file…</option>`);
   for (const item of uploadedItems) {
     const val = item.relative_path;
-    const label = `${item.filename} (${val})`;
+    const sizeStr = formatFileSizeMb(item.size_bytes);
+    const label = `${item.filename} (${sizeStr})`;
     const sel = val === selectedValue ? " selected" : "";
-    opts.push(`<option value="${escapeHtml(val)}"${sel}>${escapeHtml(label)}</option>`);
+    opts.push(
+      `<option value="${escapeHtml(val)}"${sel} title="${escapeHtml(val)}">${escapeHtml(label)}</option>`
+    );
   }
   return opts.join("");
 }

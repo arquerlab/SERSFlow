@@ -62,7 +62,12 @@ export function PlotlyWrapper({
       Plotly.purge(el);
       return;
     }
-    Plotly.react(el, combined.data, combined.layout, { responsive: true });
+    Plotly.react(el, combined.data, combined.layout, {
+      responsive: true,
+      // Let the page/body receive wheel scroll unless the user deliberately zooms (e.g. pinch).
+      // Prevents the plot from “eating” scroll, which makes the sidebar feel fixed.
+      scrollZoom: false,
+    });
   }, [combined]);
 
   return <div ref={divRef} className={className} />;

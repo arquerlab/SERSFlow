@@ -2,14 +2,14 @@ import numpy as np
 from scipy.signal import savgol_filter
 
 
-def apply_savitzky_golay(intensity: np.ndarray, window_length: int = 11, 
+def apply_savitzky_golay(int: np.ndarray, window_length: int = 11, 
                          polyorder: int = 3, deriv: int = 0, 
                          delta: float = 1.0, mode: str = 'interp') -> np.ndarray:
     """
     Apply Savitzky-Golay filter to smooth a spectrum.
     
     Args:
-        intensity: 1D array of intensity values
+        int: 1D array of intensity values
         window_length: The length of the filter window (must be odd and positive).
                       Should be less than or equal to the size of the input array.
                       Typical values: 5, 7, 9, 11, 13, 15, 21, 25, 31
@@ -33,7 +33,7 @@ def apply_savitzky_golay(intensity: np.ndarray, window_length: int = 11,
         - Larger window_length = more smoothing but may blur sharp peaks
         - Higher polyorder = preserves more features but less noise reduction
     """
-    n = len(intensity)
+    n = len(int)
     
     # Validate parameters
     if window_length < 3:
@@ -48,7 +48,7 @@ def apply_savitzky_golay(intensity: np.ndarray, window_length: int = 11,
         raise ValueError(f"polyorder must be >= 0, got {polyorder}")
     
     # Apply Savitzky-Golay filter
-    filtered = savgol_filter(intensity, window_length=window_length, 
+    filtered = savgol_filter(int, window_length=window_length, 
                             polyorder=polyorder, deriv=deriv, 
                             delta=delta, mode=mode)
     

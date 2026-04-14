@@ -9,6 +9,7 @@ from sersflow.api.routers.io import router as io_router
 from sersflow.api.routers.meta import router as meta_router
 from sersflow.api.routers.metrics import router as metrics_router
 from sersflow.api.routers.pipeline import router as pipeline_router
+from sersflow.api.routers.pipelines import router as pipelines_library_router
 from sersflow.api.routers.plot import router as plot_router
 from sersflow.api.routers.sessions import router as sessions_router
 
@@ -20,6 +21,7 @@ app.include_router(io_router)
 app.include_router(plot_router)
 app.include_router(datasets_router)
 app.include_router(pipeline_router)
+app.include_router(pipelines_library_router)
 app.include_router(metrics_router)
 app.include_router(sessions_router)
 

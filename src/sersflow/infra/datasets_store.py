@@ -149,3 +149,30 @@ def list_datasets(*, limit: int = 50, offset: int = 0) -> list[DatasetListItem]:
 def to_schema(record: DatasetRecord) -> Dataset:
     return Dataset(dataset_id=record.dataset_id, spectra=record.spectra, metadata=record.metadata)
 
+
+def delete_dataset(dataset_id: str) -> bool:
+    """
+    Delete a dataset and its spectra rows.
+
+    Notes:
+    - `dataset_spectra` rows are removed via ON DELETE CASCADE.
+    - Sessions referencing this dataset are cleaned up separately (sessions table has no FK).
+    """
+    ensure_schema()
+    with connect() as con:
+        cur = con.execute("DELETE FROM datasets WHERE dataset_id = ?", (dataset_id,))
+        return int(cur.rowcount or 0) > 0
+
+
+def delete_all_datasets() -> int:
+    """
+    Delete all datasets.
+
+    Returns:
+        Number of dataset rows deleted.
+    """
+    ensure_schema()
+    with connect() as con:
+        cur = con.execute("DELETE FROM datasets")
+        return int(cur.rowcount or 0)
+

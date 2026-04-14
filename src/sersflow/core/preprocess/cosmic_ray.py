@@ -3,7 +3,7 @@ from scipy.signal import medfilt
 from scipy.ndimage import median_filter
 
 
-def detect_cosmic_rays_zscore(intensity, threshold=5.0, window=5):
+def detect_cosmic_rays_zscore(int, threshold=5.0, window=5):
     """
     Detect cosmic rays using modified Z-score method.
     
@@ -12,21 +12,21 @@ def detect_cosmic_rays_zscore(intensity, threshold=5.0, window=5):
     are flagged as cosmic rays.
     
     Args:
-        intensity: 1D array of intensity values
+        int: 1D array of intensity values
         threshold: Modified Z-score threshold (default: 5.0, higher = less sensitive)
         window: Window size for local statistics (default: 5)
         
     Returns:
         mask: Boolean array where True indicates a cosmic ray spike
     """
-    n = len(intensity)
+    n = len(int)
     mask = np.zeros(n, dtype=bool)
     
     # Use median filter to estimate the true signal without spikes
-    filtered = medfilt(intensity, kernel_size=window)
+    filtered = medfilt(int, kernel_size=window)
     
     # Calculate residuals
-    residuals = intensity - filtered
+    residuals = int - filtered
     
     # Modified Z-score using Median Absolute Deviation (MAD)
     # MAD is robust to outliers unlike standard deviation
@@ -52,7 +52,7 @@ def detect_cosmic_rays_zscore(intensity, threshold=5.0, window=5):
     return mask
 
 
-def detect_cosmic_rays_derivative(intensity, threshold=3.0, window=3):
+def detect_cosmic_rays_derivative(int, threshold=3.0, window=3):
     """
     Detect cosmic rays using first derivative method.
     
@@ -60,18 +60,18 @@ def detect_cosmic_rays_derivative(intensity, threshold=3.0, window=3):
     points where the derivative changes abruptly.
     
     Args:
-        intensity: 1D array of intensity values
+        int: 1D array of intensity values
         threshold: Threshold in units of MAD (default: 3.0)
         window: Window size for smoothing derivative (default: 3)
         
     Returns:
         mask: Boolean array where True indicates a cosmic ray spike
     """
-    n = len(intensity)
+    n = len(int)
     mask = np.zeros(n, dtype=bool)
     
     # Calculate first derivative
-    derivative = np.gradient(intensity)
+    derivative = np.gradient(int)
     
     # Smooth derivative
     if window > 1:
@@ -99,7 +99,7 @@ def detect_cosmic_rays_derivative(intensity, threshold=3.0, window=3):
     return mask
 
 
-def remove_cosmic_rays(intensity, method='zscore', threshold=5.0, window=5, 
+def remove_cosmic_rays(int, method='zscore', threshold=5.0, window=5, 
                        interpolation='median', max_width=10, min_intensity_ratio=2.0,
                        n_iterations=3):
     """
@@ -109,7 +109,7 @@ def remove_cosmic_rays(intensity, method='zscore', threshold=5.0, window=5,
     spikes that might be missed on the first pass or artifacts from previous corrections.
     
     Args:
-        intensity: 1D array of intensity values
+        int: 1D array of intensity values
         method: Detection method ('zscore' or 'derivative')
         threshold: Detection threshold (higher = less sensitive)
         window: Window size for detection algorithm
@@ -124,8 +124,8 @@ def remove_cosmic_rays(intensity, method='zscore', threshold=5.0, window=5,
         mask: Boolean array indicating which points were cosmic rays (combined from all iterations)
         n_spikes: Total number of cosmic ray events detected across all iterations
     """
-    n = len(intensity)
-    corrected = intensity.copy()
+    n = len(int)
+    corrected = int.copy()
     combined_mask = np.zeros(n, dtype=bool)
     total_spikes = 0
     
@@ -290,7 +290,7 @@ def remove_cosmic_rays_batch(spectra_list, method='zscore', threshold=5.0, windo
     total_spikes = 0
     spectra_with_spikes = 0
     
-    for i, intensity in enumerate(spectra_list):
+    for i, int in enumerate(spectra_list):
         corrected, mask, n_spikes = remove_cosmic_rays(
             intensity, method=method, threshold=threshold, window=window,
             interpolation=interpolation, max_width=max_width, min_intensity_ratio=min_intensity_ratio,

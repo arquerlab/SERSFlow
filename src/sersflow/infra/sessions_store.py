@@ -142,3 +142,17 @@ def to_schema(rec: SessionRecord) -> Session:
         updated_at=rec.updated_at,
     )
 
+
+def delete_sessions_for_dataset(dataset_id: str) -> int:
+    ensure_schema()
+    with connect() as con:
+        cur = con.execute("DELETE FROM sessions WHERE dataset_id = ?", (dataset_id,))
+        return int(cur.rowcount or 0)
+
+
+def delete_all_sessions() -> int:
+    ensure_schema()
+    with connect() as con:
+        cur = con.execute("DELETE FROM sessions")
+        return int(cur.rowcount or 0)
+

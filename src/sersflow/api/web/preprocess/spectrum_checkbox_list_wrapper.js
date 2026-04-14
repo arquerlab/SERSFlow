@@ -1,5 +1,5 @@
 import React from "https://esm.sh/react@18.3.1";
-import { createUploadsModel } from "/static/ui/uploads.js";
+import { createUploadsModel, formatFileSizeMb } from "/static/ui/uploads.js";
 
 export function SpectrumCheckboxListWrapper({ onSelectionChange }) {
   const metaRef = React.useRef(null);
@@ -106,6 +106,7 @@ export function SpectrumCheckboxListWrapper({ onSelectionChange }) {
             React.createElement(
               "label",
               {
+                title: `${it.filename} — ${formatFileSizeMb(it.size_bytes)}`,
                 onClick: () => {
                   const mm = modelRef.current;
                   if (!mm) return;
@@ -113,7 +114,7 @@ export function SpectrumCheckboxListWrapper({ onSelectionChange }) {
                   emitSelection();
                 },
               },
-              `${it.saved_at} | ${it.filename} (${Number(it.size_bytes || 0).toLocaleString()} bytes)`
+              `${it.filename} (${formatFileSizeMb(it.size_bytes)})`
             )
           );
         })
