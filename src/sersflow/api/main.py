@@ -12,6 +12,9 @@ from sersflow.api.routers.pipeline import router as pipeline_router
 from sersflow.api.routers.pipelines import router as pipelines_library_router
 from sersflow.api.routers.plot import router as plot_router
 from sersflow.api.routers.sessions import router as sessions_router
+from sersflow.api.routers.fitting import router as fitting_router
+from sersflow.api.routers.analysis import router as analysis_router
+from sersflow.api.routers.explore import router as explore_router
 
 
 app = FastAPI(title="SERSFlow API", version="0.1.0")
@@ -24,6 +27,9 @@ app.include_router(pipeline_router)
 app.include_router(pipelines_library_router)
 app.include_router(metrics_router)
 app.include_router(sessions_router)
+app.include_router(fitting_router)
+app.include_router(analysis_router)
+app.include_router(explore_router)
 
 
 def run() -> None:

@@ -49,6 +49,23 @@ Upload file(s):
 - `POST /io/upload` (multipart form field(s): `files`)
   - Saves files on disk for later plotting.
 
+## Python HTTP client
+
+Optional ergonomics wrapper around this API (`httpx`):
+
+```bash
+pip install -e ".[client]"
+```
+
+```python
+from sersflow.client import SersflowClient
+
+with SersflowClient("http://127.0.0.1:8000") as client:
+    client.meta.health()
+```
+
+See `examples/python_client_quickstart.py` for upload → dataset → session → analysis.
+
 ## Debugging checklist (tabs + preprocess embed)
 
 - **Manifest reachable**: open `GET /static/preprocess-dist/.vite/manifest.json` (should be 200)

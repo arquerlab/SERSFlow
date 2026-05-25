@@ -26,6 +26,8 @@ import { useAppStore } from "./preprocess/store.js";
 import { PlotlyWrapper } from "./preprocess/plotly_wrapper.js";
 import { SpectrumCheckboxListWrapper } from "./preprocess/spectrum_checkbox_list_wrapper.js";
 
+const RAMAN_SHIFT_AXIS_TITLE = "Raman Shift (cm⁻¹)";
+
 function Panel({ title, children }) {
   return React.createElement(
     "div",
@@ -238,7 +240,7 @@ function PreprocessingWorkspace() {
       return {
         data: traces,
         layout: {
-          xaxis: { title: { text: "Raman Shift (cm$^{-1}$)" }, showline: true, mirror: true, showgrid: false, ticks: "outside" },
+          xaxis: { title: { text: RAMAN_SHIFT_AXIS_TITLE }, showline: true, mirror: true, showgrid: false, ticks: "outside" },
           yaxis: { title: { text: "Intensity (counts)" }, showline: true, mirror: true, showgrid: false, ticks: "outside" },
           legend: { orientation: "h", yanchor: "top", y: -0.25, xanchor: "center", x: 0.5 },
           margin: { l: 60, r: 20, t: 20, b: 95 },
@@ -263,7 +265,7 @@ function PreprocessingWorkspace() {
     return {
       data: traces,
       layout: {
-        xaxis: { title: { text: "Raman Shift (cm$^{-1}$)" }, showline: true, mirror: true, showgrid: false, ticks: "outside" },
+        xaxis: { title: { text: RAMAN_SHIFT_AXIS_TITLE }, showline: true, mirror: true, showgrid: false, ticks: "outside" },
         yaxis: { title: { text: "Intensity (counts)" }, showline: true, mirror: true, showgrid: false, ticks: "outside" },
         legend: { orientation: "h", yanchor: "top", y: -0.25, xanchor: "center", x: 0.5 },
         margin: { l: 60, r: 20, t: 20, b: 95 },
@@ -409,6 +411,11 @@ function PreprocessingWorkspace() {
     const templates = {
       cosmic_ray_removal: { name: "cosmic_ray_removal", enabled: true, params: { z_threshold: 6.0 } },
       crop: { name: "crop", enabled: true, params: { min_x: 400, max_x: 2000 } },
+      align_resample: {
+        name: "align_resample",
+        enabled: true,
+        params: { min_x: 400, max_x: 2000, grid_mode: "step", step: 1.0, n_points: 512, interp: "linear" },
+      },
       normalization: { name: "normalization", enabled: true, params: { method: "vector" } },
       baseline_subtraction: { name: "baseline_subtraction", enabled: true, params: { method: "als", lam: 1e5, p: 0.01 } },
     };
@@ -598,6 +605,16 @@ function PreprocessingWorkspace() {
             { className: "row" },
             React.createElement("button", { type: "button", className: "mini", onClick: () => addStepTemplate("cosmic_ray_removal") }, "+ cosmic"),
             React.createElement("button", { type: "button", className: "mini", onClick: () => addStepTemplate("crop") }, "+ crop"),
+            React.createElement(
+              "button",
+              {
+                type: "button",
+                className: "mini",
+                onClick: () => addStepTemplate("align_resample"),
+                title: "Resample onto a uniform Raman shift grid (use after crop for matrix export / spectrum PCA)",
+              },
+              "+ resample"
+            ),
             React.createElement("button", { type: "button", className: "mini", onClick: () => addStepTemplate("normalization") }, "+ norm"),
             React.createElement("button", { type: "button", className: "mini", onClick: () => addStepTemplate("baseline_subtraction") }, "+ baseline")
           ),

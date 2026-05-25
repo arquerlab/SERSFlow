@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.api.schemas.sessions import (
     SessionCreateRequest,
     SessionCreateResponse,
     SessionGetResponse,
+    SessionListItem,
+    SessionListResponse,
     SessionPipelineUpdateRequest,
     SessionPipelineUpdateResponse,
     SessionRunRequest,
@@ -31,14 +33,37 @@ from sersflow.infra.datasets_store import get_dataset
 from sersflow.infra.sessions_store import (
     create_session,
     get_session,
+    list_sessions_for_dataset,
     to_schema,
     update_session_pipeline,
     update_session_subset,
 )
 
 
-router = APIRouter(prefix="/sessions", tags=["sessions"])
+router = APIRouter(prefix="/sessions", tags=["Sessions"])
 _cache = InProcessLRUCache(max_items=4096)
+SESSION_MAX_WORKERS = 8
+
+
+@router.get("", response_model=SessionListResponse)
+def list_sessions_for_dataset_endpoint(
+    dataset_id: str = Query(..., min_length=1),
+    limit: int = Query(50, ge=1, le=200),
+) -> SessionListResponse:
+    ds = get_dataset(dataset_id)
+    if ds is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    rows = list_sessions_for_dataset(dataset_id=dataset_id, limit=limit)
+    items = [
+        SessionListItem(
+            session_id=r.session_id,
+            dataset_id=r.dataset_id,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+        )
+        for r in rows
+    ]
+    return SessionListResponse(items=items, count=len(items))
 
 
 @router.post("", response_model=SessionCreateResponse)
@@ -102,7 +127,17 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest) -> dict[st
     cfg = EngineConfig(cache_namespace=(rec.cache.cache_namespace if rec.cache else rec.session_id))
 
     if isinstance(payload.return_, SessionRunReturnFinal):
-        final = run_pipeline(inputs=refs, pipeline=rec.pipeline, cache=_cache, config=cfg, up_to_step=payload.up_to_step)
+        try:
+            final = run_pipeline(
+                inputs=refs,
+                pipeline=rec.pipeline,
+                cache=_cache,
+                config=cfg,
+                up_to_step=payload.up_to_step,
+                strict=True,
+            )
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=f"Uploaded file not found: {e}") from e
         items = [
             {"spectrum_id": sid, "x": xy.x.astype(float).tolist(), "y": xy.y.astype(float).tolist()}
             for sid, xy in final.items()
@@ -113,14 +148,18 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest) -> dict[st
         # Protect interactive mode: intermediates can be heavy.
         if len(refs) > 50:
             raise HTTPException(status_code=400, detail="Too many spectra for intermediates; select a smaller subset")
-        _, inter = run_pipeline_with_intermediates(
-            inputs=refs,
-            pipeline=rec.pipeline,
-            collect_steps=set(payload.return_.steps),
-            cache=_cache,
-            config=cfg,
-            up_to_step=payload.up_to_step,
-        )
+        try:
+            _, inter = run_pipeline_with_intermediates(
+                inputs=refs,
+                pipeline=rec.pipeline,
+                collect_steps=set(payload.return_.steps),
+                cache=_cache,
+                config=cfg,
+                up_to_step=payload.up_to_step,
+                strict=True,
+            )
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=f"Uploaded file not found: {e}") from e
         items = []
         for sid, steps in inter.items():
             items.append(
@@ -139,16 +178,47 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest) -> dict[st
     # Cache is in-process only and not shared across processes.
     if payload.scope == "all":
         inputs = [
-            {"spectrum_id": r.spectrum_id, "relative_path": r.relative_path, "record_index": r.record_index}
+            {
+                "spectrum_id": r.spectrum_id,
+                "relative_path": r.relative_path,
+                "record_index": r.record_index,
+                "blob_id": r.blob_id,
+                "blob_relative_path": r.blob_relative_path,
+                "original_relative_path": r.original_relative_path,
+            }
             for r in refs
         ]
         steps = [
-            {"name": s.name, "params": s.params, "enabled": s.enabled, "impl_version": s.impl_version}
+            {
+                "name": s.name,
+                "params": s.params,
+                "enabled": s.enabled,
+                "impl_version": s.impl_version,
+                "step_id": s.step_id,
+                "input_from": s.input_from,
+                "after_step_id": s.after_step_id,
+            }
             for s in rec.pipeline.steps
         ]
-        final = run_pipeline_parallel_no_cache(inputs=inputs, pipeline_steps=steps, config=cfg, up_to_step=payload.up_to_step)
+        final = run_pipeline_parallel_no_cache(
+            inputs=inputs,
+            pipeline_steps=steps,
+            config=cfg,
+            up_to_step=payload.up_to_step,
+            max_workers=SESSION_MAX_WORKERS,
+        )
     else:
-        final = run_pipeline(inputs=refs, pipeline=rec.pipeline, cache=_cache, config=cfg, up_to_step=payload.up_to_step)
+        try:
+            final = run_pipeline(
+                inputs=refs,
+                pipeline=rec.pipeline,
+                cache=_cache,
+                config=cfg,
+                up_to_step=payload.up_to_step,
+                strict=True,
+            )
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=f"Uploaded file not found: {e}") from e
     items = []
     for sid, xy in final.items():
         ms = compute_metrics(xy, retm.metrics)

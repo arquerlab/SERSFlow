@@ -2,16 +2,39 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from sersflow.api.schemas.datasets import SpectrumRef
+
+InputFrom = Literal["previous", "initial", "after_step"]
 
 
 class PipelineStep(BaseModel):
     name: str = Field(min_length=1)
-    params: dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Step-specific parameters. For normalize: method may be max, min, mean, median, vector/l2, "
+            "spectrum_point with point_x, baseline_point with baseline_step_id and point_x, or legacy "
+            "baseline with baseline_point for spectrum-point normalization."
+        ),
+    )
     enabled: bool = True
     impl_version: str | None = None
+    step_id: str | None = None
+    input_from: InputFrom = "previous"
+    after_step_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_after_step(self) -> PipelineStep:
+        if self.input_from == "after_step":
+            aid = (self.after_step_id or "").strip()
+            if not aid:
+                raise ValueError("after_step_id is required when input_from is 'after_step'")
+            self.after_step_id = aid
+        else:
+            self.after_step_id = None
+        return self
 
 
 class Pipeline(BaseModel):
@@ -31,6 +54,8 @@ PipelineReturnSpec = ReturnMetricsOnly | ReturnFinal
 
 
 class PipelineRunRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     inputs: list[SpectrumRef] = Field(min_length=1)
     pipeline: Pipeline = Field(default_factory=Pipeline)
     return_: PipelineReturnSpec = Field(default_factory=ReturnMetricsOnly, alias="return")

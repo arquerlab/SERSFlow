@@ -13,6 +13,10 @@ class XY:
     y: np.ndarray
 
 
+# Sentinel for spectra skipped in batch runs (missing file, invalid index, unrecoverable step failure).
+EMPTY_XY = XY(x=np.array([], dtype=float), y=np.array([], dtype=float))
+
+
 def extract_xy(ds: Dataset, *, record_index: int | None = None) -> XY:
     """
     Extract a single spectrum (x,y) from a loaded dataset.

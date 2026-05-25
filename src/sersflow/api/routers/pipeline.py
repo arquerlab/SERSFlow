@@ -16,11 +16,17 @@ from sersflow.api.schemas.pipeline import (
 from sersflow.core.metrics.compute import compute_metrics
 from sersflow.core.pipeline.cache import InProcessLRUCache
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
+from sersflow.core.preprocess.baseline import baseline_method_metadata
 
 
-router = APIRouter(prefix="/pipeline", tags=["pipeline"])
+router = APIRouter(prefix="/pipeline", tags=["Pipeline"])
 
 _cache = InProcessLRUCache(max_items=4096)
+
+
+@router.get("/baseline-methods")
+def baseline_methods_endpoint() -> dict[str, Any]:
+    return baseline_method_metadata()
 
 
 @router.post("/run", response_model=PipelineRunMetricsResponse | PipelineRunFinalResponse)
@@ -33,6 +39,7 @@ def run_pipeline_endpoint(payload: PipelineRunRequest) -> dict[str, Any]:
             cache=_cache,
             config=cfg,
             up_to_step=payload.up_to_step,
+            strict=True,
         )
 
         if isinstance(payload.return_, ReturnFinal):
@@ -118,7 +125,7 @@ def sweep_pipeline_endpoint(payload: PipelineSweepRequest) -> dict[str, Any]:
             sweep_pipeline.steps = steps
 
             cfg = EngineConfig(cache_namespace=payload.cache_namespace or "sweep")
-            finals = run_pipeline(inputs=payload.inputs, pipeline=sweep_pipeline, cache=_cache, config=cfg)
+            finals = run_pipeline(inputs=payload.inputs, pipeline=sweep_pipeline, cache=_cache, config=cfg, strict=True)
             vals = []
             for xy in finals.values():
                 res = compute_metrics(xy, [payload.objective.metric])[0]

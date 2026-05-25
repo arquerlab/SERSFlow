@@ -11,7 +11,7 @@ from sersflow.core.pipeline.cache import InProcessLRUCache
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
 
 
-router = APIRouter(prefix="/metrics", tags=["metrics"])
+router = APIRouter(prefix="/metrics", tags=["Metrics"])
 
 _cache = InProcessLRUCache(max_items=4096)
 
@@ -21,7 +21,7 @@ def metrics_compute(payload: MetricsComputeRequest) -> dict[str, Any]:
     try:
         pipeline = payload.pipeline or Pipeline(steps=[])
         cfg = EngineConfig(cache_namespace=payload.cache_namespace or "default")
-        final = run_pipeline(inputs=payload.inputs, pipeline=pipeline, cache=_cache, config=cfg)
+        final = run_pipeline(inputs=payload.inputs, pipeline=pipeline, cache=_cache, config=cfg, strict=True)
         items = []
         for sid, xy in final.items():
             ms = compute_metrics(xy, payload.metrics)

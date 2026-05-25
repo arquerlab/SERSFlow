@@ -9,7 +9,16 @@ Requires-Dist: uvicorn[standard]
 Requires-Dist: python-multipart
 Requires-Dist: pandas
 Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: scikit-learn
+Requires-Dist: matplotlib
 Requires-Dist: renishawWiRE
+Provides-Extra: client
+Requires-Dist: httpx>=0.27; extra == "client"
+Provides-Extra: parquet
+Requires-Dist: pyarrow>=14; extra == "parquet"
+Provides-Extra: explore-fda
+Requires-Dist: scikit-fda>=0.9; extra == "explore-fda"
 
 # SERSFlow
 
@@ -20,6 +29,26 @@ Install dependencies:
 ```bash
 pip install -e .
 ```
+
+## Build the Preprocess (React) UI
+
+The Preprocess tab loads a Vite-built React bundle from:
+
+- `src/sersflow/api/web/preprocess-dist/`
+
+To build it:
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+This creates/updates:
+
+- `/static/preprocess-dist/.vite/manifest.json`
+- `/static/preprocess-dist/assets/index-*.js` (hashed)
+- `/static/preprocess-dist/assets/index-*.css` (hashed)
 
 Start the server:
 
@@ -41,4 +70,28 @@ Upload file(s):
 
 - `POST /io/upload` (multipart form field(s): `files`)
   - Saves files on disk for later plotting.
+
+## Python HTTP client
+
+Optional ergonomics wrapper around this API (`httpx`):
+
+```bash
+pip install -e ".[client]"
+```
+
+```python
+from sersflow.client import SersflowClient
+
+with SersflowClient("http://127.0.0.1:8000") as client:
+    client.meta.health()
+```
+
+See `examples/python_client_quickstart.py` for upload → dataset → session → analysis.
+
+## Debugging checklist (tabs + preprocess embed)
+
+- **Manifest reachable**: open `GET /static/preprocess-dist/.vite/manifest.json` (should be 200)
+- **Mount point exists**: the main page (`GET /`) contains `#preprocess-root` inside the Preprocess tab panel
+- **No console errors**: open browser devtools on `/` and confirm no failed module loads
+- **Tab switching**: uploads/raw tabs still work; Preprocess shows React UI when opened
 

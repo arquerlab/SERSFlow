@@ -3,4 +3,16 @@ uvicorn[standard]
 python-multipart
 pandas
 numpy
+scipy
+scikit-learn
+matplotlib
 renishawWiRE
+
+[client]
+httpx>=0.27
+
+[explore-fda]
+scikit-fda>=0.9
+
+[parquet]
+pyarrow>=14

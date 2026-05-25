@@ -39,31 +39,126 @@ def ensure_schema() -> None:
         )
 
 
-def create_pipeline(*, name: str, pipeline: Pipeline) -> PipelineLibraryRecord:
+def get_pipeline_by_name(name: str) -> PipelineLibraryRecord | None:
+    """Return the library entry whose name matches (exact, stripped), or None."""
     ensure_schema()
-    pipeline_id = f"pl_{uuid4().hex}"
+    name_clean = name.strip()
+    if not name_clean:
+        return None
+    with connect() as con:
+        row = con.execute(
+            """
+            SELECT pipeline_id, name, pipeline_json, created_at, updated_at
+            FROM pipelines
+            WHERE name = ?
+            """,
+            (name_clean,),
+        ).fetchone()
+        if row is None:
+            return None
+        return PipelineLibraryRecord(
+            pipeline_id=row["pipeline_id"],
+            name=row["name"],
+            pipeline=_load_pipeline_json(row["pipeline_json"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+
+def create_pipeline(*, name: str, pipeline: Pipeline, overwrite: bool = False) -> PipelineLibraryRecord:
+    ensure_schema()
+    name_clean = name.strip()
+    if not name_clean:
+        name_clean = f"Unnamed pipeline {uuid4().hex[:8]}"
     now = _utc_now_iso()
     pj = pipeline.model_dump_json()
     with connect() as con:
+        if overwrite:
+            row = con.execute(
+                """
+                SELECT pipeline_id, name, pipeline_json, created_at, updated_at
+                FROM pipelines
+                WHERE name = ?
+                """,
+                (name_clean,),
+            ).fetchone()
+            if row is not None:
+                con.execute(
+                    """
+                    UPDATE pipelines
+                    SET pipeline_json = ?, updated_at = ?
+                    WHERE pipeline_id = ?
+                    """,
+                    (pj, now, row["pipeline_id"]),
+                )
+                return PipelineLibraryRecord(
+                    pipeline_id=row["pipeline_id"],
+                    name=name_clean,
+                    pipeline=pipeline,
+                    created_at=row["created_at"],
+                    updated_at=now,
+                )
+        pipeline_id = f"pl_{uuid4().hex}"
         try:
             con.execute(
                 """
                 INSERT INTO pipelines(pipeline_id, name, pipeline_json, created_at, updated_at)
                 VALUES (?,?,?,?,?)
                 """,
-                (pipeline_id, name.strip(), pj, now, now),
+                (pipeline_id, name_clean, pj, now, now),
             )
         except sqlite3.IntegrityError as e:
             if "UNIQUE" in str(e).upper() or "unique" in str(e):
-                raise ValueError(f"Pipeline name already exists: {name.strip()}") from e
+                raise ValueError(f"Pipeline name already exists: {name_clean}") from e
             raise
     return PipelineLibraryRecord(
         pipeline_id=pipeline_id,
-        name=name.strip(),
+        name=name_clean,
         pipeline=pipeline,
         created_at=now,
         updated_at=now,
     )
+
+
+def update_pipeline(
+    *,
+    pipeline_id: str,
+    name: str | None = None,
+    pipeline: Pipeline | None = None,
+) -> PipelineLibraryRecord | None:
+    """
+    Update an existing library entry's name and/or pipeline JSON.
+
+    Raises:
+        ValueError: If neither name nor pipeline is provided, or if the new name conflicts.
+    """
+    if name is None and pipeline is None:
+        raise ValueError("At least one of name or pipeline is required")
+    ensure_schema()
+    existing = get_pipeline(pipeline_id)
+    if existing is None:
+        return None
+    new_name = existing.name if name is None else name
+    new_pipeline = existing.pipeline if pipeline is None else pipeline
+    now = _utc_now_iso()
+    pj = new_pipeline.model_dump_json()
+    with connect() as con:
+        try:
+            con.execute(
+                """
+                UPDATE pipelines
+                SET name = ?, pipeline_json = ?, updated_at = ?
+                WHERE pipeline_id = ?
+                """,
+                (new_name, pj, now, pipeline_id),
+            )
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE" in str(e).upper() or "unique" in str(e):
+                raise ValueError(f"Pipeline name already exists: {new_name}") from e
+            raise
+    updated = get_pipeline(pipeline_id)
+    assert updated is not None
+    return updated
 
 
 def _load_pipeline_json(text: str) -> Pipeline:

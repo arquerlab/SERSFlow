@@ -7,7 +7,7 @@ import pytest
 
 from sersflow.api.schemas.pipeline import Pipeline, PipelineStep
 from sersflow.core.pipeline.cache import InProcessLRUCache
-from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
+from sersflow.core.pipeline.engine import EngineConfig, run_pipeline, run_pipeline_parallel_no_cache
 
 
 @pytest.fixture
@@ -43,3 +43,37 @@ def test_reorder_does_not_reuse_stale_step_cache(upload_dir):
     y_b = out_b["s1"].y
     assert y_a.shape == y_b.shape == (1,)
     assert not np.allclose(y_a, y_b), "normalize-after-crop must not match crop-after-normalize"
+
+
+def test_missing_upload_returns_empty_xy_not_raise(upload_dir):
+    """Batch runs must not abort when a dataset references a file that is not on disk."""
+    (upload_dir / "ok").mkdir()
+    (upload_dir / "ok" / "s.txt").write_text(
+        "wn\tint\n100\t10\n200\t20\n300\t30\n",
+        encoding="utf-8",
+    )
+    ok_ref = SimpleNamespace(spectrum_id="ok", relative_path="ok/s.txt", record_index=None)
+    missing_ref = SimpleNamespace(spectrum_id="gone", relative_path="missing/nope.txt", record_index=None)
+
+    crop = PipelineStep(name="crop", params={"min_x": 150.0, "max_x": 250.0}, enabled=True)
+    p = Pipeline(steps=[crop])
+
+    out = run_pipeline(inputs=[ok_ref, missing_ref], pipeline=p, cache=None)
+    assert out["ok"].x.size > 0
+    assert out["gone"].x.size == 0 and out["gone"].y.size == 0
+
+
+def test_parallel_no_cache_missing_upload_returns_empty_xy(upload_dir):
+    (upload_dir / "a").mkdir()
+    (upload_dir / "a" / "t.txt").write_text(
+        "wn\tint\n100\t10\n200\t20\n300\t30\n",
+        encoding="utf-8",
+    )
+    steps = [{"name": "crop", "params": {"min_x": 150.0, "max_x": 250.0}, "enabled": True}]
+    inputs = [
+        {"spectrum_id": "s1", "relative_path": "a/t.txt", "record_index": None},
+        {"spectrum_id": "s2", "relative_path": "ghost/missing.txt", "record_index": None},
+    ]
+    out = run_pipeline_parallel_no_cache(inputs=inputs, pipeline_steps=steps, config=EngineConfig(), max_workers=2)
+    assert out["s1"].x.size > 0
+    assert out["s2"].x.size == 0 and out["s2"].y.size == 0

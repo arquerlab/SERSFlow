@@ -3,4 +3,10 @@ uvicorn[standard]
 python-multipart
 pandas
 numpy
+scipy
+scikit-learn
+matplotlib
 renishawWiRE
+
+# Optional: pip install pyarrow
+# Optional: pip install scikit-fda

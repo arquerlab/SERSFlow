@@ -21,7 +21,8 @@
       <nav class="tabs" id="tabs">
         <button class="tab active" data-tab="uploads" type="button">Uploads</button>
         <button class="tab" data-tab="raw" type="button">Raw visualization</button>
-        <button class="tab" data-tab="preprocess" type="button" title="Open preprocessing workspace">Preprocess</button>
+        <button class="tab" data-tab="prepare" type="button" title="Prepare spectra and pipelines">Prepare</button>
+        <button class="tab" data-tab="analyze" type="button" title="Batch analysis and exploration">Analyze</button>
       </nav>
 
       <section class="panel active" id="tab-uploads">
@@ -30,11 +31,17 @@
           <div id="drop" class="drop">
             <div class="row">
               <input id="files" type="file" accept=".txt,.wdf" multiple />
+              <input id="folders" type="file" webkitdirectory directory multiple />
+              <label class="inline" title="Comma-separated file extensions to skip during upload">
+                Skip extensions
+                <input id="excludeExts" type="text" value="png,jpg,jpeg,gif,tif,tiff" style="width: 220px" />
+              </label>
               <button id="uploadBtn" type="button">Upload</button>
+              <button id="clearSelectionBtn" type="button">Clear selection</button>
               <button id="refreshBtn" type="button">Refresh list</button>
             </div>
             <div class="hint">
-              Drag & drop <b>multiple</b> <b>.txt</b> / <b>.wdf</b> files here, or use the file picker. Files are stored on the server; no parsing is performed.
+              Drag & drop <b>multiple</b> <b>.txt</b> / <b>.wdf</b> files here, or use file/folder pickers. Folder uploads preserve nested subfolders. Files are stored on the server; no parsing is performed.
             </div>
             <div class="status" id="status"></div>
             <ul class="files" id="fileList"></ul>
@@ -46,12 +53,46 @@
           <div class="uploads-toolbar">
             <button id="selectAllBtn" type="button">Select all</button>
             <button id="selectNoneBtn" type="button">Select none</button>
-            <button id="unloadBtn" class="danger" type="button">Unload selected</button>
-            <button id="unloadAllBtn" class="danger" type="button">Unload all</button>
+            <button id="unloadBtn" class="danger" type="button">Hide selected</button>
+            <button id="unloadAllBtn" class="danger" type="button">Hide all</button>
+            <button id="purgeHiddenBtn" class="danger" type="button">Purge hidden unused</button>
             <div class="uploads-meta" id="uploadsMeta"></div>
           </div>
           <div class="scrollbox">
             <div id="uploadedList"></div>
+          </div>
+        </div>
+
+        <div class="card upload-labels-editor-card">
+          <div class="section-title">Labels — current uploads</div>
+          <div class="uploads-toolbar">
+            <div class="uploads-meta" id="labelsEditorMeta">
+              Same files as above; refreshes when you refresh uploads or after upload/hide.
+            </div>
+          </div>
+          <div class="upload-labels-layout">
+            <div class="scrollbox upload-labels-list-wrap">
+              <div id="labelsEditorFileList"></div>
+            </div>
+            <div class="labels-editor-wrap card-inner">
+              <div class="section-title" style="margin: 0 0 8px">Edit labels</div>
+              <p class="hint" style="margin: 0 0 8px">
+                Select one or more files/folders, edit values, then <b>Save</b> (bulk apply). Empty cells are stored as JSON
+                <code>null</code>. Values accept JSON literals (e.g. <code>2</code>, <code>true</code>,
+                <code>"text"</code>) or plain text.
+              </p>
+              <p class="hint" style="margin: 0 0 8px">
+                <b>Standard keys</b> (always use these names):
+                <code>sample</code>, <code>gas</code>, <code>ph</code>,
+                <code>current_density_A_cm2</code> (A·cm⁻²),
+                <code>potential_V</code> (V), <code>potential_ref</code> (<code>VRHE</code>,
+                <code>OCP</code>, or <code>V</code> when only a plain “…V” token was parsed),
+                <code>laser_nm</code>, <code>laser_power_pct</code>, <code>electrolyte</code>,
+                <code>concentration_M</code> (molar).
+                Use <b>Add custom row</b> only for rare extra fields.
+              </p>
+              <div id="labelsEditor"></div>
+            </div>
           </div>
         </div>
       </section>
@@ -98,9 +139,8 @@
         </div>
       </section>
 
-      <section class="panel" id="tab-preprocess">
+      <section class="panel" id="tab-spa">
         <div class="card">
-          <div class="section-title">Preprocess</div>
           <div class="preprocess-scope">
             <div id="preprocess-root"></div>
           </div>
@@ -124,13 +164,13 @@
 
         const res = await fetch("/static/preprocess-dist/.vite/manifest.json", { cache: "no-cache" });
         if (!res.ok) {
-          root.textContent = "Preprocess UI not available. Build the frontend first.";
+          root.textContent = "Prepare / Analyze UI not available. Build the frontend first.";
           return;
         }
         const manifest = await res.json();
         const entry = manifest["index.html"];
         if (!entry || !entry.file) {
-          root.textContent = "Preprocess UI manifest is invalid.";
+          root.textContent = "UI manifest is invalid.";
           return;
         }
 
@@ -150,7 +190,7 @@
       loadPreprocessBundle().catch((e) => {
         console.error(e);
         const root = document.getElementById("preprocess-root");
-        if (root) root.textContent = "Failed to load Preprocess UI. See console for details.";
+        if (root) root.textContent = "Failed to load Prepare / Analyze UI. See console for details.";
       });
     </script>
   </body>

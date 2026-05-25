@@ -1,12 +1,20 @@
-import { useEffect, useMemo, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import Plotly from "plotly.js-dist-min";
+import { coerceDenseHeatmapAxes, publicationLayout, styleTraces } from "../lib/plotlyTheme";
 
-type PlotlyFigure = {
+export type PlotlyFigure = {
   data: any[];
   layout: Record<string, any>;
 };
 
 type PlotStyle = { mode: "overlay" | "stack"; stackSep: number };
+type PlotlyWrapperProps = {
+  figure: PlotlyFigure | null;
+  previousFigure?: PlotlyFigure | null;
+  plotStyle: PlotStyle;
+  ghostOverlayEnabled: boolean;
+  className?: string;
+};
 
 function applyStacking(data: any[], stackSep: number) {
   if (!Array.isArray(data) || data.length <= 1) return data;
@@ -30,20 +38,10 @@ function styleGhostTrace(tr: any) {
   };
 }
 
-export function PlotlyWrapper({
-  figure,
-  previousFigure,
-  plotStyle,
-  ghostOverlayEnabled,
-  className,
-}: {
-  figure: PlotlyFigure | null;
-  previousFigure?: PlotlyFigure | null;
-  plotStyle: PlotStyle;
-  ghostOverlayEnabled: boolean;
-  className?: string;
-}) {
+export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
+  ({ figure, previousFigure, plotStyle, ghostOverlayEnabled, className }, ref) => {
   const divRef = useRef<HTMLDivElement | null>(null);
+  useImperativeHandle(ref, () => divRef.current as HTMLDivElement);
 
   const combined = useMemo(() => {
     if (!figure) return null;
@@ -55,21 +53,37 @@ export function PlotlyWrapper({
     return { ...figure, data: all };
   }, [figure, previousFigure, plotStyle.mode, plotStyle.stackSep, ghostOverlayEnabled]);
 
+  const themed = useMemo(() => {
+    if (!combined) return null;
+    const data = styleTraces(combined.data, { kindHint: "unknown" });
+    // Keep the current spectra legend convention if the author set a bottom-horizontal legend.
+    const legend = (combined.layout as any)?.legend;
+    const wantBottomLegend = legend && legend.orientation === "h" && typeof legend.y === "number" && legend.y < 0;
+    let layout = publicationLayout(combined.layout, {
+      showTitle: false,
+      showLegend: (combined.layout as any)?.showlegend ?? true,
+      legendBottomHorizontal: !!wantBottomLegend,
+    });
+    layout = coerceDenseHeatmapAxes(layout, { maxTickLabels: 40 });
+    return { data, layout };
+  }, [combined]);
+
   useEffect(() => {
     const el = divRef.current;
     if (!el) return;
-    if (!combined) {
+    if (!themed) {
       Plotly.purge(el);
       return;
     }
-    Plotly.react(el, combined.data, combined.layout, {
+    Plotly.react(el, themed.data, themed.layout, {
       responsive: true,
       // Let the page/body receive wheel scroll unless the user deliberately zooms (e.g. pinch).
       // Prevents the plot from “eating” scroll, which makes the sidebar feel fixed.
       scrollZoom: false,
     });
-  }, [combined]);
+  }, [themed]);
 
   return <div ref={divRef} className={className} />;
 }
+);
 

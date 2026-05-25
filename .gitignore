@@ -1,0 +1,26 @@
+# Local example and figure outputs
+example/
+examples/
+fig*/
+
+# Local SERSFlow data and artifacts
+.sersflow_data/
+.sersflow_artifacts/
+.sersflow_uploads/
+
+# Legacy local upload storage
+uploads/
+
+# Local caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.cache/
+
+# Logs
+*.log
+logs/
+debug-*.log

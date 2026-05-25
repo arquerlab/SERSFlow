@@ -4,6 +4,8 @@ from typing import Any, Iterable
 
 import numpy as np
 
+RAMAN_SHIFT_AXIS_TITLE = "Raman Shift (cm⁻¹)"
+
 
 def _as_1d(a: Any) -> np.ndarray:
     arr = np.asarray(a)
@@ -24,7 +26,7 @@ def spectrum_figure_json(
     x: Any,
     y: Any,
     title: str = "Spectrum",
-    x_title: str = "Raman Shift (cm$^{-1}$)",
+    x_title: str = RAMAN_SHIFT_AXIS_TITLE,
     y_title: str = "Intensity (counts)",
 ) -> dict[str, Any]:
     x1 = _as_1d(x).astype(float, copy=False)
@@ -73,7 +75,7 @@ def overlay_figure_json(
     ys: Iterable[Any],
     labels: Iterable[str] | None = None,
     title: str = "Overlay",
-    x_title: str = "Raman Shift (cm$^{-1}$)",
+    x_title: str = RAMAN_SHIFT_AXIS_TITLE,
     y_title: str = "Intensity (counts)",
 ) -> dict[str, Any]:
     x1 = _as_1d(x).astype(float, copy=False)
@@ -122,7 +124,7 @@ def series_heatmap_figure_json(
     series_axis: Any,
     z: Any,
     title: str = "Series heatmap",
-    x_title: str = "Raman Shift (cm$^{-1}$)",
+    x_title: str = RAMAN_SHIFT_AXIS_TITLE,
     y_title: str = "Series axis",
     z_title: str = "Intensity (counts)",
 ) -> dict[str, Any]:

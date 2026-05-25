@@ -156,3 +156,39 @@ def delete_all_sessions() -> int:
         cur = con.execute("DELETE FROM sessions")
         return int(cur.rowcount or 0)
 
+
+@dataclass(frozen=True)
+class SessionListRow:
+    """Lightweight row for listing sessions by dataset (no full pipeline in API response)."""
+
+    session_id: str
+    dataset_id: str
+    created_at: str
+    updated_at: str
+
+
+def list_sessions_for_dataset(*, dataset_id: str, limit: int = 50) -> list[SessionListRow]:
+    """Most recently updated first."""
+    ensure_schema()
+    lim = max(1, min(int(limit), 200))
+    with connect() as con:
+        rows = con.execute(
+            """
+            SELECT session_id, dataset_id, created_at, updated_at
+            FROM sessions
+            WHERE dataset_id = ?
+            ORDER BY updated_at DESC, rowid DESC
+            LIMIT ?
+            """,
+            (dataset_id, lim),
+        ).fetchall()
+    return [
+        SessionListRow(
+            session_id=str(r["session_id"]),
+            dataset_id=str(r["dataset_id"]),
+            created_at=str(r["created_at"]),
+            updated_at=str(r["updated_at"]),
+        )
+        for r in rows
+    ]
+

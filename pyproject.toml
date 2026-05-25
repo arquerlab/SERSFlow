@@ -14,8 +14,16 @@ dependencies = [
   "python-multipart",
   "pandas",
   "numpy",
+  "scipy",
+  "scikit-learn",
+  "matplotlib",
   "renishawWiRE",
 ]
+
+[project.optional-dependencies]
+client = ["httpx>=0.27"]
+parquet = ["pyarrow>=14"]
+explore-fda = ["scikit-fda>=0.9"]
 
 [project.scripts]
 sersflow-api = "sersflow.api.main:run"

@@ -2,7 +2,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import PreprocessingWorkspace from "./PreprocessingWorkspace";
+import { HashRouter } from "react-router-dom";
+import AppShell from "./AppShell";
 
 function ensureLegacyStylesLoaded() {
   const href = "/static/styles.css";
@@ -22,7 +23,9 @@ ensureLegacyStylesLoaded();
 createRoot(document.getElementById("preprocess-root")!).render(
   <StrictMode>
     <QueryClientProvider client={qc}>
-      <PreprocessingWorkspace />
+      <HashRouter>
+        <AppShell />
+      </HashRouter>
     </QueryClientProvider>
   </StrictMode>
 );

@@ -7,7 +7,12 @@ from typing import Iterable
 import numpy as np
 
 from sersflow.core.models.datasets import Dataset, MapDataset, SeriesDataset, SpectrumDataset
-from sersflow.core.plot.figure_json import overlay_figure_json, series_heatmap_figure_json, spectrum_figure_json
+from sersflow.core.plot.figure_json import (
+    RAMAN_SHIFT_AXIS_TITLE,
+    overlay_figure_json,
+    series_heatmap_figure_json,
+    spectrum_figure_json,
+)
 
 
 @dataclass(frozen=True)
@@ -42,7 +47,7 @@ def plot_spectrum(
     *,
     spectrum_index: int = 0,
     title: str = "Spectrum",
-    x_title: str = "Raman Shift (cm$^{-1}$)",
+    x_title: str = RAMAN_SHIFT_AXIS_TITLE,
     y_title: str = "Intensity (counts)",
 ) -> dict:
     y = pick_1d_spectrum(dataset, spectrum_index=spectrum_index)
@@ -54,7 +59,7 @@ def plot_overlay(
     *,
     spectrum_index: int = 0,
     title: str = "Overlay",
-    x_title: str = "Raman Shift (cm$^{-1}$)",
+    x_title: str = RAMAN_SHIFT_AXIS_TITLE,
     y_title: str = "Intensity (counts)",
 ) -> dict:
     items = list(datasets)
@@ -76,7 +81,7 @@ def plot_series_heatmap(
     dataset: SeriesDataset,
     *,
     title: str = "Series heatmap",
-    x_title: str = "Raman Shift (cm$^{-1}$)",
+    x_title: str = RAMAN_SHIFT_AXIS_TITLE,
     y_title: str | None = None,
     z_title: str = "Intensity (counts)",
 ) -> dict:
@@ -122,7 +127,7 @@ def plot_series_points(
     *,
     indices: list[int],
     title: str = "Series points",
-    x_title: str = "Raman Shift (cm$^{-1}$)",
+    x_title: str = RAMAN_SHIFT_AXIS_TITLE,
     y_title: str = "Intensity (counts)",
 ) -> dict:
     n = int(dataset.spectra.shape[0])
@@ -178,7 +183,7 @@ def plot_map_points(
     *,
     indices: list[int],
     title: str = "Map points",
-    x_title: str = "Raman Shift (cm$^{-1}$)",
+    x_title: str = RAMAN_SHIFT_AXIS_TITLE,
     y_title: str = "Intensity (counts)",
 ) -> dict:
     n = int(dataset.spectra.shape[0])

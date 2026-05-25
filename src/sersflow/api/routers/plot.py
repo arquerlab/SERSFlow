@@ -30,7 +30,7 @@ from sersflow.core.plot.service import (
 )
 
 
-router = APIRouter(prefix="/plot", tags=["plot"])
+router = APIRouter(prefix="/plot", tags=["Plot"])
 
 
 @router.get("/kinds", response_model=PlotKindsResponse)

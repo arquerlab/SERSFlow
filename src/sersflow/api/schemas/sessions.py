@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from sersflow.api.schemas.pipeline import Pipeline
 
@@ -47,6 +47,18 @@ class SessionGetResponse(BaseModel):
     session: Session
 
 
+class SessionListItem(BaseModel):
+    session_id: str
+    dataset_id: str
+    created_at: str
+    updated_at: str
+
+
+class SessionListResponse(BaseModel):
+    items: list[SessionListItem]
+    count: int
+
+
 class SessionPipelineUpdateRequest(BaseModel):
     pipeline: Pipeline
 
@@ -80,6 +92,8 @@ SessionRunReturnSpec = SessionRunReturnMetricsOnly | SessionRunReturnFinal | Ses
 
 
 class SessionRunRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     scope: Literal["subset", "all"] = "subset"
     return_: SessionRunReturnSpec = Field(alias="return")
     up_to_step: str | None = None

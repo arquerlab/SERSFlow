@@ -7,7 +7,7 @@ from fastapi import APIRouter, Response
 from fastapi.responses import FileResponse, HTMLResponse
 
 
-router = APIRouter(tags=["meta"])
+router = APIRouter(tags=["Meta"])
 
 
 def _web_root() -> Path:
