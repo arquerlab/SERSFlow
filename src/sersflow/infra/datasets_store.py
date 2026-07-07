@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 from uuid import uuid4
 
+from sersflow.infra.user_access import has_global_access, resolve_owner_user_id
 from sersflow.api.schemas.datasets import Dataset, DatasetListItem, DatasetMetadata, SpectrumRef
 from sersflow.core.io.load_file import load_dataset
 from sersflow.core.io.upload_registry import resolve_uploaded_path, upload_root
@@ -65,7 +66,8 @@ def ensure_schema() -> None:
               dataset_id TEXT PRIMARY KEY,
               metadata_json TEXT NOT NULL,
               created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL
+              updated_at TEXT NOT NULL,
+              owner_user_id TEXT NULL
             );
 
             CREATE TABLE IF NOT EXISTS dataset_spectra (
@@ -82,6 +84,10 @@ def ensure_schema() -> None:
         )
         _migrate_dataset_schema(con)
         _backfill_existing_blob_refs(con)
+        try:
+            con.execute("ALTER TABLE datasets ADD COLUMN owner_user_id TEXT NULL")
+        except sqlite3.OperationalError:
+            pass
 
 
 def _source_path_for_ref(ref: SpectrumRef):
@@ -297,7 +303,12 @@ def iter_spectrum_axes_page(
     return items, ntot
 
 
-def create_dataset(*, metadata: DatasetMetadata, spectra: Iterable[SpectrumRef]) -> DatasetRecord:
+def create_dataset(
+    *,
+    metadata: DatasetMetadata,
+    spectra: Iterable[SpectrumRef],
+    owner_user_id: str,
+) -> DatasetRecord:
     ensure_schema()
     dataset_id = f"ds_{uuid4().hex}"
     created_at = _utc_now_iso()
@@ -309,8 +320,8 @@ def create_dataset(*, metadata: DatasetMetadata, spectra: Iterable[SpectrumRef])
     spectra_list = _with_blob_refs(spectra)
     with connect() as con:
         con.execute(
-            "INSERT INTO datasets(dataset_id, metadata_json, created_at, updated_at) VALUES (?,?,?,?)",
-            (dataset_id, md.model_dump_json(), created_at, created_at),
+            "INSERT INTO datasets(dataset_id, metadata_json, created_at, updated_at, owner_user_id) VALUES (?,?,?,?,?)",
+            (dataset_id, md.model_dump_json(), created_at, created_at, owner_user_id),
         )
         con.executemany(
             """
@@ -348,13 +359,35 @@ def _load_metadata(metadata_json: str) -> DatasetMetadata:
     return DatasetMetadata.model_validate(obj)
 
 
-def get_dataset(dataset_id: str) -> DatasetRecord | None:
+def get_dataset_internal(dataset_id: str) -> DatasetRecord | None:
+    """Unscoped dataset read for background workers only."""
+    return _load_dataset_row(dataset_id, owner_user_id=None)
+
+
+def get_dataset(dataset_id: str, *, owner_user_id: str) -> DatasetRecord | None:
+    if has_global_access(owner_user_id):
+        return _load_dataset_row(dataset_id, owner_user_id=None)
+    effective = resolve_owner_user_id(owner_user_id)
+    return _load_dataset_row(dataset_id, owner_user_id=effective)
+
+
+def _load_dataset_row(dataset_id: str, *, owner_user_id: str | None) -> DatasetRecord | None:
     ensure_schema()
     with connect() as con:
-        row = con.execute(
-            "SELECT dataset_id, metadata_json FROM datasets WHERE dataset_id = ?",
-            (dataset_id,),
-        ).fetchone()
+        if owner_user_id is None:
+            row = con.execute(
+                "SELECT dataset_id, metadata_json FROM datasets WHERE dataset_id = ?",
+                (dataset_id,),
+            ).fetchone()
+        else:
+            row = con.execute(
+                """
+                SELECT dataset_id, metadata_json
+                FROM datasets
+                WHERE dataset_id = ? AND owner_user_id = ?
+                """,
+                (dataset_id, owner_user_id),
+            ).fetchone()
         if row is None:
             return None
         md = _load_metadata(row["metadata_json"])
@@ -381,20 +414,35 @@ def get_dataset(dataset_id: str) -> DatasetRecord | None:
         return DatasetRecord(dataset_id=row["dataset_id"], metadata=md, spectra=spectra)
 
 
-def list_datasets(*, limit: int = 50, offset: int = 0) -> list[DatasetListItem]:
+def list_datasets(*, owner_user_id: str, limit: int = 50, offset: int = 0) -> list[DatasetListItem]:
     ensure_schema()
     with connect() as con:
-        rows = con.execute(
-            """
-            SELECT d.dataset_id, d.metadata_json, COUNT(ds.spectrum_id) AS spectrum_count
-            FROM datasets d
-            LEFT JOIN dataset_spectra ds ON ds.dataset_id = d.dataset_id
-            GROUP BY d.dataset_id
-            ORDER BY d.created_at DESC
-            LIMIT ? OFFSET ?
-            """,
-            (int(limit), int(offset)),
-        ).fetchall()
+        if has_global_access(owner_user_id):
+            rows = con.execute(
+                """
+                SELECT d.dataset_id, d.metadata_json, COUNT(ds.spectrum_id) AS spectrum_count
+                FROM datasets d
+                LEFT JOIN dataset_spectra ds ON ds.dataset_id = d.dataset_id
+                GROUP BY d.dataset_id
+                ORDER BY d.created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (int(limit), int(offset)),
+            ).fetchall()
+        else:
+            effective = resolve_owner_user_id(owner_user_id)
+            rows = con.execute(
+                """
+                SELECT d.dataset_id, d.metadata_json, COUNT(ds.spectrum_id) AS spectrum_count
+                FROM datasets d
+                LEFT JOIN dataset_spectra ds ON ds.dataset_id = d.dataset_id
+                WHERE d.owner_user_id = ?
+                GROUP BY d.dataset_id
+                ORDER BY d.created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (effective, int(limit), int(offset)),
+            ).fetchall()
         out: list[DatasetListItem] = []
         for r in rows:
             out.append(
@@ -411,7 +459,7 @@ def to_schema(record: DatasetRecord) -> Dataset:
     return Dataset(dataset_id=record.dataset_id, spectra=record.spectra, metadata=record.metadata)
 
 
-def delete_dataset(dataset_id: str) -> bool:
+def delete_dataset(dataset_id: str, *, owner_user_id: str) -> bool:
     """
     Delete a dataset and its spectra rows.
 
@@ -422,7 +470,14 @@ def delete_dataset(dataset_id: str) -> bool:
     ensure_schema()
     blob_paths = _blob_paths_for_dataset(dataset_id)
     with connect() as con:
-        cur = con.execute("DELETE FROM datasets WHERE dataset_id = ?", (dataset_id,))
+        if has_global_access(owner_user_id):
+            cur = con.execute("DELETE FROM datasets WHERE dataset_id = ?", (dataset_id,))
+        else:
+            effective = resolve_owner_user_id(owner_user_id)
+            cur = con.execute(
+                "DELETE FROM datasets WHERE dataset_id = ? AND owner_user_id = ?",
+                (dataset_id, effective),
+            )
         deleted = int(cur.rowcount or 0) > 0
     if deleted:
         delete_unreferenced_dataset_blobs(blob_paths)

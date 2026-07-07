@@ -34,7 +34,8 @@ def test_create_dataset_skips_bad_files_and_keeps_good(tmp_path: Path, monkeypat
     rel_bad = f"{batch}/bad.unsupported_ext"
 
     rec, skipped = create_dataset_from_uploads(
-        DatasetCreateRequest(relative_paths=[rel_bad, rel_good], metadata=DatasetMetadata(name="mixed"))
+        DatasetCreateRequest(relative_paths=[rel_bad, rel_good], metadata=DatasetMetadata(name="mixed")),
+        owner_user_id="dev",
     )
     assert len(rec.spectra) == 1
     assert rec.spectra[0].relative_path == rel_good
@@ -65,7 +66,10 @@ def test_create_dataset_all_fail_raises(tmp_path: Path, monkeypatch) -> None:
     rel = f"{batch}/only.bad"
 
     with pytest.raises(ValueError, match="No spectra could be loaded"):
-        create_dataset_from_uploads(DatasetCreateRequest(relative_paths=[rel], metadata=DatasetMetadata()))
+        create_dataset_from_uploads(
+            DatasetCreateRequest(relative_paths=[rel], metadata=DatasetMetadata()),
+            owner_user_id="dev",
+        )
 
 
 def test_reuploaded_file_relinks_path_only_dataset_from_unloaded_registry(tmp_path: Path, monkeypatch) -> None:
@@ -75,11 +79,10 @@ def test_reuploaded_file_relinks_path_only_dataset_from_unloaded_registry(tmp_pa
     monkeypatch.setenv("SERSFLOW_UPLOAD_DIR", str(upload_root))
 
     old_rel = "oldbatch/sample.txt"
-    ds = create_dataset(
-        metadata=DatasetMetadata(name="legacy"),
+    ds = create_dataset(owner_user_id="dev", metadata=DatasetMetadata(name="legacy"),
         spectra=[SpectrumRef(spectrum_id="sp_legacy", relative_path=old_rel, record_index=None)],
     )
-    old = get_dataset(ds.dataset_id)
+    old = get_dataset(ds.dataset_id, owner_user_id="dev")
     assert old is not None
     assert old.spectra[0].blob_relative_path is None
 
@@ -107,7 +110,7 @@ def test_reuploaded_file_relinks_path_only_dataset_from_unloaded_registry(tmp_pa
     )
     assert relinked == 1
 
-    repaired = get_dataset(ds.dataset_id)
+    repaired = get_dataset(ds.dataset_id, owner_user_id="dev")
     assert repaired is not None
     assert repaired.spectra[0].blob_relative_path
     new_file.unlink()

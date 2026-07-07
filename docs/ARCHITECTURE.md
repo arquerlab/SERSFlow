@@ -2,41 +2,43 @@
 
 ## Overview: what SERSFlow is
 
-SERSFlow is a local-first software stack for **Surface-Enhanced Raman Spectroscopy (SERS)** workflows that combines:
+SERSFlow is a local-first software stack for Surface-Enhanced Raman Spectroscopy (SERS) workflows. It combines:
 
-- **Dataset ingest** from uploaded vendor/measurement files (single spectra, time series, or spatial maps).
-- A **deterministic preprocessing pipeline** applied to spectra (noise removal, cosmic ray removal, baseline correction, crop, normalization, peak fitting, feature probes).
-- **Batch feature extraction** over a full dataset to create a table suitable for multivariate statistics.
-- An **exploration/modeling layer** that runs common statistical analyses (correlation, VIF, PCA / sparse PCA, clustering, FPCA) and writes results to reproducible artifacts.
-- A **web UI** (legacy shell + embedded modern React workspaces) that drives the above via a FastAPI backend.
+- Dataset ingest from uploaded vendor/measurement files, including single spectra, time series, and spatial maps.
+- Durable dataset storage through upload registries, content-addressed blobs, SQLite metadata, and reproducible dataset exports.
+- A deterministic preprocessing pipeline for spectra: crop, grid alignment, smoothing, cosmic-ray removal, baseline handling, normalization, reference transforms, derivatives, fitting, spectral probes, integrations, and derived feature operations.
+- Batch feature extraction over the full dataset to create stable feature and observation tables.
+- An exploration/modeling layer for correlation, VIF, PCA, sparse PCA, clustering, spectrum matrices, and FPCA.
+- A web UI, Python HTTP client, and publication-oriented examples that drive the same FastAPI backend.
 
 The project prioritizes:
 
-- **Reproducibility** through explicit pipeline definitions, stable hashes, persisted run records, and exportable tables.
-- **Separation of concerns** between (i) interactive preview and (ii) batch/full-dataset computation.
-- **Interoperability** through CSV/Parquet export and explicit observation-table contracts.
+- Reproducibility through explicit pipeline definitions, stable hashes, persisted run/job records, durable blobs, and export manifests.
+- A clear split between interactive preview and full-dataset computation.
+- Interoperability through CSV/Parquet exports, observation-table contracts, and a programmatic Python client.
+- Python-owned scientific behavior: TypeScript step specs are UI metadata only. See `docs/PIPELINE_UI_AUTHORITY.md`.
 
 ---
 
 ## High-level system architecture
 
-SERSFlow is organized as a **single Python service** (FastAPI) that:
+SERSFlow is organized around one local FastAPI service that:
 
-1. Serves HTTP endpoints for data management, pipeline execution, analysis, and exploration.
-2. Persists metadata and results to a local **SQLite database** (`sersflow.db` by default).
-3. Stores uploaded raw files on disk (under `.sersflow_uploads/` by default).
-4. Stores “large” computed outputs (matrices, PCA plots, JSON bundles) as **filesystem artifacts** under `.sersflow_artifacts/` (configurable).
-5. Serves a web UI from `src/sersflow/api/web/` and static React bundles under `/static/...`.
+1. Serves HTTP endpoints for data management, plotting, pipeline execution, analysis, and exploration.
+2. Persists metadata and compact results to SQLite (`sersflow.db` by default).
+3. Stores uploaded raw files under `.sersflow_uploads/`.
+4. Stores durable dataset blobs under `.sersflow_data/blobs/`.
+5. Stores large computed outputs under `.sersflow_artifacts/`.
+6. Serves the browser UI from `src/sersflow/api/web/`, including the built React bundle under `/static/preprocess-dist/...`.
 
-### Layering (conceptual)
+### Conceptual layers
 
-- **UI layer (browser)**: React workspaces for “Prepare” (pipeline & preview) and “Analyze” (exports & statistics).
-- **API layer (FastAPI)**: routers that validate requests (Pydantic) and orchestrate backend services.
-- **Service layer (Python)**: analysis runners, export builders, exploration/statistical routines.
-- **Core layer (Python)**: pipeline engine and preprocessing step implementations (the computational contract).
-- **Infrastructure layer (Python + filesystem + SQLite)**: persistence of datasets, sessions, pipeline library, analysis runs, explore runs, and artifact directories.
-
-This separation is enforced explicitly in the codebase: **Python is the execution contract**, while TypeScript “step specs” are presentation-only (see `docs/PIPELINE_UI_AUTHORITY.md`).
+- Browser UI: React workspaces for "Pipeline & preview" and "Features & statistics", embedded in the legacy shell or run standalone.
+- Python client: optional `httpx` wrapper around the same HTTP API for scripts and publication workflows.
+- API layer: FastAPI routers and Pydantic schemas grouped by concern.
+- Service layer: analysis runners, export builders, reference hydration, plotting, matrix jobs, and exploration routines.
+- Core layer: loaders, spectrum models, labels, metrics, plotting helpers, the pipeline engine, and step implementations.
+- Infrastructure layer: SQLite stores plus filesystem roots for uploads, durable blobs, and generated artifacts.
 
 ---
 
@@ -46,126 +48,145 @@ This separation is enforced explicitly in the codebase: **Python is the executio
 
 - `src/sersflow/api/`
   - `main.py`: FastAPI app assembly and `sersflow-api` entrypoint.
-  - `routers/`: HTTP endpoints grouped by concern (datasets, pipeline, sessions, analysis, explore, IO, plotting).
-  - `schemas/`: Pydantic request/response models for the API.
-  - `services/`: higher-level operations invoked by routers (analysis runners, exports, exploration stats/plots, matrix exports).
-  - `web/`: legacy HTML shell + built React assets (e.g., `preprocess-dist/`).
+  - `routers/`: HTTP surface for meta, IO, plotting, datasets, pipeline runs, pipeline library, metrics, sessions, fitting, analysis, and explore.
+  - `schemas/`: Pydantic request/response models.
+  - `services/`: higher-level operations used by routers, including analysis execution, dataset/observation exports, reference runtime, plotting, matrix export jobs, and explore stats/plots.
+  - `web/`: legacy HTML shell and built frontend assets.
 - `src/sersflow/core/`
-  - `pipeline/`: pipeline engine, step registry, caching, hashing.
-  - `preprocess/`: step implementations (baseline, noise, cosmic ray removal, crop, normalization, fitting).
-  - `io/`: dataset file loaders and upload registry utilities.
-  - `metrics/`: metric computation on spectra (used for quick checks and optimization sweeps).
-  - `models/`: typed representations for loaded datasets (single spectrum, series, map).
+  - `io/`: TXT/WDF loading, upload registry, file-to-dataset expansion, and wavenumber-range helpers.
+  - `models/`: typed dataset representations for single spectra, series, and maps.
+  - `pipeline/`: pipeline engine, step registry, hashing, cache keys, and step numbering.
+  - `preprocess/`: baseline, crop, cosmic-ray removal, fitting, fitting specs/models, normalization, noise, and related step helpers.
+  - `metrics/`: feature extraction utilities for fitting features, intensities, integrations, peaks, operations, and metric computation.
+  - `labels/`: automatic label extraction and normalization from upload paths/filenames.
+  - `plot/`: backend plot serialization and raw-spectrum plotting service.
 - `src/sersflow/infra/`
-  - `sqlite_db.py`: SQLite connection factory and DB location (`SERSFLOW_DB_PATH`).
-  - `datasets_store.py`, `sessions_store.py`, `pipelines_store.py`: persistence for key objects.
-  - `analysis_store.py`: analysis run + job tracking; storage of per-spectrum features JSON.
-  - `explore_store.py`: exploration run tracking + matrix job tracking; artifacts root (`SERSFLOW_ARTIFACTS_DIR`).
-  - `upload_labels_store.py`: label persistence for uploaded files.
+  - `sqlite_db.py`: SQLite connection factory and `SERSFLOW_DB_PATH`.
+  - `blob_store.py`: content-addressed raw-file blob storage under `SERSFLOW_DATA_DIR`.
+  - `datasets_store.py`: dataset, spectrum, blob-reference, axis, and grid metadata persistence.
+  - `sessions_store.py`, `pipelines_store.py`: interactive session and named pipeline library persistence.
+  - `analysis_store.py`: analysis run/job records and per-spectrum feature JSON.
+  - `explore_store.py`: explore run records, matrix job records, and artifact roots.
+  - `upload_labels_store.py`: user-edited upload label overrides.
+- `src/sersflow/client/`
+  - `client.py`: synchronous `SersflowClient`.
+  - `resources/`: API-specific resource wrappers for meta, IO, datasets, sessions, pipeline, pipelines, metrics, plot, fitting, analysis, explore, and raw streaming.
+  - `polling.py`: shared polling helpers for asynchronous jobs.
 
 ### Frontend app (`frontend/`)
 
-The React code is a Vite app whose build artifacts are served by the Python backend.
+The frontend is a Vite/React app whose production build is served by the Python backend.
 
-- `frontend/src/main.tsx`: mounts the React UI into `#preprocess-root`.
-- `frontend/src/AppShell.tsx`: routes between two workspaces.
-  - `PreprocessingWorkspace.tsx`: “Pipeline & preview” (interactive).
-  - `AnalyzeWorkspace.tsx`: “Features & statistics” (batch + explore).
-- `frontend/src/preprocess/`: UI components and helpers specific to pipeline editing, fitting editor, preview runner.
-- `frontend/src/analyze/`: plotting utilities and API bindings for analysis/explore.
-- `frontend/src/lib/`: HTTP helpers, UI persistence (localStorage), Plotly theme utilities.
-- `frontend/src/legacy-wrappers/`: adapters that integrate existing legacy Plotly widgets / list widgets.
+- `frontend/src/main.tsx`: mounts React into `#preprocess-root`.
+- `frontend/src/AppShell.tsx`: routes between "Pipeline & preview" and "Features & statistics".
+- `frontend/src/PreprocessingWorkspace.tsx`: upload/dataset/session setup, subset previews, pipeline editing, pipeline library, reference transforms, fitting, spectral probes, integrations, and feature operations.
+- `frontend/src/AnalyzeWorkspace.tsx`: analysis jobs, exports, observation columns, heatmaps, parameter scatter, correlation/VIF, PCA/SPCA, clustering, spectrum matrices, FPCA, and spectrum overlays.
+- `frontend/src/preprocess/`: pipeline editors, API bindings, plotting controller, reference-transform helpers, feature-operation helpers, labels, and upload/range utilities.
+- `frontend/src/analyze/`: analysis/explore API bindings and plotting helpers.
+- `frontend/src/lib/`: HTTP helpers, Plotly theming, and UI persistence.
+- `frontend/src/legacy-wrappers/`: adapters for legacy Plotly and spectrum-list widgets.
 
-The React bundle is built into `src/sersflow/api/web/preprocess-dist/` and served from `/static/preprocess-dist/...` (see `README.md`).
+The built bundle lands in `src/sersflow/api/web/preprocess-dist/` and is served from `/static/preprocess-dist/...`.
+
+### Examples and publication scripts
+
+`examples/` contains programmatic workflows that exercise the public API/client and local outputs for figures, heatmaps, PCA/SPCA analyses, multipanel plots, complementarity analyses, and SI grids. These examples are not part of the service runtime, but they document the publication-facing workflow.
 
 ---
 
 ## Backend entrypoints and HTTP surface
 
-### FastAPI assembly
+The app in `src/sersflow/api/main.py` includes routers for:
 
-The server app is defined in `src/sersflow/api/main.py` and includes routers (see also `docs/API_ROUTERS.md`):
+- Meta (`/health`, `/`, `/preprocess`, `/static/...`): health checks and UI serving.
+- IO (`/io/...`): upload/unload files and upload label operations.
+- Plot (`/plot/...`): backend-generated plot data for raw/uploaded spectra.
+- Datasets (`/datasets/...`): dataset creation, listing, deletion, export/import, and spectrum metadata.
+- Pipeline (`/pipeline/...`): stateless pipeline execution and sweep-style endpoints.
+- Pipelines (`/pipelines/...`): reusable named pipeline library.
+- Metrics (`/metrics/...`): quick metric computation and related helpers.
+- Sessions (`/sessions/...`): working pipeline and subset strategy for interactive preview.
+- Fitting (`/fitting/...`): fitting catalog and fitting-related UI support.
+- Analysis (`/analysis/...`): full-dataset feature extraction runs, async job tracking, exports, and manifests.
+- Explore (`/explore/...`): feature-level and spectrum-level statistical workflows.
 
-- **Meta** (`/health`, `/`, `/preprocess`, `/static/...`): health checks + web UI serving.
-- **IO** (`/io/...`): upload/unload files and manage upload labels.
-- **Datasets** (`/datasets/...`): dataset CRUD and spectrum metadata.
-- **Sessions** (`/sessions/...`): sessions store the working pipeline and subset strategy used for interactive preview.
-- **Pipeline** (`/pipeline/...`): stateless pipeline execution endpoints (run / sweep).
-- **Pipelines** (`/pipelines/...`): persisted “pipeline library” entries (named reusable pipelines).
-- **Fitting** (`/fitting/...`): fitting model catalog and fitting-related endpoints (used by the fitting UI).
-- **Analysis** (`/analysis/...`): full-dataset feature extraction runs, run/job tracking, exports.
-- **Explore** (`/explore/...`): multivariate statistics and modeling (correlation, VIF, PCA/SPCA, clustering, FPCA, spectrum-matrix jobs).
-
-### Persistent state and storage locations
-
-SERSFlow has three “persistence planes”:
-
-1. **Raw uploads on disk**: uploaded files are stored under an uploads root (default `.sersflow_uploads/`, managed by `sersflow.core.io.upload_registry`).
-2. **SQLite (`sersflow.db`)**: metadata and compact results:
-   - datasets and spectrum references
-   - sessions (subset strategy + pipeline JSON)
-   - pipeline library entries
-   - analysis runs + per-spectrum features (stored as JSON per spectrum per run)
-   - explore runs and matrix job metadata
-3. **Artifacts directory** (default `.sersflow_artifacts/`):
-   - exploration bundles (e.g., `correlation.json`, `vif.json`, `pca.json`, clustering outputs, rendered plots)
-   - spectrum matrices (`matrix.npz`) for spectrum-level PCA/FPCA workflows
-
-The local storage paths are configurable:
-
-- `SERSFLOW_DB_PATH`: overrides the SQLite file location (default `./sersflow.db`).
-- `SERSFLOW_UPLOAD_DIR`: overrides the upload storage directory (default `./.sersflow_uploads`).
-- `SERSFLOW_ARTIFACTS_DIR`: overrides the artifacts directory (default `./.sersflow_artifacts`).
+See `docs/API_ROUTERS.md` for the endpoint-oriented view.
 
 ---
 
-## Core computational contract: the pipeline engine
+## Persistent state and storage
+
+SERSFlow uses four local persistence planes:
+
+1. Upload registry (`.sersflow_uploads/` by default): files as uploaded by the user, including active/unloaded registry state.
+2. Durable data blobs (`.sersflow_data/blobs/` by default): content-addressed copies used by datasets so later analysis is not only path-bound to the original upload location.
+3. SQLite (`sersflow.db` by default): metadata, labels, sessions, pipelines, run/job records, spectrum refs, axes, grid metadata, and compact feature JSON.
+4. Artifacts (`.sersflow_artifacts/` by default): large generated outputs such as `matrix.npz`, explore JSON bundles, rendered PCA/cluster/FPCA plots, and other model diagnostics.
+
+Configurable roots:
+
+- `SERSFLOW_DB_PATH`: SQLite file location, default `./sersflow.db`.
+- `SERSFLOW_UPLOAD_DIR`: upload directory, default `./.sersflow_uploads`.
+- `SERSFLOW_DATA_DIR`: durable blob/data directory, default `./.sersflow_data`.
+- `SERSFLOW_ARTIFACTS_DIR`: generated artifacts directory, default `./.sersflow_artifacts`.
+
+Dataset records store both user-facing paths and durable blob references (`blob_id`, `blob_relative_path`, `original_relative_path`) when available. Dataset export/import can package manifests, blob payloads, file metadata, labels, and spectrum refs for reproducible transfer.
+
+---
+
+## Core computational contract: pipeline engine
 
 ### Pipeline model
 
-A pipeline is an ordered list of steps, where each step has:
+A pipeline is an ordered list of steps. Each step has:
 
-- **name**: selects a registered implementation (e.g., `baseline`, `crop`, `normalize`, `fitting`, `spectral_intensities`).
-- **params**: step-specific parameter dictionary.
-- **enabled** flag.
-- optional **impl_version** (used for provenance and cache-safety).
-- optional input routing (`input_from` = previous/initial/after_step and `after_step_id`) to support branching-like behaviors.
+- `name`: selects a registered Python implementation.
+- `params`: step-specific parameters.
+- `enabled`: controls execution.
+- optional `impl_version`: provenance and cache-safety.
+- optional input routing (`input_from`, `after_step_id`) for using the initial input, previous output, or a named prior step.
 
-The engine executes a pipeline for each input spectrum and produces:
+The engine executes a pipeline per input spectrum and returns:
 
-- a final \(x, y\) spectrum (`XY`)
-- optionally a subset of **intermediate step outputs** (for interactive visualization)
+- a final `XY` spectrum;
+- optional intermediate outputs for selected steps, used by interactive preview plots.
 
 ### Determinism, hashing, and caching
 
-The pipeline engine (`src/sersflow/core/pipeline/engine.py`) is designed so that step outputs are cacheable and reproducible:
+`src/sersflow/core/pipeline/engine.py` uses cache keys that include:
 
-- Each step execution uses a cache key that includes:
-  - a **namespace** (session/job scoped)
-  - spectrum_id
-  - step index + name (so reordering is safe)
-  - a hash of normalized parameters (including declared input routing)
-  - a **rolling lineage hash** of upstream steps and raw input
-- This prevents stale cache reuse when steps/params are changed.
+- a namespace scoped to the session/job;
+- `spectrum_id`;
+- step index and name;
+- normalized parameters, including input routing;
+- a rolling lineage hash of upstream steps and raw input.
 
-Two execution modes are used:
+This prevents stale cache reuse when steps are reordered, parameters change, or an upstream transform changes.
 
-- **Interactive (in-process)**: for subset previews and intermediate outputs, uses an in-process LRU cache.
-- **Batch parallel (process pool)**: for full-dataset runs, uses `ProcessPoolExecutor` without shared cache (safe and scalable; avoids cross-process cache complexity).
+Execution modes:
 
-### Step implementations
+- Interactive in-process execution uses an LRU cache for subset previews and intermediate outputs.
+- Batch execution uses `ProcessPoolExecutor` for full-dataset runs and avoids shared process cache complexity.
 
-Step implementations live under `src/sersflow/core/preprocess/` and cover typical SERS preprocessing operations:
+### Registered steps
 
-- noise smoothing (e.g., Savitzky–Golay)
-- cosmic ray detection/removal
-- baseline correction
-- crop to wavenumber range
-- normalization
-- peak fitting / model-based decomposition
-- feature probe extraction (e.g., spectral intensities; produces the feature table used downstream)
+The Python step registry currently covers:
 
-The authoritative definition of supported steps and their legal parameterization is in Python; the frontend mirrors it for UI forms only.
+- `crop`: limit spectra to a wavenumber range.
+- `align_resample`: interpolate spectra onto a shared grid for matrix workflows.
+- `normalize`: max/min/mean/median/vector and point-based normalization modes.
+- `noise_savgol`: Savitzky-Golay smoothing/derivatives.
+- `cosmic_ray_removal`: cosmic-ray detection and replacement.
+- `baseline`: baseline-corrected output.
+- `baseline_curve`: baseline-only output for routing/visualization.
+- `fitting`: model-based peak/background fitting.
+- `spectral_intensities`: no-op transform that declares intensity probes for feature extraction.
+- `spectral_integrations`: no-op transform that declares integration windows for feature extraction.
+- `feature_operations`: no-op transform that declares formulas over previously extracted features.
+- `spectrum_derivative`: derivative spectra over the current x-grid.
+- `reference_transform`: subtract or divide by a selected reference spectrum.
+
+The authoritative behavior and validation live in Python. Frontend step specs only provide labels, defaults, field controls, and presentation metadata.
 
 ---
 
@@ -173,216 +194,187 @@ The authoritative definition of supported steps and their legal parameterization
 
 ### Datasets
 
-A **dataset** is a named collection of spectrum references (`spectrum_id`, `relative_path`, `record_index`) stored in SQLite:
+A dataset is a named collection of `SpectrumRef` rows stored in SQLite. A single source file can expand into:
 
-- A single uploaded file can expand into multiple spectra:
-  - **single spectrum** file → one spectrum
-  - **series** file → spectra with a time axis
-  - **map** file → spectra with spatial \(x, y\) axes
+- one spectrum for a single-spectrum file;
+- many spectra with `axis_time_s` for a series file;
+- many spectra with `axis_map_x` and `axis_map_y` for a spatial map.
 
-During dataset creation the backend also populates per-spectrum axes and per-file grid metadata (see `src/sersflow/infra/datasets_store.py`):
+Per-file metadata records `grid_nx`, `grid_ny`, and `kind` (`single`, `series`, `map`). This metadata drives heatmaps, time-series plots, observation-table joins, and publication scripts.
 
-- per spectrum (nullable): `axis_time_s`, `axis_map_x`, `axis_map_y`
-- per file: `grid_nx`, `grid_ny`, and `kind ∈ {single, series, map}`
+Automatic labels are extracted from upload paths/filenames by `src/sersflow/core/labels/` (for example sample, compound, gas, pH, current density, potential, and laser). User edits are persisted by `upload_labels_store.py` and exported as `meta_*` observation columns.
 
-This metadata is crucial for downstream heatmaps and time series plots and is exportable as part of the observation table (below).
+### Sessions
 
-### Sessions (interactive workspace state)
+A session binds:
 
-A **session** binds:
+- one dataset;
+- the current pipeline definition;
+- a subset strategy used for interactive preview plots.
 
-- a dataset
-- a current pipeline definition
-- a subset strategy (often “random \(n\) with seed”) used for preview plots
+Session subsets are preview-only. Batch analysis runs and matrix jobs intentionally operate on the full dataset, with reference spectra excluded when the pipeline marks them as references.
 
-Key design choice:
+### Analysis runs
 
-- **Session subsets are preview-only.** Batch runs (analysis and matrix jobs) intentionally operate on the **full dataset** to ensure reproducible cohort definitions for statistics.
+An analysis run (`/analysis/runs`) performs full-dataset feature extraction and persists:
 
-### Analysis runs (batch feature extraction)
+- a run record with status, timestamps, errors, pipeline hashes, and feature columns;
+- optional async job records in `analysis_jobs`;
+- per-spectrum `features_json` in `analysis_spectrum_rows`.
 
-An **analysis run** (`/analysis/runs`) performs full-dataset feature extraction and persists results:
+The analysis runner applies the saved/provided pipeline, hydrates `reference_transform` parameters, excludes selected reference spectra from the analysis cohort, and extracts features from fitting components, spectral intensities, spectral integrations, and feature operations.
 
-- input: dataset + pipeline (from a session or provided inline)
-- cohort: always `SubsetStrategy(kind="all")` (full dataset)
-- output:
-  - run record (status, error, timestamps, hashes)
-  - per-spectrum `features_json` stored in SQLite (`analysis_spectrum_rows`)
-  - a remembered feature column list (`feature_columns_json`) for stable exports and UI defaults
+### Matrix jobs and explore runs
 
-Runs can execute synchronously or as an async background job (tracked in `analysis_jobs`).
+Matrix jobs produce spectrum matrices for spectrum-level workflows:
 
-### Explore runs (statistics/modeling)
+- input: dataset plus pipeline;
+- output: `matrix.npz` and provenance metadata under `.sersflow_artifacts/matrix/<mjob_id>/`;
+- requirement: spectra must end on a consistent x-grid, typically through `align_resample`.
 
-Explore endpoints (`/explore/...`) are “L2” analyses that consume:
+Explore runs consume either:
 
-- an **analysis run** (feature table) for correlation/VIF/PCA/k-means, or
-- a **matrix job** (spectrum matrix) for spectrum PCA/FPCA workflows
+- an analysis run feature table for correlation, VIF, PCA/SPCA, and clustering; or
+- a matrix job for spectrum PCA, spectrum clustering, and FPCA.
 
-Explore results are stored primarily as artifact files (JSON + plots), with a lightweight DB record pointing to the artifact directory.
+Explore results are stored primarily as artifact files (JSON plus plots), with lightweight SQLite records pointing to the artifact directory.
 
 ---
 
-## Export contracts: “feature table” vs “observation table”
+## Export contracts
 
-SERSFlow supports exporting tabular data for external analysis tools (R, Python, Excel, Origin, etc.).
+SERSFlow exports data for external analysis tools such as Python, R, Excel, Origin, and publication scripts.
 
-### Feature export
+### Feature table
 
-The simplest export is the **feature table**:
+Feature exports are built from one analysis run:
 
-- wide layout: one row per `spectrum_id`, columns = selected feature keys
-- long layout: tidy rows `(run_id, spectrum_id, feature_key, value, kind)`
+- wide layout: one row per `spectrum_id`, columns are selected feature keys;
+- long layout: tidy rows `(run_id, spectrum_id, feature_key, value, kind)`.
 
-### Observation export (features + joins)
+### Observation table
 
-The more general export is the **observation table**, which can join:
+Observation exports join:
 
-- **features** from an analysis run
-- **axes** (`axis_time_s`, `axis_map_x`, `axis_map_y`, `grid_nx`, `grid_ny`, `file_kind`)
-- **metadata labels** derived from upload paths and/or user-edited labels (`meta_*` columns)
+- features from an analysis run;
+- axes and grid metadata (`axis_time_s`, `axis_map_x`, `axis_map_y`, `grid_nx`, `grid_ny`, `file_kind`);
+- automatic and user-edited labels as `meta_*` columns.
 
-Exports are streamed (chunked) to support large datasets, and Parquet is available as an optional dependency (`pyarrow`) for wide tables.
-
-These exports are built in `src/sersflow/api/services/observation_export.py` and exposed via `/analysis/runs/{run_id}/...`.
+Exports are streamed to support large datasets. Wide Parquet output is available when `pyarrow` is installed. Export manifests capture enough context to reproduce table generation.
 
 ---
 
-## Frontend architecture and user-facing functionality
+## Frontend architecture and user-facing workflow
 
-### UI composition and embedding strategy
+### UI composition
 
-The backend serves a legacy HTML shell (`GET /`) and a dedicated preprocess page (`GET /preprocess`). The React app is mounted into `#preprocess-root` and can run:
-
-- embedded inside the legacy tabbed shell, or
-- standalone (its own minimal navigation rendered by `AppShell.tsx`)
+The backend serves both a legacy HTML shell (`GET /`) and a dedicated preprocess page (`GET /preprocess`). The React app mounts into `#preprocess-root` and can run embedded in the legacy shell or standalone with navigation from `AppShell.tsx`.
 
 React uses:
 
-- `@tanstack/react-query` for API state management and caching.
-- `react-router-dom` (hash router) for local navigation between workspaces.
-- Plotly for interactive plotting (via wrappers that preserve compatibility with legacy code).
+- `react-router-dom` for local workspace routing;
+- `@tanstack/react-query` for API state and caching;
+- Plotly wrappers for interactive visualization while preserving legacy integrations.
 
-### Workspace 1: Pipeline & preview (interactive “Prepare”)
+### Pipeline & preview
 
-Implemented in `frontend/src/PreprocessingWorkspace.tsx`, this workspace provides:
+Implemented in `frontend/src/PreprocessingWorkspace.tsx`, this workspace is optimized for fast iteration on a subset:
 
-- **Upload management** (via the legacy upload list component).
-- **Dataset creation** from selected uploads (single file or multiple).
-- **Session creation** and **subset sampling** for preview plots (random subsets, outlier-derived subsets).
-- **Pipeline editing** using step templates and a parameter editor.
-- **Preview plotting**:
-  - raw or final spectra
-  - intermediate “After: step” views (subset-only; guarded to avoid heavy runs)
-  - optional ghost overlays and stacking for visual comparison
-- **Pipeline library** interactions:
-  - save pipeline to current session (“Save pipeline”)
-  - save named pipelines to a shared library and reload/update them
+- upload management and label editing;
+- dataset and session creation;
+- subset sampling, including random and outlier-derived previews;
+- pipeline editing with Python-backed step semantics and UI-only step specs;
+- fitting, reference transforms, spectral intensity probes, spectral integrations, and feature operations;
+- raw/final/intermediate preview plots with optional overlays/stacking;
+- saving the working pipeline to the session and to the reusable pipeline library.
 
-This workspace is explicitly optimized for **fast iteration** and **interactive validation** of preprocessing choices on a subset.
+### Features & statistics
 
-### Workspace 2: Features & statistics (batch “Analyze”)
+Implemented in `frontend/src/AnalyzeWorkspace.tsx`, this workspace is optimized for full-dataset outputs:
 
-Implemented in `frontend/src/AnalyzeWorkspace.tsx`, this workspace provides:
+- analysis run creation, deletion, and async job monitoring;
+- feature-table and observation-table exports;
+- export bundles/manifests for reproducible bookkeeping;
+- observation-column inspection and metadata-driven plotting;
+- heatmaps, parameter scatter plots, and spectrum overlays;
+- correlation, VIF, PCA, sparse PCA, k-means clustering, spectrum matrices, spectrum PCA/cluster, and FPCA.
 
-- **Analysis run management**: create/delete feature extraction runs and monitor job status.
-- **Exports**:
-  - feature table export
-  - observation table export with joins (labels/axes)
-  - export bundle/manifest for reproducible bookkeeping
-- **Multivariate statistics and modeling** (backed by `/explore/...`):
-  - correlation (and associated artifact JSON)
-  - variance inflation factors (VIF)
-  - PCA / sparse PCA with diagnostic plots
-  - k-means clustering on PCA scores
-  - FPCA (discrete and FDA-backed variants, depending on server support)
-  - spectrum-matrix export jobs + spectrum-level PCA/cluster
-- **Plotting**:
-  - scree plots, cumulative explained variance
-  - scores scatter/pairplots, loadings visualizations, cluster diagnostics
-  - parameter scatter plots based on selected observation columns
-
-Key design choice (surfaced in the UI):
-
-- **All statistical analyses assume full-dataset runs** produced by the analysis runner. This avoids the ambiguity of statistics computed on a preview subset.
+The UI surfaces the central workflow rule: preview subsets are for selecting preprocessing choices; statistics and exports are based on full-dataset runs.
 
 ---
 
-## Typical end-to-end workflow (as implemented)
+## Python HTTP client
 
-1. **Upload raw files** (`POST /io/upload`).
-2. **Create a dataset** from one or more uploads (UI-driven via `/datasets/...`).
-3. **Create a session** for that dataset (`POST /sessions`) and sample a preview subset (`POST /sessions/{id}/subset`).
-4. **Design the preprocessing pipeline** in “Pipeline & preview”:
-   - validate preprocessing by plotting raw/final and intermediate outputs on the subset
-   - save the pipeline into the session (`PUT /sessions/{id}/pipeline`)
-5. **Run full-dataset feature extraction** in “Features & statistics”:
-   - create an analysis run (`POST /analysis/runs`, often async)
-   - wait for `status=completed`
-6. **Export** for external analysis or archiving:
-   - wide/long feature export
-   - wide/long observation export with axes/labels joins (optionally Parquet)
-7. **Explore and model**:
-   - correlation/VIF/PCA/clustering on scalar features
-   - optionally export a spectrum matrix job and run spectrum PCA/FPCA workflows
+`src/sersflow/client/` provides a synchronous `SersflowClient` for notebooks, scripts, and examples:
 
-This workflow maps cleanly to a publication narrative: preprocessing choices are validated interactively, then batch-executed for reproducible statistics and exports.
+```python
+from sersflow.client import SersflowClient
+
+with SersflowClient("http://127.0.0.1:8000") as client:
+    client.meta.health()
+```
+
+The client mirrors backend concerns through resource objects (`client.io`, `client.datasets`, `client.sessions`, `client.pipeline`, `client.pipelines`, `client.metrics`, `client.plot`, `client.fitting`, `client.analysis`, `client.explore`, and `client.raw`) and centralizes polling for async jobs.
 
 ---
 
-## Extension points (where new science/engineering fits)
+## Typical end-to-end workflow
 
-### Add a new preprocessing step
+1. Upload raw files through `/io/upload` or the UI.
+2. Review/edit extracted upload labels.
+3. Create a dataset from selected uploads; the backend records spectrum refs, axes, grid metadata, labels, and durable blob refs.
+4. Create a session and choose a preview subset.
+5. Design the preprocessing pipeline in "Pipeline & preview".
+6. Save the pipeline to the session and optionally to the pipeline library.
+7. Run full-dataset feature extraction in "Features & statistics".
+8. Export feature/observation tables or an export bundle.
+9. Run exploration/modeling: correlation, VIF, PCA/SPCA, clustering, matrix jobs, spectrum PCA, and FPCA.
+10. Use examples/client scripts to generate publication figures from the exported tables and artifacts.
 
-Implement the step in Python (core contract) and then surface it in the UI:
+This maps to the publication narrative: validate preprocessing interactively, execute full-dataset analysis reproducibly, then generate explicit tables/artifacts for figures and external review.
 
-- Add/register implementation under `src/sersflow/core/preprocess/` and step registry.
-- Extend Pydantic models in `src/sersflow/api/schemas/pipeline.py` as needed.
-- Add frontend presentation metadata in `frontend/src/preprocess/pipelineStepSpecs.ts` (labels/defaults/fields only).
+---
 
-The expected authority direction is documented in `docs/PIPELINE_UI_AUTHORITY.md`.
+## Extension points
 
-### Add a new exploration/statistics routine
+### Add a preprocessing or feature step
 
-Patterns established by `/explore`:
+- Implement/register the Python step in `src/sersflow/core/pipeline/steps.py` and supporting modules under `core/preprocess/` or `core/metrics/`.
+- Extend Pydantic schemas in `src/sersflow/api/schemas/` when the API contract changes.
+- Add UI presentation metadata in `frontend/src/preprocess/pipelineStepSpecs.ts`.
+- Keep Python as the source of truth for validation and execution.
 
-- validate preconditions (analysis run completed, numeric columns, shape checks)
-- compute results (NumPy / SciPy / sklearn-style)
-- write JSON outputs (and optional plots) to an artifact subdirectory
-- create and finish an `explore_runs` record that references the artifact path
+### Add an exploration/statistics routine
+
+Follow the `/explore` pattern:
+
+- validate completed input runs/jobs and numeric shape requirements;
+- compute the result with NumPy/SciPy/sklearn-style code;
+- write JSON outputs and optional plots to an artifact subdirectory;
+- create and finish an `explore_runs` record pointing to the artifact path;
+- expose a thin router endpoint and optional client resource method.
 
 ### Improve reproducibility
 
-Reproducibility hooks already present:
+Existing hooks include:
 
-- pipeline and subset hashes recorded on runs/jobs
-- explicit manifests for exports and matrix artifacts
-- stable IDs (`ds_*`, `arun_*`, `ajob_*`, `mjob_*`, `exp_*`) for provenance trails
+- pipeline, subset, and input hashes;
+- stable IDs (`ds_*`, `arun_*`, `ajob_*`, `mjob_*`, `exp_*`);
+- durable blob refs for dataset source files;
+- export and matrix manifests;
+- artifact directories for model outputs and diagnostic plots.
 
-Common publication-grade additions (easy to layer on) include: software version capture, parameter manifests for explore runs, and DOI-ready “evidence bundles” per figure/table.
+Future publication-grade additions can layer on software version capture, richer explore manifests, and figure/table evidence bundles.
 
 ---
 
-## Summary of current functionalities (at a glance)
+## Current functionality at a glance
 
-- **Data ingestion**
-  - upload files + label extraction + label editing
-  - dataset creation from uploads; supports single/series/map-derived spectra
-- **Preprocessing**
-  - pipeline definition (step list + params + input routing)
-  - interactive preview plots with subset sampling and intermediates
-  - stateless pipeline runs and bounded parameter sweeps
-- **Batch analysis**
-  - full-dataset feature extraction runs with async job tracking
-  - persistent per-spectrum feature JSON storage
-- **Exports**
-  - wide/long feature table
-  - wide/long observation table with metadata + axes joins
-  - optional Parquet export for wide tables
-- **Exploration / modeling**
-  - correlation bundles, VIF
-  - PCA / sparse PCA + rendered diagnostics
-  - k-means clustering on feature PCA or spectrum PCA
-  - spectrum matrix export jobs (`matrix.npz`) with provenance
-  - FPCA (discrete; and FDA-based where enabled)
+- Data ingestion: uploads, durable blobs, automatic labels, label overrides, dataset creation, dataset export/import.
+- Preprocessing: explicit pipelines, input routing, subset previews, intermediate plots, fitting, reference transforms, alignment/resampling, feature declarations, and sweeps.
+- Batch analysis: full-dataset feature extraction, async jobs, per-spectrum feature JSON, feature operations, and stable feature columns.
+- Exports: wide/long feature tables, wide/long observation tables, metadata/axis joins, optional Parquet, and manifests.
+- Plotting: backend raw plots, frontend Plotly workspaces, heatmaps, scatter plots, PCA/cluster diagnostics, spectrum overlays, and publication scripts.
+- Exploration/modeling: correlation, VIF, PCA, sparse PCA, k-means, spectrum matrices, spectrum PCA/cluster, and FPCA.
+- Automation: Python HTTP client resources and job polling for notebooks, scripts, and figure-generation workflows.
 

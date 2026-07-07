@@ -32,7 +32,7 @@ def test_populate_axes_single_spectrum_file(db_env: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr("sersflow.infra.datasets_store.load_dataset", fake_load)
 
     spectra = [SpectrumRef(spectrum_id="s1", relative_path="batch/a.txt", record_index=None)]
-    rec = create_dataset(metadata=DatasetMetadata(name="t"), spectra=spectra)
+    rec = create_dataset(owner_user_id="dev", metadata=DatasetMetadata(name="t"), spectra=spectra)
     lu = spectrum_export_lookup(rec.dataset_id)
     assert lu["s1"]["axis_time_s"] is None
     assert lu["s1"]["axis_map_x"] is None
@@ -67,7 +67,7 @@ def test_populate_axes_series_time_axis(db_env: Path, monkeypatch: pytest.Monkey
         SpectrumRef(spectrum_id="s1", relative_path="batch/series.txt", record_index=1),
         SpectrumRef(spectrum_id="s2", relative_path="batch/series.txt", record_index=2),
     ]
-    rec = create_dataset(metadata=DatasetMetadata(name="t"), spectra=spectra)
+    rec = create_dataset(owner_user_id="dev", metadata=DatasetMetadata(name="t"), spectra=spectra)
     lu = spectrum_export_lookup(rec.dataset_id)
     assert lu["s0"]["axis_time_s"] == pytest.approx(0.0)
     assert lu["s1"]["axis_time_s"] == pytest.approx(1.5)
@@ -94,7 +94,7 @@ def test_populate_axes_map_positions(db_env: Path, monkeypatch: pytest.MonkeyPat
         SpectrumRef(spectrum_id="m0", relative_path="batch/map.wdf", record_index=0),
         SpectrumRef(spectrum_id="m3", relative_path="batch/map.wdf", record_index=3),
     ]
-    rec = create_dataset(metadata=DatasetMetadata(name="t"), spectra=spectra)
+    rec = create_dataset(owner_user_id="dev", metadata=DatasetMetadata(name="t"), spectra=spectra)
     lu = spectrum_export_lookup(rec.dataset_id)
     assert lu["m0"]["axis_map_x"] == pytest.approx(0.0)
     assert lu["m0"]["axis_map_y"] == pytest.approx(0.0)

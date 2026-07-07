@@ -138,4 +138,22 @@ export const pipelineStepSpecs: Record<
       },
     ],
   },
+  spectrum_derivative: {
+    methodLabel: "method",
+    methods: [
+      {
+        id: "gradient",
+        label: "gradient",
+        defaults: { method: "gradient", order: 1 },
+        fields: [
+          {
+            key: "order",
+            kind: "int",
+            label: "order",
+            description: "Derivative order. 1 is the first derivative; larger values apply the gradient repeatedly.",
+          },
+        ],
+      },
+    ],
+  },
 };

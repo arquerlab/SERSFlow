@@ -24,5 +24,10 @@ def export_pipeline_package(record: PipelineLibraryRecord) -> PipelineExportPack
     )
 
 
-def import_pipeline_package(*, name: str | None, pipeline: Pipeline) -> PipelineLibraryRecord:
-    return create_pipeline(name=name or "Imported pipeline", pipeline=pipeline, overwrite=False)
+def import_pipeline_package(*, name: str | None, pipeline: Pipeline, owner_user_id: str) -> PipelineLibraryRecord:
+    return create_pipeline(
+        name=name or "Imported pipeline",
+        pipeline=pipeline,
+        owner_user_id=owner_user_id,
+        overwrite=False,
+    )

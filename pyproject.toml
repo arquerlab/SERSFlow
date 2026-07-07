@@ -18,6 +18,7 @@ dependencies = [
   "scikit-learn",
   "matplotlib",
   "renishawWiRE",
+  "bcrypt",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,7 @@ explore-fda = ["scikit-fda>=0.9"]
 
 [project.scripts]
 sersflow-api = "sersflow.api.main:run"
+sersflow-admin = "sersflow.cli.admin:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -44,4 +46,7 @@ select = ["E", "F", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "auth: tests that exercise real authentication (not AUTH_DISABLED)",
+]
 

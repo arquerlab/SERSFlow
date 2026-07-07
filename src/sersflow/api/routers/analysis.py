@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import sqlite3
 import zipfile
 from threading import Thread
 from typing import Any, Iterator, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from sersflow.api.schemas.analysis import (
@@ -19,7 +20,9 @@ from sersflow.api.schemas.analysis import (
     AnalysisRunSummary,
     ObservationSchemaResponse,
 )
-from sersflow.api.services.analysis_runner import execute_analysis_run
+from sersflow.api.deps import current_user_id
+from sersflow.api.services.ownership import get_dataset_for_user, get_run_for_user, get_session_for_user
+from sersflow.api.services.analysis_runner import execute_analysis_run, spectrum_xy_for_analysis_run
 from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.sessions_service import pipeline_hash, subset_hash
 from sersflow.infra.analysis_store import (
@@ -30,13 +33,11 @@ from sersflow.infra.analysis_store import (
     find_run_by_client_job_key,
     get_job_by_id,
     get_job_for_run,
-    get_run,
     list_runs,
     prune_unpinned_runs,
 )
-from sersflow.infra.datasets_store import get_dataset, spectrum_export_lookup
+from sersflow.infra.datasets_store import spectrum_export_lookup
 from sersflow.infra.pipelines_store import list_pipelines
-from sersflow.infra.sessions_store import get_session
 from sersflow.api.services.observation_export import (
     build_analysis_manifest,
     iter_long_feature_csv_bytes,
@@ -52,18 +53,26 @@ from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
 
+
+def _require_run(run_id: str, user_id: str) -> Any:
+    rec = get_run_for_user(run_id, user_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return rec
+
+
 # Max bytes for in-memory ZIP bundle (use separate manifest + CSV export for larger runs).
 _BUNDLE_MAX_BYTES = 80 * 1024 * 1024
 
 
-def _pipeline_hash_to_name_map(limit: int = 500) -> dict[str, str]:
+def _pipeline_hash_to_name_map(*, owner_user_id: str, limit: int = 500) -> dict[str, str]:
     """
     Best-effort mapping from pipeline_hash -> saved library name.
     Used to show friendly names for older runs that predate pipeline_name storage.
     """
     out: dict[str, str] = {}
     try:
-        rows = list_pipelines(limit=limit, offset=0, q=None)
+        rows = list_pipelines(owner_user_id=owner_user_id, limit=limit, offset=0, q=None)
     except Exception:
         return out
     for r in rows:
@@ -115,6 +124,7 @@ def _pipeline_summary(pipeline_obj: Any) -> str | None:
 def _run_to_summary(
     rec: Any,
     *,
+    owner_user_id: str,
     include_columns: bool = False,
     pipeline_name_by_hash: dict[str, str] | None = None,
 ) -> AnalysisRunSummary:
@@ -126,7 +136,7 @@ def _run_to_summary(
             cols = None
     ds_name = None
     try:
-        ds = get_dataset(rec.dataset_id)
+        ds = get_dataset_for_user(rec.dataset_id, owner_user_id)
         ds_name = ds.metadata.name if ds else None
     except Exception:
         ds_name = None
@@ -139,7 +149,7 @@ def _run_to_summary(
             pipe_sum = None
     if pipe_sum is None and rec.session_id:
         try:
-            sess = get_session(rec.session_id)
+            sess = get_session_for_user(rec.session_id, owner_user_id)
             pipe_sum = _pipeline_summary(sess.pipeline) if sess else None
         except Exception:
             pipe_sum = None
@@ -183,8 +193,9 @@ def _idempotent_response(existing: Any) -> JSONResponse:
 
 
 @router.post("/runs", response_model=AnalysisRunCreateResponse)
-def create_analysis_run(payload: AnalysisRunCreateRequest) -> Any:
-    ds = get_dataset(payload.dataset_id)
+def create_analysis_run(payload: AnalysisRunCreateRequest, request: Request) -> Any:
+    user_id = current_user_id(request)
+    ds = get_dataset_for_user(payload.dataset_id, user_id)
     if ds is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
@@ -194,7 +205,7 @@ def create_analysis_run(payload: AnalysisRunCreateRequest) -> Any:
             return _idempotent_response(existing)
 
     if payload.session_id:
-        sess = get_session(payload.session_id)
+        sess = get_session_for_user(payload.session_id, user_id)
         if sess is None:
             raise HTTPException(status_code=404, detail="Session not found")
         if sess.dataset_id != payload.dataset_id:
@@ -258,31 +269,37 @@ def create_analysis_run(payload: AnalysisRunCreateRequest) -> Any:
         )
 
     execute_analysis_run(run_id=run_id, job_id=None)
-    rec = get_run(run_id)
+    rec = get_run_for_user(run_id, user_id)
     st = rec.status if rec else "unknown"
     return AnalysisRunCreateResponse(run_id=run_id, job_id=None, status=st, message=None)
 
 
 @router.get("/runs", response_model=list[AnalysisRunSummary])
 def list_analysis_runs(
+    request: Request,
     dataset_id: str = Query(..., min_length=1),
     limit: int = Query(50, ge=1, le=200),
 ) -> list[AnalysisRunSummary]:
+    user_id = current_user_id(request)
+    if get_dataset_for_user(dataset_id, user_id) is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
     rows = list_runs(dataset_id=dataset_id, limit=limit)
-    name_by_hash = _pipeline_hash_to_name_map()
-    return [_run_to_summary(r, include_columns=False, pipeline_name_by_hash=name_by_hash) for r in rows]
+    name_by_hash = _pipeline_hash_to_name_map(owner_user_id=user_id)
+    return [_run_to_summary(r, owner_user_id=user_id, include_columns=False, pipeline_name_by_hash=name_by_hash) for r in rows]
 
 
 @router.get("/runs/{run_id}", response_model=AnalysisRunDetailResponse)
-def get_analysis_run(run_id: str) -> AnalysisRunDetailResponse:
-    rec = get_run(run_id)
-    if rec is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-    return AnalysisRunDetailResponse(run=_run_to_summary(rec, include_columns=True))
+def get_analysis_run(run_id: str, request: Request) -> AnalysisRunDetailResponse:
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
+    return AnalysisRunDetailResponse(run=_run_to_summary(rec, owner_user_id=user_id, include_columns=True))
 
 
 @router.delete("/runs/{run_id}", response_model=None)
-def delete_analysis_run(run_id: str) -> dict[str, Any]:
+def delete_analysis_run(run_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    if get_run_for_user(run_id, user_id) is None:
+        raise HTTPException(status_code=404, detail="Run not found")
     ok = delete_run(run_id=run_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -291,16 +308,23 @@ def delete_analysis_run(run_id: str) -> dict[str, Any]:
 
 @router.delete("/runs", response_model=None)
 def delete_all_analysis_runs_for_dataset(
+    request: Request,
     dataset_id: str = Query(..., min_length=1, description="Delete all analysis runs for this dataset."),
 ) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    if get_dataset_for_user(dataset_id, user_id) is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
     deleted = delete_runs_for_dataset(dataset_id=dataset_id)
     return {"deleted": True, "runs_deleted": int(deleted)}
 
 
 @router.get("/jobs/{job_id}", response_model=AnalysisJobStatusResponse)
-def get_analysis_job(job_id: str) -> AnalysisJobStatusResponse:
+def get_analysis_job(job_id: str, request: Request) -> AnalysisJobStatusResponse:
+    user_id = current_user_id(request)
     row = get_job_by_id(job_id)
     if row is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if get_run_for_user(str(row["run_id"]), user_id) is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return AnalysisJobStatusResponse(
         job_id=row["job_id"],
@@ -324,14 +348,13 @@ def _feature_keys(rec: Any) -> list[str]:
 
 
 @router.get("/runs/{run_id}/observation-schema", response_model=ObservationSchemaResponse)
-def get_observation_schema(run_id: str) -> ObservationSchemaResponse:
+def get_observation_schema(run_id: str, request: Request) -> ObservationSchemaResponse:
     """
     Column names for pickers: extracted features from this run, dataset axes, and upload ``meta_*`` keys.
     Explore endpoints accept any numeric subset of these when merged into the observation row.
     """
-    rec = get_run(run_id)
-    if rec is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
     feat = _feature_keys(rec)
     axis_keys, meta_keys = list_observation_axis_and_meta_keys_for_dataset(rec.dataset_id)
     return ObservationSchemaResponse(feature_keys=feat, axis_keys=axis_keys, meta_keys=meta_keys)
@@ -340,6 +363,7 @@ def get_observation_schema(run_id: str) -> ObservationSchemaResponse:
 @router.get("/runs/{run_id}/observation-columns", response_model=None)
 def get_observation_columns(
     run_id: str,
+    request: Request,
     cols: str = Query(..., min_length=1, description="Comma-separated column names."),
     max_rows: int | None = Query(
         50_000,
@@ -351,9 +375,8 @@ def get_observation_columns(
     """
     JSON rows for selected columns (features, ``axis_*``, ``meta_*``) — same merge as observation wide CSV.
     """
-    rec = get_run(run_id)
-    if rec is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
     if rec.status != "completed":
         raise HTTPException(status_code=400, detail="Run is not completed yet")
     col_list = [c.strip() for c in cols.split(",") if c.strip()]
@@ -380,17 +403,64 @@ def get_observation_columns(
     ):
         sid = str(row["spectrum_id"])
         out: dict[str, Any] = {"spectrum_id": sid}
+        info = lookup.get(sid, {})
         for c in col_list:
-            out[c] = row.get(c)
+            if c in {"relative_path", "original_relative_path", "blob_id", "blob_relative_path"}:
+                out[c] = info.get(c)
+            else:
+                out[c] = row.get(c)
         rows.append(out)
     return {"rows": rows}
 
 
+def _json_float(value: Any) -> float | None:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+@router.get("/runs/{run_id}/spectra/{spectrum_id}", response_model=None)
+def get_analysis_spectrum(run_id: str, spectrum_id: str, request: Request) -> dict[str, Any]:
+    """
+    Final pipeline spectrum for one observation in a completed analysis run.
+    """
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
+    if rec.status != "completed":
+        raise HTTPException(status_code=400, detail="Run is not completed yet")
+
+    lookup = spectrum_export_lookup(rec.dataset_id)
+    info = lookup.get(spectrum_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="Spectrum not found in analysis dataset")
+
+    try:
+        xy = spectrum_xy_for_analysis_run(rec=rec, spectrum_id=spectrum_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except (ValueError, FileNotFoundError, OSError, IndexError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    x = [_json_float(v) for v in xy.x.tolist()]
+    y = [_json_float(v) for v in xy.y.tolist()]
+    return {
+        "spectrum_id": spectrum_id,
+        "relative_path": info.get("relative_path"),
+        "file_kind": info.get("file_kind"),
+        "axis_time_s": info.get("axis_time_s"),
+        "axis_map_x": info.get("axis_map_x"),
+        "axis_map_y": info.get("axis_map_y"),
+        "x": x,
+        "y": y,
+    }
+
+
 @router.get("/runs/{run_id}/export/manifest", response_model=AnalysisExportManifest)
-def get_analysis_export_manifest(run_id: str) -> AnalysisExportManifest:
-    rec = get_run(run_id)
-    if rec is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+def get_analysis_export_manifest(run_id: str, request: Request) -> AnalysisExportManifest:
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
     keys = _feature_keys(rec)
     raw = build_analysis_manifest(
         run_id=rec.run_id,
@@ -405,14 +475,13 @@ def get_analysis_export_manifest(run_id: str) -> AnalysisExportManifest:
 
 
 @router.get("/runs/{run_id}/export/bundle", response_model=None)
-def download_analysis_export_bundle(run_id: str) -> Response:
+def download_analysis_export_bundle(run_id: str, request: Request) -> Response:
     """
     ZIP containing `manifest.json` + `features_wide.csv` (UTF-8).
     For very large runs, use separate `/export/manifest` and streaming `/export` instead.
     """
-    rec = get_run(run_id)
-    if rec is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
     if rec.status != "completed":
         raise HTTPException(status_code=400, detail="Run is not completed yet")
     keys = _feature_keys(rec)
@@ -457,6 +526,7 @@ def _parse_join_flags(raw: str) -> tuple[bool, bool]:
 @router.get("/runs/{run_id}/observation", response_model=None)
 def export_observation_table(
     run_id: str,
+    request: Request,
     layout: Literal["wide", "long"] = Query("wide"),
     export_format: Literal["csv", "parquet"] = Query(
         "csv",
@@ -480,13 +550,12 @@ def export_observation_table(
 
     Use `format=parquet` with `layout=wide` for columnar export (install `pyarrow`).
     """
-    rec = get_run(run_id)
-    if rec is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
     if rec.status != "completed":
         raise HTTPException(status_code=400, detail="Run is not completed yet")
 
-    ds = get_dataset(rec.dataset_id)
+    ds = get_dataset_for_user(rec.dataset_id, user_id)
     if ds is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
@@ -554,6 +623,7 @@ def export_observation_table(
 @router.get("/runs/{run_id}/export", response_model=None)
 def export_analysis_run(
     run_id: str,
+    request: Request,
     layout: Literal["wide", "long"] = Query("wide"),
     max_rows: int | None = Query(
         None,
@@ -572,9 +642,8 @@ def export_analysis_run(
 
     For manifest + reproducibility use `GET .../export/manifest` or `GET .../export/bundle`.
     """
-    rec = get_run(run_id)
-    if rec is None:
-        raise HTTPException(status_code=404, detail="Run not found")
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
     if rec.status != "completed":
         raise HTTPException(status_code=400, detail="Run is not completed yet")
 

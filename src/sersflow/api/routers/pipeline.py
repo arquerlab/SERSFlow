@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+
+from sersflow.api.deps import current_user_id
+from sersflow.api.services.ownership import OwnershipError, assert_paths_owner, paths_from_pipeline_inputs
 
 from sersflow.api.schemas.pipeline import (
     PipelineRunFinalResponse,
@@ -30,8 +33,10 @@ def baseline_methods_endpoint() -> dict[str, Any]:
 
 
 @router.post("/run", response_model=PipelineRunMetricsResponse | PipelineRunFinalResponse)
-def run_pipeline_endpoint(payload: PipelineRunRequest) -> dict[str, Any]:
+def run_pipeline_endpoint(payload: PipelineRunRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
     try:
+        assert_paths_owner(user_id, paths_from_pipeline_inputs(payload.inputs))
         cfg = EngineConfig(cache_namespace=payload.cache_namespace or "default")
         final = run_pipeline(
             inputs=payload.inputs,
@@ -60,6 +65,8 @@ def run_pipeline_endpoint(payload: PipelineRunRequest) -> dict[str, Any]:
                 }
             )
         return {"items": items}
+    except OwnershipError:
+        raise HTTPException(status_code=404, detail="Uploaded file not found") from None
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=f"Uploaded file not found: {e}") from e
     except (ValueError, IndexError) as e:
@@ -67,13 +74,15 @@ def run_pipeline_endpoint(payload: PipelineRunRequest) -> dict[str, Any]:
 
 
 @router.post("/sweep", response_model=PipelineSweepResponse)
-def sweep_pipeline_endpoint(payload: PipelineSweepRequest) -> dict[str, Any]:
+def sweep_pipeline_endpoint(payload: PipelineSweepRequest, request: Request) -> dict[str, Any]:
     """
     Run a simple parameter sweep over a single step.
 
     Intended for exploration mode; bounded to avoid accidental huge sweeps.
     """
+    user_id = current_user_id(request)
     try:
+        assert_paths_owner(user_id, paths_from_pipeline_inputs(payload.inputs))
         step_name = payload.sweep.step
         grid = payload.sweep.grid
         if not grid:
@@ -140,6 +149,8 @@ def sweep_pipeline_endpoint(payload: PipelineSweepRequest) -> dict[str, Any]:
                 best = r
 
         return {"results": results, "best": best}
+    except OwnershipError:
+        raise HTTPException(status_code=404, detail="Uploaded file not found") from None
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=f"Uploaded file not found: {e}") from e
     except (ValueError, IndexError) as e:

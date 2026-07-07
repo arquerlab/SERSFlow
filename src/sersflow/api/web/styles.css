@@ -50,6 +50,21 @@ h1 {
   color: var(--text);
 }
 
+.act-as-wrap {
+  margin-right: 12px;
+}
+
+.act-as-wrap label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.act-as-wrap select {
+  margin-left: 4px;
+}
+
 .tabs {
   margin-top: 16px;
   display: flex;
@@ -303,13 +318,9 @@ ul.files li {
   white-space: nowrap;
 }
 
-.upload-labels-editor-card {
-  margin-top: 14px;
-}
-
 .upload-labels-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(280px, 1fr);
+  grid-template-columns: minmax(260px, 0.95fr) minmax(320px, 1.05fr);
   gap: 12px;
   align-items: start;
 }
@@ -321,7 +332,7 @@ ul.files li {
 }
 
 .upload-labels-list-wrap {
-  max-height: 280px;
+  max-height: min(54vh, 520px);
 }
 
 .upload-labels-file-item {
@@ -365,7 +376,7 @@ ul.files li {
 }
 
 .labels-editor-wrap {
-  max-height: 360px;
+  max-height: min(54vh, 520px);
   overflow: auto;
 }
 
@@ -700,11 +711,11 @@ select {
   overflow-x: hidden;
 }
 
-/* Uploads tab: scroll the whole “Uploaded files (server)” card; list uses the card as the only scroller. */
+/* Uploads tab: one card contains the active upload tree and metadata editor. */
 .uploads-server-card {
   min-height: 0;
-  /* Keep this card compact; long lists should not push the rest of the tab far down. */
-  max-height: min(48vh, 520px);
+  /* Keep this card compact; the tree/editor panes handle long content. */
+  max-height: min(78vh, 820px);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -721,9 +732,13 @@ select {
   margin-bottom: 6px;
 }
 
-.uploads-server-card .scrollbox {
-  max-height: none;
-  overflow: visible;
+.uploads-server-card .upload-labels-list-wrap {
+  max-height: min(54vh, 520px);
+  overflow: auto;
+}
+
+.uploads-server-card .labels-editor-wrap {
+  max-height: min(54vh, 520px);
 }
 
 .preprocess-left .uploads-item {
@@ -757,4 +772,28 @@ select {
   }
 }
 
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 1000;
+}
+
+.login-overlay[hidden] {
+  display: none !important;
+}
+
+.login-card {
+  min-width: 280px;
+  max-width: 360px;
+}
+
+.login-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 

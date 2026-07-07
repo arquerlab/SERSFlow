@@ -37,7 +37,7 @@ export const SpectrumCheckboxListWrapper = forwardRef<
 
   async function fetchItems() {
     try {
-      const res = await fetch("/io/uploads?limit=5000", { cache: "no-store" });
+      const res = await fetch("/io/uploads?limit=5000", { cache: "no-store", credentials: "include" });
       if (!res.ok) return;
       const data = await res.json();
       const fetched: UploadItem[] = data.items ?? [];

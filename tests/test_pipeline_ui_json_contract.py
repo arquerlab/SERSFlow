@@ -71,7 +71,7 @@ def test_ui_shaped_pipeline_validates_and_analysis_run_completes(
 
     md = DatasetMetadata(name="t")
     spectra = [SpectrumRef(spectrum_id="sp_1", relative_path=rel, record_index=None)]
-    ds = create_dataset(metadata=md, spectra=spectra)
+    ds = create_dataset(owner_user_id="dev", metadata=md, spectra=spectra)
 
     sess = create_session(dataset_id=ds.dataset_id, pipeline=pipe, subset=SubsetStrategy(kind="all"))
     ph = pipeline_hash(pipe)
@@ -123,3 +123,101 @@ def test_ui_shaped_baseline_point_pipeline_contract_validates() -> None:
     assert pipe.steps[1].params["method"] == "baseline_point"
     assert pipe.steps[1].params["baseline_step_id"] == "editor-step-base"
     assert pipe.steps[1].params["point_x"] == 1000.0
+
+
+def _signal_baseline_probe_pipeline() -> dict:
+    return {
+        "steps": [
+            {
+                "name": "crop",
+                "params": {"min_x": 50.0, "max_x": 400.0},
+                "enabled": True,
+                "step_id": "editor-step-crop",
+                "input_from": "previous",
+            },
+            {
+                "name": "baseline",
+                "params": {"method": "mor", "half_window": 10},
+                "enabled": True,
+                "step_id": "editor-step-base",
+                "input_from": "previous",
+            },
+            {
+                "name": "spectral_intensities",
+                "params": {
+                    "probes": [
+                        {
+                            "id": "peak",
+                            "target_cm1": 200.0,
+                            "acquisition": "fixed",
+                            "method": "nearest",
+                            "source": "signal",
+                        },
+                        {
+                            "id": "base",
+                            "target_cm1": 200.0,
+                            "acquisition": "fixed",
+                            "method": "nearest",
+                            "source": "baseline",
+                            "baseline_step_id": "editor-step-base",
+                        },
+                    ]
+                },
+                "enabled": True,
+                "step_id": "editor-step-int",
+                "input_from": "previous",
+            },
+        ]
+    }
+
+
+def test_signal_and_baseline_probe_pipeline_validates_and_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sersflow.infra.analysis_store import iter_spectrum_rows
+
+    monkeypatch.setenv("SERSFLOW_DB_PATH", str(tmp_path / "db.sqlite"))
+    monkeypatch.setenv("SERSFLOW_UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setenv("SERSFLOW_DATA_DIR", str(tmp_path / "data"))
+
+    raw = _signal_baseline_probe_pipeline()
+    pipe = Pipeline.model_validate(raw)
+
+    batch = "b1"
+    (tmp_path / batch).mkdir()
+    f = tmp_path / batch / "s.txt"
+    f.write_text("wn\tint\n100\t30\n200\t70\n300\t110\n", encoding="utf-8")
+    rel = f"{batch}/s.txt"
+
+    md = DatasetMetadata(name="t")
+    spectra = [SpectrumRef(spectrum_id="sp_1", relative_path=rel, record_index=None)]
+    ds = create_dataset(owner_user_id="dev", metadata=md, spectra=spectra)
+
+    sess = create_session(dataset_id=ds.dataset_id, pipeline=pipe, subset=SubsetStrategy(kind="all"))
+    ph = pipeline_hash(pipe)
+    sh = subset_hash(SubsetStrategy(kind="all"))
+    run_id = create_run_pending(
+        dataset_id=ds.dataset_id,
+        session_id=sess.session_id,
+        pipeline_hash=ph,
+        subset_hash=sh,
+        pipeline_json=None,
+        label=None,
+        pinned=False,
+        client_job_key=None,
+        params=None,
+    )
+
+    execute_analysis_run(run_id=run_id, job_id=None)
+    rec = get_run(run_id)
+    assert rec is not None
+    assert rec.status == "completed"
+    assert "I_peak" in rec.feature_columns_json
+    assert "I_base" in rec.feature_columns_json
+
+    rows = list(iter_spectrum_rows(run_id=run_id))
+    assert len(rows) == 1
+    feats = rows[0][1]
+    assert feats["I_peak"] is not None
+    assert feats["I_base"] is not None
+    assert feats["I_peak"] != feats["I_base"]

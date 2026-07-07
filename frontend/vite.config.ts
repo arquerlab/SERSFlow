@@ -13,7 +13,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/datasets": "http://localhost:8000",
+      "/auth": "http://localhost:8000",
       "/sessions": "http://localhost:8000",
       "/pipeline": "http://localhost:8000",
       "/pipelines": "http://localhost:8000",

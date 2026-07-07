@@ -7,6 +7,9 @@ fig*/
 .sersflow_data/
 .sersflow_artifacts/
 .sersflow_uploads/
+sersflow.db
+sersflow.db-shm
+sersflow.db-wal
 
 # Legacy local upload storage
 uploads/
@@ -24,3 +27,7 @@ __pycache__/
 *.log
 logs/
 debug-*.log
+
+# Deploy / SSH keys (never commit)
+sersflow_deploy
+sersflow_deploy.pub

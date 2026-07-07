@@ -11,6 +11,9 @@ export type SpectralProbeEditorRow = {
   /** Empty string = omit window (backend default). */
   window_cm1: number | "";
   no_peak_fallback: "none" | "fixed_nearest";
+  source: "signal" | "baseline";
+  /** Required when source is baseline; references an earlier baseline step id. */
+  baseline_step_id: string;
 };
 
 export function defaultSpectralIntensitiesParams(): { probes: SpectralProbeEditorRow[] } {
@@ -28,6 +31,8 @@ export function defaultProbeRow(index: number): SpectralProbeEditorRow {
     extrapolation: "nan",
     window_cm1: "",
     no_peak_fallback: "none",
+    source: "signal",
+    baseline_step_id: "",
   };
 }
 
@@ -67,6 +72,8 @@ function probeFromApi(row: unknown, index: number): SpectralProbeEditorRow {
   const fbRaw = asStr(o.no_peak_fallback).toLowerCase();
   const no_peak_fallback: SpectralProbeEditorRow["no_peak_fallback"] =
     fbRaw === "fixed_nearest" ? "fixed_nearest" : "none";
+  const srcRaw = asStr(o.source).toLowerCase();
+  const source: SpectralProbeEditorRow["source"] = srcRaw === "baseline" ? "baseline" : "signal";
 
   return {
     id: asStr(o.id),
@@ -76,6 +83,8 @@ function probeFromApi(row: unknown, index: number): SpectralProbeEditorRow {
     extrapolation,
     window_cm1,
     no_peak_fallback,
+    source,
+    baseline_step_id: asStr(o.baseline_step_id),
   };
 }
 
@@ -91,10 +100,15 @@ function probeToApi(row: SpectralProbeEditorRow): Record<string, unknown> {
     method: row.method,
     extrapolation: row.extrapolation,
     no_peak_fallback: row.no_peak_fallback,
+    source: row.source,
     peak_find: {},
   };
   const id = row.id.trim();
   if (id) o.id = id;
+  if (row.source === "baseline") {
+    const baselineStepId = row.baseline_step_id.trim();
+    if (baselineStepId) o.baseline_step_id = baselineStepId;
+  }
   if (row.acquisition === "nearest_peak" && row.window_cm1 !== "" && typeof row.window_cm1 === "number") {
     o.window_cm1 = row.window_cm1;
   }

@@ -7,6 +7,7 @@ scipy
 scikit-learn
 matplotlib
 renishawWiRE
+bcrypt
 
 [client]
 httpx>=0.27

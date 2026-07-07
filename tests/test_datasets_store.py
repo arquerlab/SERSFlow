@@ -29,15 +29,15 @@ def test_datasets_store_create_get_list(tmp_path: Path, monkeypatch) -> None:
         SpectrumRef(spectrum_id="sp_1", relative_path="batch/a.txt"),
         SpectrumRef(spectrum_id="sp_2", relative_path="batch/b.txt"),
     ]
-    rec = create_dataset(metadata=md, spectra=spectra)
+    rec = create_dataset(owner_user_id="dev", metadata=md, spectra=spectra)
     assert rec.dataset_id.startswith("ds_")
 
-    got = get_dataset(rec.dataset_id)
+    got = get_dataset(rec.dataset_id, owner_user_id="dev")
     assert got is not None
     assert got.dataset_id == rec.dataset_id
     assert got.metadata.name == "t"
     assert len(got.spectra) == 2
 
-    items = list_datasets(limit=10, offset=0)
+    items = list_datasets(owner_user_id="dev", limit=10, offset=0)
     assert any(x.dataset_id == rec.dataset_id for x in items)
 

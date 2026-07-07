@@ -66,12 +66,12 @@ class PlotResource(_Base):
         )
         return MapInfoResponse.model_validate(data)
 
-    def map_preview_image(self, relative_path: str) -> bytes:
+    def map_preview_image(self, relative_path: str, *, crop_to_map: bool = False) -> bytes:
         return request_bytes(
             self._root.http,
             "GET",
             "/plot/map-preview-image",
-            params={"relative_path": relative_path},
+            params={"relative_path": relative_path, "crop_to_map": crop_to_map},
         )
 
     def map_points(self, payload: MapPointsPlotRequest) -> PlotFigureResponse:

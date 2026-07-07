@@ -94,6 +94,38 @@ def preview_fitting_feature_keys_for_pipeline(pipeline: Any) -> list[str]:
     return dedupe_parallel(raw, nums)
 
 
+def fitting_feature_key_groups_for_pipeline(pipeline: Any) -> dict[int, list[str]]:
+    """
+    Map step_num -> final feature keys for enabled fitting steps.
+    """
+    steps = getattr(pipeline, "steps", None) or []
+    sns = assign_pipeline_step_nums(steps)
+    raw, nums = _raw_fitting_keys_and_nums(pipeline)
+    final_keys = dedupe_parallel(raw, nums)
+    fit_indices = [i for i, s in enumerate(steps) if getattr(s, "enabled", True) and s.name == "fitting"]
+    out: dict[int, list[str]] = {}
+    key_cursor = 0
+    for i in fit_indices:
+        step = steps[i]
+        params = step.params or {}
+        comps = params.get("components")
+        step_key_count = 0
+        if isinstance(comps, list):
+            for row in comps:
+                if not isinstance(row, dict):
+                    continue
+                ctype = str(row.get("component_type", "")).strip()
+                cid = str(row.get("component_id") or "").strip() or "comp"
+                try:
+                    param_keys = _param_keys_for_component(row)
+                except ValueError:
+                    continue
+                step_key_count += len(_feature_keys_for_component(i, len(fit_indices) > 1, cid, ctype, param_keys))
+        out[sns[i]] = final_keys[key_cursor : key_cursor + step_key_count]
+        key_cursor += step_key_count
+    return out
+
+
 def collect_fitting_features_for_pipeline(
     xy: XY,
     pipeline: Any,

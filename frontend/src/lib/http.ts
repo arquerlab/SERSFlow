@@ -10,7 +10,7 @@ export function formatErrorDetail(detail: unknown, status: number): string {
 }
 
 export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { cache: "no-store", ...init });
+  const res = await fetch(url, { cache: "no-store", credentials: "include", ...init });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
@@ -23,7 +23,7 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
 
 /** Download binary or text body; throws Error with API detail on failure. */
 export async function fetchBlob(url: string, init?: RequestInit): Promise<Blob> {
-  const res = await fetch(url, { cache: "no-store", ...init });
+  const res = await fetch(url, { cache: "no-store", credentials: "include", ...init });
   if (!res.ok) {
     const text = await res.text();
     let detail: unknown = text;

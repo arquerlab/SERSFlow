@@ -27,7 +27,7 @@ def test_analysis_run_completes_with_session(tmp_path: Path, monkeypatch: pytest
 
     md = DatasetMetadata(name="t")
     spectra = [SpectrumRef(spectrum_id="sp_1", relative_path=rel, record_index=None)]
-    ds = create_dataset(metadata=md, spectra=spectra)
+    ds = create_dataset(owner_user_id="dev", metadata=md, spectra=spectra)
 
     pipe = Pipeline(
         steps=[
@@ -86,7 +86,7 @@ def test_analysis_run_completes_without_spectral_intensities_uses_fallback_probe
 
     md = DatasetMetadata(name="t")
     spectra = [SpectrumRef(spectrum_id="sp_1", relative_path=rel, record_index=None)]
-    ds = create_dataset(metadata=md, spectra=spectra)
+    ds = create_dataset(owner_user_id="dev", metadata=md, spectra=spectra)
 
     pipe = Pipeline(
         steps=[
@@ -137,7 +137,7 @@ def test_analysis_run_full_dataset_ignores_session_random_subset(tmp_path: Path,
         spectra.append(SpectrumRef(spectrum_id=f"sp_{i}", relative_path=rel, record_index=None))
 
     md = DatasetMetadata(name="t")
-    ds = create_dataset(metadata=md, spectra=spectra)
+    ds = create_dataset(owner_user_id="dev", metadata=md, spectra=spectra)
 
     pipe = Pipeline(
         steps=[

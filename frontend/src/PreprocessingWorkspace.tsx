@@ -106,6 +106,25 @@ import { pipelineStepSpecs } from "./preprocess/pipelineStepSpecs";
 import { buildPipelineFromEditor, editorStepsToApiSteps, normalizeMethodParams } from "./preprocess/pipelineEditor";
 import { SpectralIntensitiesProbeEditor } from "./preprocess/SpectralIntensitiesProbeEditor";
 import { defaultSpectralIntensitiesParams, probesFromParams, probesToApiParams } from "./preprocess/spectralIntensitiesUtils";
+import { SpectralIntegrationsEditor } from "./preprocess/SpectralIntegrationsEditor";
+import {
+  defaultSpectralIntegrationsParams,
+  integrationWindowsFromParams,
+  integrationWindowsToApiParams,
+} from "./preprocess/spectralIntegrationsUtils";
+import { FeatureOperationsEditor } from "./preprocess/FeatureOperationsEditor";
+import {
+  defaultFeatureOperationsParams,
+  featureOperationsFromParams,
+  featureOperationsToApiParams,
+  featureVariablesBeforeStep,
+} from "./preprocess/featureOperationsUtils";
+import { ReferenceTransformEditor } from "./preprocess/ReferenceTransformEditor";
+import {
+  defaultReferenceTransformParams,
+  referenceTransformFromParams,
+  referenceTransformToApiParams,
+} from "./preprocess/referenceTransformUtils";
 import { runExplorePlot as runExplorePlotCore } from "./preprocess/explorePlotRunner";
 import { AnalyzeContextBanner } from "./preprocess/components/AnalyzeContextBanner";
 import { DatasetPicker } from "./components/DatasetPicker";
@@ -577,6 +596,12 @@ export default function PreprocessingWorkspace() {
             ? (migrateFittingParamsToEditor(rawParams, fittingCatalog) as unknown as Record<string, any>)
             : st.name === "spectral_intensities"
               ? (probesToApiParams(probesFromParams(rawParams)) as Record<string, any>)
+              : st.name === "spectral_integrations"
+                ? (integrationWindowsToApiParams(integrationWindowsFromParams(rawParams)) as Record<string, unknown>)
+                : st.name === "feature_operations"
+                  ? (featureOperationsToApiParams(featureOperationsFromParams(rawParams)) as Record<string, unknown>)
+                  : st.name === "reference_transform"
+                    ? (referenceTransformToApiParams(referenceTransformFromParams(rawParams)) as Record<string, unknown>)
               : { ...rawParams };
         return {
           id: sid ?? crypto.randomUUID(),
@@ -776,6 +801,26 @@ export default function PreprocessingWorkspace() {
         name: "spectral_intensities",
         enabled: true,
         params: defaultSpectralIntensitiesParams() as unknown as Record<string, any>,
+      },
+      spectral_integrations: {
+        name: "spectral_integrations",
+        enabled: true,
+        params: defaultSpectralIntegrationsParams() as unknown as Record<string, unknown>,
+      },
+      feature_operations: {
+        name: "feature_operations",
+        enabled: true,
+        params: defaultFeatureOperationsParams() as unknown as Record<string, unknown>,
+      },
+      spectrum_derivative: {
+        name: "spectrum_derivative",
+        enabled: true,
+        params: { method: "gradient", order: 1 },
+      },
+      reference_transform: {
+        name: "reference_transform",
+        enabled: true,
+        params: defaultReferenceTransformParams() as unknown as Record<string, unknown>,
       },
     };
     const t = templates[name] ?? { name, enabled: true, params: {} };
@@ -1118,11 +1163,23 @@ export default function PreprocessingWorkspace() {
           <button type="button" className="mini" onClick={() => addStepTemplate("normalize")}>
             + norm
           </button>
+          <button type="button" className="mini" onClick={() => addStepTemplate("spectrum_derivative")} title="Calculate derivative of the spectrum">
+            + derivative
+          </button>
+          <button type="button" className="mini" onClick={() => addStepTemplate("reference_transform")} title="Subtract or divide by a selected reference spectrum">
+            + reference
+          </button>
           <button type="button" className="mini" onClick={() => addStepTemplate("fitting")}>
             + fit
           </button>
           <button type="button" className="mini" onClick={() => addStepTemplate("spectral_intensities")} title="Intensity probes for analysis (I_* columns)">
             + intensities
+          </button>
+          <button type="button" className="mini" onClick={() => addStepTemplate("spectral_integrations")} title="Integration windows for analysis (area_* columns)">
+            + integration
+          </button>
+          <button type="button" className="mini" onClick={() => addStepTemplate("feature_operations")} title="Derived feature formulas from previous feature columns">
+            + feature ops
           </button>
           <button type="button" onClick={() => savePipelineM.mutate(buildPipeline())} disabled={!sessionId || savePipelineM.isPending}>
             {savePipelineM.isPending ? "Saving…" : "Save pipeline"}
@@ -1619,7 +1676,40 @@ export default function PreprocessingWorkspace() {
                   return (
                     <SpectralIntensitiesProbeEditor
                       probes={probesFromParams(selectedStep.params ?? {})}
+                      steps={steps}
+                      selectedStepId={selectedStep.id}
                       onChange={(next) => setSelectedStepParams(probesToApiParams(next))}
+                    />
+                  );
+                }
+
+                if (selectedStep.name === "spectral_integrations") {
+                  return (
+                    <SpectralIntegrationsEditor
+                      windows={integrationWindowsFromParams(selectedStep.params ?? {})}
+                      onChange={(next) => setSelectedStepParams(integrationWindowsToApiParams(next))}
+                    />
+                  );
+                }
+
+                if (selectedStep.name === "feature_operations") {
+                  return (
+                    <FeatureOperationsEditor
+                      operations={featureOperationsFromParams(selectedStep.params ?? {})}
+                      variables={featureVariablesBeforeStep(steps, selectedStep.id)}
+                      onChange={(next) => setSelectedStepParams(featureOperationsToApiParams(next))}
+                    />
+                  );
+                }
+
+                if (selectedStep.name === "reference_transform") {
+                  const selectedStepIndex = steps.findIndex((s) => s.id === selectedStep.id);
+                  return (
+                    <ReferenceTransformEditor
+                      params={referenceTransformFromParams(selectedStep.params ?? {})}
+                      spectra={datasetQ.data?.dataset?.spectra ?? []}
+                      previousSteps={steps.slice(0, Math.max(selectedStepIndex, 0)).filter((step) => step.enabled !== false)}
+                      onChange={(next) => setSelectedStepParams(referenceTransformToApiParams(next))}
                     />
                   );
                 }

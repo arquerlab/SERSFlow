@@ -1,2 +1,3 @@
 [console_scripts]
+sersflow-admin = sersflow.cli.admin:main
 sersflow-api = sersflow.api.main:run

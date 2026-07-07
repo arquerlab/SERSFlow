@@ -167,6 +167,23 @@ export function fetchObservationColumns(runId: string, cols: string[], maxRows?:
   return fetchJson<{ rows: Record<string, unknown>[] }>(getObservationColumnsUrl(runId, cols, maxRows));
 }
 
+export type AnalysisSpectrumResponse = {
+  spectrum_id: string;
+  relative_path: string | null;
+  file_kind: string | null;
+  axis_time_s: number | null;
+  axis_map_x: number | null;
+  axis_map_y: number | null;
+  x: Array<number | null>;
+  y: Array<number | null>;
+};
+
+export function fetchAnalysisSpectrum(runId: string, spectrumId: string) {
+  return fetchJson<AnalysisSpectrumResponse>(
+    `/analysis/runs/${encodeURIComponent(runId)}/spectra/${encodeURIComponent(spectrumId)}`
+  );
+}
+
 // --- Explore ---
 
 export type MatrixExportResponse = { matrix_job_id: string; status: string };

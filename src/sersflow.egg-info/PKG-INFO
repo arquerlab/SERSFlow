@@ -13,6 +13,7 @@ Requires-Dist: scipy
 Requires-Dist: scikit-learn
 Requires-Dist: matplotlib
 Requires-Dist: renishawWiRE
+Requires-Dist: bcrypt
 Provides-Extra: client
 Requires-Dist: httpx>=0.27; extra == "client"
 Provides-Extra: parquet

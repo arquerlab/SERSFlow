@@ -1,0 +1,18 @@
+[Unit]
+Description=SERSFlow spectroscopy web API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sersflow
+Group=sersflow
+WorkingDirectory=/opt/sersflow
+EnvironmentFile=/etc/sersflow/sersflow.env
+ExecStart=/opt/sersflow/.venv/bin/python -m uvicorn sersflow.api.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -8,10 +8,30 @@
     <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
   </head>
   <body>
-    <div class="wrap">
+    <div id="loginOverlay" class="login-overlay" hidden>
+      <div class="login-card card">
+        <div class="section-title">Sign in to SERSFlow</div>
+        <form id="loginForm">
+          <label class="inline">Username <input id="loginUsername" type="text" autocomplete="username" required /></label>
+          <label class="inline">Password <input id="loginPassword" type="password" autocomplete="current-password" required /></label>
+          <button type="submit">Log in</button>
+        </form>
+        <div class="status" id="loginError"></div>
+      </div>
+    </div>
+
+    <div id="appContent" class="wrap" hidden>
       <header>
         <h1>SERSFlow</h1>
         <div class="links">
+          <span id="actAsWrap" class="act-as-wrap" hidden>
+            <label class="hint">
+              View as
+              <select id="actAsSelect" class="mini"></select>
+            </label>
+          </span>
+          <span id="authUserLabel" class="hint"></span>
+          <button id="logoutBtn" type="button" class="mini">Log out</button>
           <a href="/docs">Docs</a>
           <a href="/openapi.json">OpenAPI</a>
           <a href="/health">Health</a>
@@ -32,8 +52,15 @@
             <div class="row">
               <input id="files" type="file" accept=".txt,.wdf" multiple />
               <input id="folders" type="file" webkitdirectory directory multiple />
-              <label class="inline" title="Comma-separated file extensions to skip during upload">
-                Skip extensions
+              <label class="inline" title="Choose whether to skip extensions or only allow them">
+                Filter mode
+                <select id="extFilterMode">
+                  <option value="skip" selected>Skip</option>
+                  <option value="only">Only</option>
+                </select>
+              </label>
+              <label class="inline" title="Comma-separated file extensions (without dots)">
+                Extensions
                 <input id="excludeExts" type="text" value="png,jpg,jpeg,gif,tif,tiff" style="width: 220px" />
               </label>
               <button id="uploadBtn" type="button">Upload</button>
@@ -49,7 +76,7 @@
         </div>
 
         <div class="card uploads-server-card">
-          <div class="section-title">Uploaded files (server)</div>
+          <div class="section-title">Uploaded files &amp; metadata</div>
           <div class="uploads-toolbar">
             <button id="selectAllBtn" type="button">Select all</button>
             <button id="selectNoneBtn" type="button">Select none</button>
@@ -58,24 +85,15 @@
             <button id="purgeHiddenBtn" class="danger" type="button">Purge hidden unused</button>
             <div class="uploads-meta" id="uploadsMeta"></div>
           </div>
-          <div class="scrollbox">
-            <div id="uploadedList"></div>
-          </div>
-        </div>
-
-        <div class="card upload-labels-editor-card">
-          <div class="section-title">Labels — current uploads</div>
-          <div class="uploads-toolbar">
-            <div class="uploads-meta" id="labelsEditorMeta">
-              Same files as above; refreshes when you refresh uploads or after upload/hide.
-            </div>
-          </div>
           <div class="upload-labels-layout">
             <div class="scrollbox upload-labels-list-wrap">
-              <div id="labelsEditorFileList"></div>
+              <div id="uploadedList"></div>
             </div>
             <div class="labels-editor-wrap card-inner">
               <div class="section-title" style="margin: 0 0 8px">Edit labels</div>
+              <div class="uploads-meta" id="labelsEditorMeta" style="margin: 0 0 8px">
+                Select files or folders from the upload list to edit metadata.
+              </div>
               <p class="hint" style="margin: 0 0 8px">
                 Select one or more files/folders, edit values, then <b>Save</b> (bulk apply). Empty cells are stored as JSON
                 <code>null</code>. Values accept JSON literals (e.g. <code>2</code>, <code>true</code>,
@@ -154,6 +172,14 @@
       </div>
     </div>
 
+    <script type="module">
+      import { ensureAuthenticated, wireLoginForm } from "/static/ui/login.js";
+      import { wireActAsSelector } from "/static/ui/act_as.js";
+      wireLoginForm();
+      ensureAuthenticated()
+        .then(() => wireActAsSelector())
+        .catch((e) => console.error(e));
+    </script>
     <script type="module" src="/static/app.js"></script>
     <script type="module">
       // Load the Vite-built preprocess bundle (hashed filenames) into the legacy tabbed UI.

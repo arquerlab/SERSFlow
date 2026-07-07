@@ -3,7 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
+import numpy as np
+
+from sersflow.api.deps import current_user_id
+from sersflow.api.services.ownership import OwnershipError
 
 from sersflow.api.schemas.plot import (
     MapInfoResponse,
@@ -33,19 +37,27 @@ from sersflow.core.plot.service import (
 router = APIRouter(prefix="/plot", tags=["Plot"])
 
 
+def _upload_path(request: Request, relative_path: str) -> Path:
+    user_id = current_user_id(request)
+    try:
+        return resolve_existing_upload(relative_path, owner_user_id=user_id)
+    except OwnershipError:
+        raise HTTPException(status_code=404, detail="Uploaded file not found") from None
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Uploaded file not found") from None
+
+
 @router.get("/kinds", response_model=PlotKindsResponse)
 def list_plot_kinds() -> dict[str, Any]:
     return {"kinds": ["spectrum", "series_heatmap"]}
 
 
 @router.post("/spectrum", response_model=PlotFigureResponse)
-def plot_spectrum(payload: SpectrumPlotRequest) -> dict[str, Any]:
+def plot_spectrum(payload: SpectrumPlotRequest, request: Request) -> dict[str, Any]:
     try:
-        p = resolve_existing_upload(payload.relative_path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
+        p = _upload_path(request, payload.relative_path)
+    except HTTPException:
+        raise
 
     try:
         ds = load_dataset(Path(p))
@@ -57,13 +69,11 @@ def plot_spectrum(payload: SpectrumPlotRequest) -> dict[str, Any]:
 
 
 @router.post("/series-heatmap", response_model=PlotFigureResponse)
-def plot_series_heatmap(payload: SeriesHeatmapRequest) -> dict[str, Any]:
+def plot_series_heatmap(payload: SeriesHeatmapRequest, request: Request) -> dict[str, Any]:
     try:
-        p = resolve_existing_upload(payload.relative_path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
+        p = _upload_path(request, payload.relative_path)
+    except HTTPException:
+        raise
 
     try:
         ds = load_dataset(Path(p))
@@ -77,13 +87,11 @@ def plot_series_heatmap(payload: SeriesHeatmapRequest) -> dict[str, Any]:
 
 
 @router.get("/series-info", response_model=SeriesInfoResponse)
-def series_info(relative_path: str, max_points: int = 500) -> dict[str, Any]:
+def series_info(relative_path: str, request: Request, max_points: int = 500) -> dict[str, Any]:
     try:
-        p = resolve_existing_upload(relative_path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
+        p = _upload_path(request, relative_path)
+    except HTTPException:
+        raise
 
     try:
         ds = load_dataset(Path(p))
@@ -96,13 +104,11 @@ def series_info(relative_path: str, max_points: int = 500) -> dict[str, Any]:
 
 
 @router.post("/series-points", response_model=PlotFigureResponse)
-def plot_series_points(payload: SeriesPointsPlotRequest) -> dict[str, Any]:
+def plot_series_points(payload: SeriesPointsPlotRequest, request: Request) -> dict[str, Any]:
     try:
-        p = resolve_existing_upload(payload.relative_path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
+        p = _upload_path(request, payload.relative_path)
+    except HTTPException:
+        raise
 
     try:
         ds = load_dataset(Path(p))
@@ -116,13 +122,11 @@ def plot_series_points(payload: SeriesPointsPlotRequest) -> dict[str, Any]:
 
 
 @router.get("/series-value")
-def series_value(relative_path: str, index: int) -> dict[str, Any]:
+def series_value(relative_path: str, index: int, request: Request) -> dict[str, Any]:
     try:
-        p = resolve_existing_upload(relative_path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
+        p = _upload_path(request, relative_path)
+    except HTTPException:
+        raise
 
     try:
         ds = load_dataset(Path(p))
@@ -135,13 +139,11 @@ def series_value(relative_path: str, index: int) -> dict[str, Any]:
 
 
 @router.get("/map-info", response_model=MapInfoResponse)
-def map_info(relative_path: str, max_dim: int = 80) -> dict[str, Any]:
+def map_info(relative_path: str, request: Request, max_dim: int = 80) -> dict[str, Any]:
     try:
-        p = resolve_existing_upload(relative_path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
+        p = _upload_path(request, relative_path)
+    except HTTPException:
+        raise
 
     try:
         ds = load_dataset(Path(p))
@@ -154,13 +156,11 @@ def map_info(relative_path: str, max_dim: int = 80) -> dict[str, Any]:
 
 
 @router.get("/map-preview-image")
-def map_preview_image(relative_path: str) -> Response:
+def map_preview_image(relative_path: str, request: Request, crop_to_map: bool = False) -> Response:
     try:
-        p = resolve_existing_upload(relative_path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
+        p = _upload_path(request, relative_path)
+    except HTTPException:
+        raise
     if p.suffix.lower() != ".wdf":
         raise HTTPException(status_code=404, detail="No embedded preview for this file type")
 
@@ -188,6 +188,18 @@ def map_preview_image(relative_path: str) -> Response:
             else:
                 raise HTTPException(status_code=404, detail="Unsupported embedded image format")
 
+        if crop_to_map:
+            cropbox = getattr(reader, "img_cropbox", None)
+            if cropbox is not None:
+                left, top, right, bottom = (int(value) for value in cropbox)
+                width, height = im.size
+                left = max(0, min(left, width))
+                right = max(0, min(right, width))
+                top = max(0, min(top, height))
+                bottom = max(0, min(bottom, height))
+                if right > left and bottom > top:
+                    im = im.crop((left, top, right, bottom))
+
         out = io.BytesIO()
         im.save(out, format="PNG")
         return Response(content=out.getvalue(), media_type="image/png")
@@ -198,13 +210,11 @@ def map_preview_image(relative_path: str) -> Response:
 
 
 @router.post("/map-points", response_model=PlotFigureResponse)
-def plot_map_points(payload: MapPointsPlotRequest) -> dict[str, Any]:
+def plot_map_points(payload: MapPointsPlotRequest, request: Request) -> dict[str, Any]:
     try:
-        p = resolve_existing_upload(payload.relative_path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
+        p = _upload_path(request, payload.relative_path)
+    except HTTPException:
+        raise
 
     try:
         ds = load_dataset(Path(p))

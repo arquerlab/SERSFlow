@@ -9,11 +9,12 @@ import numpy as np
 from sersflow.api.schemas.metrics import DatasetMetricsRequest
 from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.api.schemas.sessions import SubsetStrategy
+from sersflow.api.services.reference_runtime import hydrate_reference_transforms, reference_spectrum_ids
 from sersflow.core.metrics.compute import compute_metrics
 from sersflow.core.pipeline.cache import InProcessLRUCache
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
 from sersflow.core.pipeline.hashing import canonical_json, sha256_hex
-from sersflow.infra.datasets_store import DatasetRecord, get_dataset
+from sersflow.infra.datasets_store import DatasetRecord
 
 
 _cache = InProcessLRUCache(max_items=4096)
@@ -54,10 +55,14 @@ def resolve_subset_indices(*, dataset: DatasetRecord, subset: SubsetStrategy, pi
             raise ValueError("n must be provided for metric-based subset selection")
         metric_name = subset.metric
 
+        runtime_pipeline = hydrate_reference_transforms(pipeline, dataset, cache_namespace="metric_select")
+        excluded = reference_spectrum_ids(runtime_pipeline)
         cfg = EngineConfig(cache_namespace="metric_select")
-        final = run_pipeline(inputs=dataset.spectra, pipeline=pipeline, cache=_cache, config=cfg)
+        final = run_pipeline(inputs=dataset.spectra, pipeline=runtime_pipeline, cache=_cache, config=cfg)
         values: list[tuple[int, float]] = []
         for i, sref in enumerate(dataset.spectra):
+            if sref.spectrum_id in excluded:
+                continue
             xy = final.get(sref.spectrum_id)
             if xy is None:
                 continue
@@ -89,11 +94,4 @@ def resolve_subset_indices(*, dataset: DatasetRecord, subset: SubsetStrategy, pi
         return [i for i, _ in scored[: int(subset.n)]]
 
     raise ValueError(f"Unknown subset kind: {subset.kind}")
-
-
-def get_dataset_or_404(dataset_id: str) -> DatasetRecord:
-    rec = get_dataset(dataset_id)
-    if rec is None:
-        raise KeyError("dataset not found")
-    return rec
 

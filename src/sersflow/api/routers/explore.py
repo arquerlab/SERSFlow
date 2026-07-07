@@ -6,7 +6,7 @@ from threading import Thread
 from typing import Any, Iterator
 
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from sersflow.api.schemas.explore import (
@@ -47,17 +47,21 @@ from sersflow.api.services.explore_stats import (
 from sersflow.api.services.matrix_export_runner import execute_matrix_export_job
 from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.sessions_service import pipeline_hash, subset_hash
-from sersflow.infra.analysis_store import get_run
+from sersflow.api.deps import current_user_id
+from sersflow.api.services.ownership import (
+    get_dataset_for_user,
+    get_explore_run_for_user,
+    get_matrix_job_for_user,
+    get_run_for_user,
+    get_session_for_user,
+)
 from sersflow.infra.explore_store import (
     artifacts_root,
     create_explore_run,
     create_matrix_job_pending,
     finish_explore_run,
-    get_explore_run,
-    get_matrix_job,
     prune_explore_runs,
 )
-from sersflow.infra.sessions_store import get_session
 
 router = APIRouter(prefix="/explore", tags=["Explore"])
 
@@ -135,9 +139,10 @@ def _multivariate_or_400(
 
 
 @router.post("/matrix-jobs", response_model=MatrixExportResponse)
-def post_matrix_job(payload: MatrixExportRequest) -> MatrixExportResponse:
+def post_matrix_job(payload: MatrixExportRequest, request: Request) -> MatrixExportResponse:
+    user_id = current_user_id(request)
     if payload.analysis_run_id:
-        rec = get_run(payload.analysis_run_id)
+        rec = get_run_for_user(payload.analysis_run_id, user_id)
         if rec is None:
             raise HTTPException(status_code=404, detail="Analysis run not found")
         if rec.status != "completed":
@@ -164,15 +169,18 @@ def post_matrix_job(payload: MatrixExportRequest) -> MatrixExportResponse:
             Thread(target=execute_matrix_export_job, args=(jid,), daemon=True).start()
             return MatrixExportResponse(matrix_job_id=jid, status="queued")
         execute_matrix_export_job(jid)
-        mj = get_matrix_job(jid)
+        mj = get_matrix_job_for_user(jid, user_id)
         st = mj.status if mj else "unknown"
         return MatrixExportResponse(matrix_job_id=jid, status=st)
 
     if not payload.dataset_id:
         raise HTTPException(status_code=400, detail="dataset_id is required unless analysis_run_id is provided")
 
+    if get_dataset_for_user(payload.dataset_id, user_id) is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
     if payload.session_id:
-        sess = get_session(payload.session_id)
+        sess = get_session_for_user(payload.session_id, user_id)
         if sess is None:
             raise HTTPException(status_code=404, detail="Session not found")
         if sess.dataset_id != payload.dataset_id:
@@ -204,14 +212,15 @@ def post_matrix_job(payload: MatrixExportRequest) -> MatrixExportResponse:
         Thread(target=execute_matrix_export_job, args=(jid,), daemon=True).start()
         return MatrixExportResponse(matrix_job_id=jid, status="queued")
     execute_matrix_export_job(jid)
-    mj = get_matrix_job(jid)
+    mj = get_matrix_job_for_user(jid, user_id)
     st = mj.status if mj else "unknown"
     return MatrixExportResponse(matrix_job_id=jid, status=st)
 
 
 @router.get("/matrix-jobs/{matrix_job_id}")
-def get_matrix_job_status(matrix_job_id: str) -> dict[str, Any]:
-    mj = get_matrix_job(matrix_job_id)
+def get_matrix_job_status(matrix_job_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    mj = get_matrix_job_for_user(matrix_job_id, user_id)
     if mj is None:
         raise HTTPException(status_code=404, detail="Matrix job not found")
     manifest = json.loads(mj.manifest_json) if mj.manifest_json else None
@@ -228,8 +237,9 @@ def get_matrix_job_status(matrix_job_id: str) -> dict[str, Any]:
 
 
 @router.get("/matrix-jobs/{matrix_job_id}/export.csv", response_model=None)
-def export_matrix_job_csv(matrix_job_id: str) -> StreamingResponse:
-    mj = get_matrix_job(matrix_job_id)
+def export_matrix_job_csv(matrix_job_id: str, request: Request) -> StreamingResponse:
+    user_id = current_user_id(request)
+    mj = get_matrix_job_for_user(matrix_job_id, user_id)
     if mj is None:
         raise HTTPException(status_code=404, detail="Matrix job not found")
     if mj.status != "completed" or not mj.npz_path:
@@ -241,8 +251,8 @@ def export_matrix_job_csv(matrix_job_id: str) -> StreamingResponse:
         raise HTTPException(status_code=500, detail=f"Matrix export failed: {e}") from e
 
 
-def _pca_artifact_path(explore_id: str) -> tuple[str, str]:
-    rec = get_explore_run(explore_id)
+def _pca_artifact_path(explore_id: str, user_id: str) -> tuple[str, str]:
+    rec = get_explore_run_for_user(explore_id, user_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="Explore run not found")
     if rec.status != "completed":
@@ -259,8 +269,9 @@ def _pca_artifact_path(explore_id: str) -> tuple[str, str]:
 
 
 @router.get("/runs/{explore_id}/export/{export_kind}.csv", response_model=None)
-def export_pca_artifact_csv(explore_id: str, export_kind: str) -> StreamingResponse:
-    path, _kind = _pca_artifact_path(explore_id)
+def export_pca_artifact_csv(explore_id: str, export_kind: str, request: Request) -> StreamingResponse:
+    user_id = current_user_id(request)
+    path, _kind = _pca_artifact_path(explore_id, user_id)
     try:
         result = load_pca_artifact(path)
         if export_kind == "scores":
@@ -284,8 +295,9 @@ def export_pca_artifact_csv(explore_id: str, export_kind: str) -> StreamingRespo
 
 
 @router.post("/correlation", response_model=ExploreJobResponse)
-def post_correlation(payload: CorrelationRequest) -> ExploreJobResponse:
-    rec = get_run(payload.analysis_run_id)
+def post_correlation(payload: CorrelationRequest, request: Request) -> ExploreJobResponse:
+    user_id = current_user_id(request)
+    rec = get_run_for_user(payload.analysis_run_id, user_id)
     if rec is None or rec.status != "completed":
         raise HTTPException(status_code=400, detail="analysis run missing or not completed")
     keys = (
@@ -316,8 +328,9 @@ def post_correlation(payload: CorrelationRequest) -> ExploreJobResponse:
 
 
 @router.post("/vif", response_model=ExploreJobResponse)
-def post_vif(payload: VIFRequest) -> ExploreJobResponse:
-    rec = get_run(payload.analysis_run_id)
+def post_vif(payload: VIFRequest, request: Request) -> ExploreJobResponse:
+    user_id = current_user_id(request)
+    rec = get_run_for_user(payload.analysis_run_id, user_id)
     if rec is None or rec.status != "completed":
         raise HTTPException(status_code=400, detail="analysis run missing or not completed")
     X, sids, names = load_explore_feature_matrix(payload.analysis_run_id, payload.feature_columns)
@@ -342,8 +355,9 @@ def post_vif(payload: VIFRequest) -> ExploreJobResponse:
 
 
 @router.post("/pca", response_model=ExploreJobResponse)
-def post_pca(payload: PCARequest) -> ExploreJobResponse:
-    rec = get_run(payload.analysis_run_id)
+def post_pca(payload: PCARequest, request: Request) -> ExploreJobResponse:
+    user_id = current_user_id(request)
+    rec = get_run_for_user(payload.analysis_run_id, user_id)
     if rec is None or rec.status != "completed":
         raise HTTPException(status_code=400, detail="analysis run missing or not completed")
     keys = (
@@ -396,8 +410,9 @@ def post_pca(payload: PCARequest) -> ExploreJobResponse:
 
 
 @router.post("/fpca-discrete", response_model=ExploreJobResponse)
-def post_fpca_discrete(payload: FPCADiscreteRequest) -> ExploreJobResponse:
-    mj = get_matrix_job(payload.matrix_job_id)
+def post_fpca_discrete(payload: FPCADiscreteRequest, request: Request) -> ExploreJobResponse:
+    user_id = current_user_id(request)
+    mj = get_matrix_job_for_user(payload.matrix_job_id, user_id)
     if mj is None or mj.status != "completed" or not mj.npz_path:
         raise HTTPException(status_code=400, detail="matrix job not completed or npz missing")
     data = np.load(mj.npz_path, allow_pickle=True)
@@ -454,8 +469,9 @@ def post_fpca_discrete(payload: FPCADiscreteRequest) -> ExploreJobResponse:
 
 
 @router.post("/spectrum-cluster", response_model=ExploreJobResponse)
-def post_spectrum_cluster(payload: SpectrumClusterRequest) -> ExploreJobResponse:
-    mj = get_matrix_job(payload.matrix_job_id)
+def post_spectrum_cluster(payload: SpectrumClusterRequest, request: Request) -> ExploreJobResponse:
+    user_id = current_user_id(request)
+    mj = get_matrix_job_for_user(payload.matrix_job_id, user_id)
     if mj is None or mj.status != "completed" or not mj.npz_path:
         raise HTTPException(status_code=400, detail="matrix job not completed or npz missing")
     data = np.load(mj.npz_path, allow_pickle=True)
@@ -491,8 +507,9 @@ def post_spectrum_cluster(payload: SpectrumClusterRequest) -> ExploreJobResponse
 
 
 @router.post("/fpca-fda", response_model=ExploreJobResponse)
-def post_fpca_fda(payload: FPCAFDARequest) -> ExploreJobResponse:
-    mj = get_matrix_job(payload.matrix_job_id)
+def post_fpca_fda(payload: FPCAFDARequest, request: Request) -> ExploreJobResponse:
+    user_id = current_user_id(request)
+    mj = get_matrix_job_for_user(payload.matrix_job_id, user_id)
     if mj is None or mj.status != "completed" or not mj.npz_path:
         raise HTTPException(status_code=400, detail="matrix job not completed or npz missing")
     data = np.load(mj.npz_path, allow_pickle=True)
@@ -527,8 +544,9 @@ def post_fpca_fda(payload: FPCAFDARequest) -> ExploreJobResponse:
 
 
 @router.post("/cluster", response_model=ExploreJobResponse)
-def post_cluster(payload: ClusterRequest) -> ExploreJobResponse:
-    rec = get_run(payload.analysis_run_id)
+def post_cluster(payload: ClusterRequest, request: Request) -> ExploreJobResponse:
+    user_id = current_user_id(request)
+    rec = get_run_for_user(payload.analysis_run_id, user_id)
     if rec is None or rec.status != "completed":
         raise HTTPException(status_code=400, detail="analysis run missing or not completed")
     keys = (

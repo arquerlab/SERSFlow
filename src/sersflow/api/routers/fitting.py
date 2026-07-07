@@ -4,7 +4,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+
+from sersflow.api.deps import current_user_id
+from sersflow.api.services.ownership import OwnershipError
 
 from sersflow.api.schemas.fitting import (
     FittingModelsResponse,
@@ -28,7 +31,7 @@ def list_fitting_models() -> dict[str, Any]:
     return {"components": comps}
 
 
-def _resolve_target(target: FitInlineSeries | FitSpectrumRef) -> tuple[np.ndarray, np.ndarray]:
+def _resolve_target(target: FitInlineSeries | FitSpectrumRef, *, owner_user_id: str) -> tuple[np.ndarray, np.ndarray]:
     if isinstance(target, FitInlineSeries):
         x = np.asarray(target.x, dtype=float)
         y = np.asarray(target.y, dtype=float)
@@ -36,11 +39,9 @@ def _resolve_target(target: FitInlineSeries | FitSpectrumRef) -> tuple[np.ndarra
 
     # SpectrumRef target
     try:
-        p = resolve_existing_upload(target.spectrum.relative_path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
+        p = resolve_existing_upload(target.spectrum.relative_path, owner_user_id=owner_user_id)
+    except OwnershipError:
+        raise HTTPException(status_code=404, detail="Uploaded file not found") from None
 
     try:
         ds = load_dataset(Path(p))
@@ -63,9 +64,10 @@ def _resolve_target(target: FitInlineSeries | FitSpectrumRef) -> tuple[np.ndarra
 
 
 @router.post("/fit", response_model=FitResponse)
-def fit_endpoint(payload: FitRequest) -> dict[str, Any]:
+def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
     try:
-        x, y = _resolve_target(payload.target)
+        x, y = _resolve_target(payload.target, owner_user_id=user_id)
 
         components = [
             FitComponent(component_type=c.component_type, component_id=c.component_id, degree=c.degree)

@@ -171,10 +171,11 @@ export function createUploadsModel() {
  * @param {object} opts
  * @param {HTMLElement} opts.uploadedListEl
  * @param {HTMLElement} opts.uploadsMetaEl
- * @param {(paths: string[]) => void} [opts.onSelectedPathsChange]
+ * @param {(paths: string[], items: object[], totalCount: number) => void} [opts.onSelectedPathsChange]
+ * @param {(items: object[], totalCount: number) => void} [opts.onUploadedItemsChange]
  * @param {() => boolean} [opts.isMounted]
  */
-export function createUploadsController({ uploadedListEl, uploadsMetaEl, onSelectedPathsChange, isMounted }) {
+export function createUploadsController({ uploadedListEl, uploadsMetaEl, onSelectedPathsChange, onUploadedItemsChange, isMounted }) {
   let uploadedItems = [];
   let selected = new Set();
   let totalCount = 0;
@@ -193,7 +194,7 @@ export function createUploadsController({ uploadedListEl, uploadsMetaEl, onSelec
     const paths = Array.from(selected.values());
     const total = Number.isFinite(Number(totalCount)) && totalCount > 0 ? totalCount : uploadedItems.length;
     uploadsMetaEl.textContent = `${uploadedItems.length} shown • ${total} total • ${paths.length} selected`;
-    if (typeof onSelectedPathsChange === "function") onSelectedPathsChange(paths);
+    if (typeof onSelectedPathsChange === "function") onSelectedPathsChange(paths, uploadedItems, total);
   }
 
   function getUploadedItems() {
@@ -202,6 +203,10 @@ export function createUploadsController({ uploadedListEl, uploadsMetaEl, onSelec
 
   function getSelectedSet() {
     return selected;
+  }
+
+  function getTotalCount() {
+    return Number.isFinite(Number(totalCount)) && totalCount > 0 ? totalCount : uploadedItems.length;
   }
 
   function setSelectedSet(next) {
@@ -414,6 +419,7 @@ export function createUploadsController({ uploadedListEl, uploadsMetaEl, onSelec
       uploadedItems = data.items || [];
       totalCount = data.count != null ? Number(data.count) : uploadedItems.length;
       renderUploadList();
+      if (typeof onUploadedItemsChange === "function") onUploadedItemsChange(uploadedItems, getTotalCount());
       return uploadedItems;
     } catch {
       if (isCancelled?.()) return uploadedItems;
@@ -446,6 +452,7 @@ export function createUploadsController({ uploadedListEl, uploadsMetaEl, onSelec
     purgeUnusedHidden,
     getUploadedItems,
     getSelectedSet,
+    getTotalCount,
     setSelectedSet,
   };
 }
@@ -465,6 +472,7 @@ function stringifyForLabelEditor(value) {
  * so naming stays consistent even when auto-extraction finds nothing.
  */
 export const DEFAULT_LABEL_KEYS = [
+  "acquired_utc",
   "sample",
   "gas",
   "ph",
@@ -503,9 +511,10 @@ export function coerceLabelValueFromText(text) {
  * Current uploads only: multi-select tree list + labels table (PUT /io/labels, POST /io/labels/auto).
  * Default keys always appear so naming stays aligned with auto-extraction.
  */
-export function createUploadedLabelsEditorController({ fileListEl, fileMetaEl, editorEl }) {
+export function createUploadedLabelsEditorController({ fileListEl, fileMetaEl, editorEl, onRefreshFromUploads }) {
   let fileItems = [];
   let selectedRels = new Set();
+  let totalCount = 0;
   const openFolderKeys = new Set(); // persist expanded state across re-renders
 
   function itemByRel() {
@@ -522,6 +531,30 @@ export function createUploadedLabelsEditorController({ fileListEl, fileMetaEl, e
   function selectedItems() {
     const m = itemByRel();
     return Array.from(selectedRels).map((rel) => m.get(rel)).filter(Boolean);
+  }
+
+  function updateMeta() {
+    if (!fileMetaEl) return;
+    const total = Number.isFinite(Number(totalCount)) && totalCount > 0 ? totalCount : fileItems.length;
+    fileMetaEl.textContent = `${fileItems.length} shown • ${total} total • ${selectedRels.size} selected for metadata`;
+  }
+
+  function setContext({ items, selectedPaths, total }) {
+    fileItems = Array.isArray(items) ? items : [];
+    selectedRels = new Set(Array.isArray(selectedPaths) ? selectedPaths : []);
+    totalCount = Number.isFinite(Number(total)) ? Number(total) : fileItems.length;
+    pruneSelection();
+    updateMeta();
+    renderFileList();
+    renderEditor();
+  }
+
+  function setSelection(paths) {
+    selectedRels = new Set(Array.isArray(paths) ? paths : []);
+    pruneSelection();
+    updateMeta();
+    renderFileList();
+    renderEditor();
   }
 
   function renderFileList() {
@@ -625,7 +658,10 @@ export function createUploadedLabelsEditorController({ fileListEl, fileMetaEl, e
 
         const meta = document.createElement("div");
         meta.className = "upload-labels-file-meta";
-        meta.textContent = `${sizeStr}${file.item.saved_at ? ` • ${file.item.saved_at}` : ""}`;
+        const savedAt = file.item.saved_at ? String(file.item.saved_at) : "";
+        const modifiedUtc = file.item.modified_utc ? String(file.item.modified_utc) : "";
+        const when = modifiedUtc ? `modified ${modifiedUtc}` : savedAt ? `saved ${savedAt}` : "";
+        meta.textContent = `${sizeStr}${when ? ` • ${when}` : ""}`;
 
         const textWrap = document.createElement("div");
         textWrap.style.minWidth = "0";
@@ -654,7 +690,7 @@ export function createUploadedLabelsEditorController({ fileListEl, fileMetaEl, e
     if (selectedCount === 0) {
       const p = document.createElement("p");
       p.className = "hint";
-      p.textContent = "Select one or more uploaded files/folders from the list.";
+      p.textContent = "Select one or more uploaded files/folders to edit metadata.";
       editorEl.appendChild(p);
       return;
     }
@@ -702,6 +738,10 @@ export function createUploadedLabelsEditorController({ fileListEl, fileMetaEl, e
       inV.dataset.initial = val;
       inV.value = val;
       inV.autocomplete = "off";
+      if (key === "acquired_utc") {
+        inV.disabled = true;
+        inV.title = "Automatically set from the original file last-modified time (UTC) before upload.";
+      }
       tdV.appendChild(inV);
       tr.appendChild(tdK);
       tr.appendChild(tdV);
@@ -829,6 +869,7 @@ export function createUploadedLabelsEditorController({ fileListEl, fileMetaEl, e
       const res = await fetch("/io/labels/auto", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ relative_paths: rels }),
       });
       let msg = "";
@@ -857,13 +898,17 @@ export function createUploadedLabelsEditorController({ fileListEl, fileMetaEl, e
   }
 
   async function refreshFromUploads() {
-    if (!fileListEl || !fileMetaEl) return [];
+    if (typeof onRefreshFromUploads === "function") {
+      await onRefreshFromUploads();
+      return fileItems;
+    }
+    if (!fileMetaEl) return fileItems;
     try {
       const data = await fetchJson("/io/uploads?limit=5000");
       fileItems = data.items || [];
       pruneSelection();
-      const total = data.count != null ? data.count : fileItems.length;
-      fileMetaEl.textContent = `${fileItems.length} file(s) shown • ${total} total on server • ${selectedRels.size} selected`;
+      totalCount = data.count != null ? Number(data.count) : fileItems.length;
+      updateMeta();
       renderFileList();
       renderEditor();
       return fileItems;
@@ -873,5 +918,5 @@ export function createUploadedLabelsEditorController({ fileListEl, fileMetaEl, e
     }
   }
 
-  return { refreshFromUploads, renderFileList, renderEditor };
+  return { refreshFromUploads, renderFileList, renderEditor, setContext, setSelection };
 }

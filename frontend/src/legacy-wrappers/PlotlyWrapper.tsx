@@ -14,6 +14,7 @@ type PlotlyWrapperProps = {
   plotStyle: PlotStyle;
   ghostOverlayEnabled: boolean;
   className?: string;
+  onPlotClick?: (event: any) => void;
 };
 
 function applyStacking(data: any[], stackSep: number) {
@@ -39,7 +40,7 @@ function styleGhostTrace(tr: any) {
 }
 
 export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
-  ({ figure, previousFigure, plotStyle, ghostOverlayEnabled, className }, ref) => {
+  ({ figure, previousFigure, plotStyle, ghostOverlayEnabled, className, onPlotClick }, ref) => {
   const divRef = useRef<HTMLDivElement | null>(null);
   useImperativeHandle(ref, () => divRef.current as HTMLDivElement);
 
@@ -82,6 +83,15 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
       scrollZoom: false,
     });
   }, [themed]);
+
+  useEffect(() => {
+    const el = divRef.current as any;
+    if (!el || !onPlotClick) return;
+    el.on("plotly_click", onPlotClick);
+    return () => {
+      el.removeListener?.("plotly_click", onPlotClick);
+    };
+  }, [onPlotClick]);
 
   return <div ref={divRef} className={className} />;
 }

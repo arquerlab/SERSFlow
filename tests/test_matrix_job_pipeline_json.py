@@ -4,6 +4,9 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from unittest.mock import MagicMock
+
+from sersflow.api.middleware.auth import DEV_USER_ID
 
 from sersflow.api.routers import explore as explore_router
 from sersflow.api.schemas.explore import MatrixExportRequest
@@ -12,6 +15,12 @@ from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.sessions_service import pipeline_hash, subset_hash
 from sersflow.infra.analysis_store import create_run_pending, update_run_status
 from sersflow.infra.explore_store import create_matrix_job_pending, get_matrix_job
+
+
+def _mock_request() -> MagicMock:
+    req = MagicMock()
+    req.state.user_id = DEV_USER_ID
+    return req
 
 
 def test_matrix_job_can_store_pipeline_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,7 +61,7 @@ def test_matrix_job_from_analysis_run_uses_stored_pipeline_snapshot(
     )
     update_run_status(run_id=run_id, status="completed", finished=True)
 
-    resp = explore_router.post_matrix_job(MatrixExportRequest(analysis_run_id=run_id))
+    resp = explore_router.post_matrix_job(MatrixExportRequest(analysis_run_id=run_id), _mock_request())
     rec = get_matrix_job(resp.matrix_job_id)
 
     assert rec is not None
@@ -80,7 +89,7 @@ def test_matrix_job_from_analysis_run_requires_pipeline_snapshot(
     update_run_status(run_id=run_id, status="completed", finished=True)
 
     with pytest.raises(HTTPException) as exc:
-        explore_router.post_matrix_job(MatrixExportRequest(analysis_run_id=run_id))
+        explore_router.post_matrix_job(MatrixExportRequest(analysis_run_id=run_id), _mock_request())
 
     assert exc.value.status_code == 400
     assert "stored pipeline snapshot" in str(exc.value.detail)

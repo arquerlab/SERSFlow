@@ -165,7 +165,8 @@ export function createSeriesUi({ selectorId, schedulePlotUpdate }) {
       return;
     }
     const res = await fetch(
-      `/plot/series-value?relative_path=${encodeURIComponent(state.relativePath)}&index=${encodeURIComponent(String(idx))}`
+      `/plot/series-value?relative_path=${encodeURIComponent(state.relativePath)}&index=${encodeURIComponent(String(idx))}`,
+      { credentials: "include" },
     );
     const text = await res.text();
     if (!res.ok) return;
@@ -219,7 +220,9 @@ export function createSeriesUi({ selectorId, schedulePlotUpdate }) {
       hover.style.display = "none";
       return;
     }
-    const res = await fetch(`/plot/series-info?relative_path=${encodeURIComponent(rel)}&max_points=5`);
+    const res = await fetch(`/plot/series-info?relative_path=${encodeURIComponent(rel)}&max_points=5`, {
+      credentials: "include",
+    });
     const text = await res.text();
     if (!res.ok) {
       wrap.style.display = "none";
@@ -302,7 +305,8 @@ export function createMapUi({ selectorId, mapStateByFile, schedulePlotUpdate }) 
   hint.className = "hint";
   hint.style.marginTop = "8px";
   hint.style.marginBottom = "10px";
-  hint.textContent = "Click cells to toggle map points. If available, an embedded preview image is shown behind the grid.";
+  hint.textContent =
+    "Click cells to toggle map points. If available, the embedded preview is cropped to the Raman map area behind the grid.";
 
   const gridEl = document.createElement("div");
   gridEl.className = "map-grid";
@@ -359,8 +363,9 @@ export function createMapUi({ selectorId, mapStateByFile, schedulePlotUpdate }) 
 
   async function applyPreviewBackground(rel) {
     try {
-      const url = `/plot/map-preview-image?relative_path=${encodeURIComponent(rel)}`;
-      const res = await fetch(url, { method: "GET" });
+      const params = new URLSearchParams({ relative_path: rel, crop_to_map: "true" });
+      const url = `/plot/map-preview-image?${params.toString()}`;
+      const res = await fetch(url, { method: "GET", credentials: "include" });
       if (!res.ok) {
         gridEl.classList.remove("with-preview");
         gridEl.style.backgroundImage = "";
@@ -415,7 +420,9 @@ export function createMapUi({ selectorId, mapStateByFile, schedulePlotUpdate }) 
       return;
     }
 
-    const res = await fetch(`/plot/map-info?relative_path=${encodeURIComponent(rel)}&max_dim=80`);
+    const res = await fetch(`/plot/map-info?relative_path=${encodeURIComponent(rel)}&max_dim=80`, {
+      credentials: "include",
+    });
     const text = await res.text();
     if (!res.ok) {
       wrap.style.display = "none";

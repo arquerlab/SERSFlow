@@ -52,8 +52,9 @@ class DatasetsResource(_Base):
         return dict(data) if isinstance(data, dict) else {}
 
     def clear_all(self) -> dict[str, Any]:
-        data = request_json(self._root.http, "DELETE", "/datasets")
-        return dict(data) if isinstance(data, dict) else {}
+        raise NotImplementedError(
+            "Bulk DELETE /datasets was removed for safety. Delete datasets individually with delete()."
+        )
 
     def compute_metrics(self, dataset_id: str, payload: DatasetMetricsRequest) -> DatasetMetricsResponse:
         data = request_json(

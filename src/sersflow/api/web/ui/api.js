@@ -1,5 +1,5 @@
 export async function fetchText(url, options) {
-  const res = await fetch(url, { cache: "no-store", ...options });
+  const res = await fetch(url, { cache: "no-store", credentials: "include", ...options });
   const text = await res.text();
   return { res, text };
 }

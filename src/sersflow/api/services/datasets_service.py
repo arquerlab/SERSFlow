@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sersflow.api.schemas.datasets import DatasetCreateRequest, SpectrumRef
+from sersflow.api.services.ownership import OwnershipError, assert_paths_owner, ownership_http_error
 from sersflow.api.services.uploads import resolve_existing_upload
 from sersflow.core.io.load_file import load_dataset
 from sersflow.core.ids import spectrum_id_from_ref
@@ -8,7 +9,11 @@ from sersflow.core.models.datasets import MapDataset, SeriesDataset, SpectrumDat
 from sersflow.infra.datasets_store import DatasetRecord, create_dataset
 
 
-def create_dataset_from_uploads(payload: DatasetCreateRequest) -> tuple[DatasetRecord, list[dict[str, str]]]:
+def create_dataset_from_uploads(
+    payload: DatasetCreateRequest,
+    *,
+    owner_user_id: str,
+) -> tuple[DatasetRecord, list[dict[str, str]]]:
     """
     Build a dataset from upload paths. Each path is loaded independently; failures are recorded
     so one bad file does not block the rest (large multi-select / Select all).
@@ -16,9 +21,14 @@ def create_dataset_from_uploads(payload: DatasetCreateRequest) -> tuple[DatasetR
     spectra: list[SpectrumRef] = []
     skipped: list[dict[str, str]] = []
 
+    try:
+        assert_paths_owner(owner_user_id, list(payload.relative_paths))
+    except OwnershipError as e:
+        raise ValueError(f"Upload not accessible: {e}") from e
+
     for rel in payload.relative_paths:
         try:
-            p = resolve_existing_upload(rel)
+            p = resolve_existing_upload(rel, owner_user_id=owner_user_id)
             ds = load_dataset(p)
 
             if isinstance(ds, SpectrumDataset):
@@ -58,6 +68,6 @@ def create_dataset_from_uploads(payload: DatasetCreateRequest) -> tuple[DatasetR
             + tail
         )
 
-    rec = create_dataset(metadata=payload.metadata, spectra=spectra)
+    rec = create_dataset(metadata=payload.metadata, spectra=spectra, owner_user_id=owner_user_id)
     return rec, skipped
 

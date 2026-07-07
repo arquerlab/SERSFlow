@@ -49,7 +49,12 @@ def _copy_labels(source_rel: str, target_rel: str, fallback_labels: dict[str, An
         con.close()
 
 
-def restore_dataset_uploads(record: DatasetRecord, *, force_copy: bool = False) -> DatasetRestoreUploadsResponse:
+def restore_dataset_uploads(
+    record: DatasetRecord,
+    *,
+    owner_user_id: str,
+    force_copy: bool = False,
+) -> DatasetRestoreUploadsResponse:
     root = upload_root()
     root.mkdir(parents=True, exist_ok=True)
     active = read_upload_registry(root)
@@ -124,6 +129,7 @@ def restore_dataset_uploads(record: DatasetRecord, *, force_copy: bool = False) 
                     else filename,
                     size_bytes=size,
                     labels=labels,
+                    owner_user_id=owner_user_id,
                 ).to_dict()
                 restored = append_upload_registry_unique(root, [rec])
                 restored_paths = {str(x.get("relative_path") or "") for x in restored}
@@ -155,6 +161,7 @@ def restore_dataset_uploads(record: DatasetRecord, *, force_copy: bool = False) 
                     relative_subpath=rel_subpath,
                     size_bytes=int(target.stat().st_size),
                     labels=labels if isinstance(labels, dict) else None,
+                    owner_user_id=owner_user_id,
                 ).to_dict()
                 rec["restored_from_dataset_id"] = record.dataset_id
                 rec["restored_from_relative_path"] = original_rel

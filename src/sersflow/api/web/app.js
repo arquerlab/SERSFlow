@@ -10,6 +10,7 @@ const uploadBtn = $("uploadBtn");
 const clearSelectionBtn = $("clearSelectionBtn");
 const refreshBtn = $("refreshBtn");
 const excludeExtsInput = $("excludeExts");
+const extFilterModeSelect = $("extFilterMode");
 const err = $("error");
 const status = $("status");
 const fileList = $("fileList");
@@ -20,7 +21,6 @@ const selectNoneBtn = $("selectNoneBtn");
 const unloadBtn = $("unloadBtn");
 const unloadAllBtn = $("unloadAllBtn");
 const purgeHiddenBtn = $("purgeHiddenBtn");
-const labelsEditorFileList = $("labelsEditorFileList");
 const labelsEditorMeta = $("labelsEditorMeta");
 const labelsEditor = $("labelsEditor");
 
@@ -80,7 +80,7 @@ function queuedFiles() {
   return out;
 }
 
-function _parseExcludedExts() {
+function _parseExtensionFilterList() {
   const raw = excludeExtsInput ? String(excludeExtsInput.value || "") : "";
   const parts = raw
     .split(/[,\s]+/g)
@@ -88,6 +88,11 @@ function _parseExcludedExts() {
     .filter(Boolean)
     .map((s) => (s.startsWith(".") ? s.slice(1) : s));
   return new Set(parts);
+}
+
+function _extFilterMode() {
+  const v = extFilterModeSelect ? String(extFilterModeSelect.value || "") : "skip";
+  return v === "only" ? "only" : "skip";
 }
 
 function _fileExtLower(name) {
@@ -98,24 +103,38 @@ function _fileExtLower(name) {
 }
 
 function applyUploadFilters(files) {
-  const excluded = _parseExcludedExts();
-  if (!excluded.size) return { kept: Array.from(files || []), skipped: [] };
+  const mode = _extFilterMode();
+  const exts = _parseExtensionFilterList();
+  if (!exts.size) return { kept: Array.from(files || []), skipped: [] };
   const kept = [];
   const skipped = [];
   for (const f of Array.from(files || [])) {
     const relName = String(f.webkitRelativePath || f.name || "");
     const ext = _fileExtLower(relName);
-    if (ext && excluded.has(ext)) skipped.push(f);
-    else kept.push(f);
+    if (mode === "skip") {
+      if (ext && exts.has(ext)) skipped.push(f);
+      else kept.push(f);
+    } else {
+      if (ext && exts.has(ext)) kept.push(f);
+      else skipped.push(f);
+    }
   }
   return { kept, skipped };
 }
 
-const uploads = createUploadsController({ uploadedListEl: uploadedList, uploadsMetaEl: uploadsMeta });
-const uploadedLabelsEditor = createUploadedLabelsEditorController({
-  fileListEl: labelsEditorFileList,
+let uploadedLabelsEditor = null;
+const uploads = createUploadsController({
+  uploadedListEl: uploadedList,
+  uploadsMetaEl: uploadsMeta,
+  onSelectedPathsChange: (paths, items, total) => {
+    uploadedLabelsEditor?.setContext({ items, selectedPaths: paths, total });
+  },
+  onUploadedItemsChange: () => syncUploadsAfterListChange(),
+});
+uploadedLabelsEditor = createUploadedLabelsEditorController({
   fileMetaEl: labelsEditorMeta,
   editorEl: labelsEditor,
+  onRefreshFromUploads: () => refreshUploadedList(),
 });
 
 let selectorIds = [crypto.randomUUID()];
@@ -195,7 +214,14 @@ const _uploadsChangedChannel = new BroadcastChannel("sersflow:uploads-changed");
 
 async function refreshUploadedList() {
   await uploads.refreshUploadedList();
-  await uploadedLabelsEditor.refreshFromUploads();
+}
+
+function syncUploadsAfterListChange() {
+  uploadedLabelsEditor?.setContext({
+    items: uploads.getUploadedItems(),
+    selectedPaths: Array.from(uploads.getSelectedSet()),
+    total: uploads.getTotalCount(),
+  });
   renderPlotSelectors();
   _uploadsChangedChannel.postMessage({ ts: Date.now() });
 }
@@ -256,9 +282,16 @@ async function uploadChunk(files, { batchIndex, batchCount, uploadedSoFar, total
   }
 
   const fd = new FormData();
+  const sourceModifiedMs = {};
   for (const f of files) {
     const relName = String(f.webkitRelativePath || f.name || "").trim();
     fd.append("files", f, relName || f.name);
+    if (relName && Number.isFinite(f.lastModified) && f.lastModified > 0) {
+      sourceModifiedMs[relName] = f.lastModified;
+    }
+  }
+  if (Object.keys(sourceModifiedMs).length) {
+    fd.append("source_modified_ms_json", JSON.stringify(sourceModifiedMs));
   }
   const chunkBytes = Array.from(files).reduce((acc, f) => acc + (f.size || 0), 0);
   setStatus(
@@ -275,7 +308,12 @@ async function uploadChunk(files, { batchIndex, batchCount, uploadedSoFar, total
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       setStatus(`Sending batch ${batchIndex + 1}/${batchCount} (attempt ${attempt}/${maxAttempts})…`);
-      const res = await fetch(`/io/upload`, { method: "POST", body: fd, signal: controller.signal });
+      const res = await fetch(`/io/upload`, {
+        method: "POST",
+        body: fd,
+        signal: controller.signal,
+        credentials: "include",
+      });
       const text = await res.text();
       if (!res.ok) throw new Error(text || `Upload failed (${res.status}).`);
       return text || "Uploaded.";
@@ -304,7 +342,9 @@ async function upload(files) {
   const filtered = applyUploadFilters(files);
   const all = filtered.kept;
   if (filtered.skipped.length) {
-    setStatus(`Skipping ${filtered.skipped.length} file(s) due to "Skip extensions".`);
+    const mode = _extFilterMode();
+    const hint = mode === "only" ? "Only extensions" : "Skip extensions";
+    setStatus(`Skipping ${filtered.skipped.length} file(s) due to extension filter (${hint}).`);
   }
   if (!all.length) {
     showError("All selected files were skipped by the current extension filter.");
@@ -508,13 +548,22 @@ function refreshQueuedPreview() {
   const filtered = applyUploadFilters(queuedFiles());
   listSelectedFiles(filtered.kept);
   if (filtered.skipped.length) {
-    setStatus(`Queued ${filtered.kept.length} file(s), skipping ${filtered.skipped.length} due to extension filter.`);
+    const mode = _extFilterMode();
+    const hint = mode === "only" ? "Only extensions" : "Skip extensions";
+    setStatus(
+      `Queued ${filtered.kept.length} file(s), skipping ${filtered.skipped.length} due to extension filter (${hint}).`
+    );
+  } else if (filtered.kept.length) {
+    const mode = _extFilterMode();
+    const hint = mode === "only" ? "Only extensions" : "Skip extensions";
+    setStatus(`Queued ${filtered.kept.length} file(s). Extension filter mode: ${hint}.`);
   }
 }
 
 fileInput.addEventListener("change", () => refreshQueuedPreview());
 if (folderInput) folderInput.addEventListener("change", () => refreshQueuedPreview());
 if (excludeExtsInput) excludeExtsInput.addEventListener("input", () => refreshQueuedPreview());
+if (extFilterModeSelect) extFilterModeSelect.addEventListener("change", () => refreshQueuedPreview());
 uploadBtn.addEventListener("click", () => {
   const filtered = applyUploadFilters(queuedFiles());
   upload(filtered.kept);
@@ -544,7 +593,6 @@ unloadBtn.addEventListener("click", async () => {
   }
   setStatus(out.message);
   await refreshUploadedList();
-  renderPlotSelectors();
   schedulePlotUpdate();
 });
 
@@ -559,7 +607,6 @@ unloadAllBtn.addEventListener("click", async () => {
   }
   setStatus(out.message);
   await refreshUploadedList();
-  renderPlotSelectors();
   schedulePlotUpdate();
 });
 
@@ -575,7 +622,6 @@ purgeHiddenBtn.addEventListener("click", async () => {
     }
     setStatus(out.message);
     await refreshUploadedList();
-    renderPlotSelectors();
     schedulePlotUpdate();
   } catch (e) {
     showError(String(e?.message || e));

@@ -12,9 +12,10 @@ from sersflow.api.schemas.sessions import SubsetStrategy
 # Matrix export for exploration uses the full dataset; session.subset is preview-only.
 _MATRIX_COHORT = SubsetStrategy(kind="all")
 from sersflow.api.services.sessions_service import resolve_subset_indices
+from sersflow.api.services.reference_runtime import filter_reference_spectra, hydrate_reference_transforms
 from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline_parallel_no_cache
-from sersflow.infra.datasets_store import get_dataset
+from sersflow.infra.datasets_store import get_dataset_internal
 from sersflow.infra.explore_store import artifacts_root, update_matrix_job
 from sersflow.infra.explore_store import get_matrix_job as store_get_matrix_job
 from sersflow.infra.sessions_store import get_session
@@ -54,12 +55,13 @@ def execute_matrix_export_job(matrix_job_id: str) -> None:
             pipeline = Pipeline.model_validate_json(rec.pipeline_json)
             ns = matrix_job_id
 
-        ds = get_dataset(rec.dataset_id)
+        ds = get_dataset_internal(rec.dataset_id)
         if ds is None:
             raise ValueError("dataset not found")
+        pipeline = hydrate_reference_transforms(pipeline, ds, cache_namespace=ns)
 
         indices = resolve_subset_indices(dataset=ds, subset=_MATRIX_COHORT, pipeline=pipeline)
-        refs = [ds.spectra[i] for i in indices]
+        refs = filter_reference_spectra([ds.spectra[i] for i in indices], pipeline)
         if len(refs) > _max_spectra():
             raise ValueError(f"too many spectra (max {_max_spectra()})")
 

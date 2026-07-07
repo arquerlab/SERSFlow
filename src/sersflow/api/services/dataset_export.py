@@ -69,8 +69,8 @@ def _labels_for_dataset_paths(rows: list[dict[str, Any]]) -> dict[str, dict[str,
         con.close()
 
 
-def export_dataset_package(dataset_id: str) -> tuple[bytes, str]:
-    rec = get_dataset(dataset_id)
+def export_dataset_package(dataset_id: str, *, owner_user_id: str) -> tuple[bytes, str]:
+    rec = get_dataset(dataset_id, owner_user_id=owner_user_id)
     if rec is None:
         raise FileNotFoundError(dataset_id)
     rows = _dataset_rows(dataset_id)
@@ -131,7 +131,7 @@ def export_dataset_package(dataset_id: str) -> tuple[bytes, str]:
     return buf.getvalue(), f"{safe}.sersflow-dataset.zip"
 
 
-def import_dataset_package(data: bytes) -> DatasetImportResponse:
+def import_dataset_package(data: bytes, *, owner_user_id: str) -> DatasetImportResponse:
     try:
         zf = zipfile.ZipFile(io.BytesIO(data), "r")
     except zipfile.BadZipFile as e:
@@ -184,7 +184,7 @@ def import_dataset_package(data: bytes) -> DatasetImportResponse:
         for row in spectra_raw
         if isinstance(row, dict)
     ]
-    rec = create_dataset(metadata=metadata, spectra=spectra)
+    rec = create_dataset(metadata=metadata, spectra=spectra, owner_user_id=owner_user_id)
 
     imported_labels = 0
     labels = manifest.get("labels")

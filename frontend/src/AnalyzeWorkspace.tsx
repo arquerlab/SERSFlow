@@ -29,6 +29,7 @@ import {
   deleteAnalysisRun,
   deleteAllAnalysisRuns,
   downloadUrl,
+  fetchAnalysisSpectrum,
   fetchExportManifest,
   fetchObservationColumns,
   fetchObservationSchema,
@@ -51,6 +52,7 @@ import {
   postVif,
   getMatrixJob,
   type AnalysisRunSummary,
+  type AnalysisSpectrumResponse,
 } from "./analyze/api";
 
 type AnalyzeSection =
@@ -58,6 +60,7 @@ type AnalyzeSection =
   | "exports"
   | "correlation"
   | "pca_cluster"
+  | "heatmaps"
   | "meta_plot"
   | "spectrum_matrix";
 
@@ -66,6 +69,7 @@ const SECTIONS: { id: AnalyzeSection; label: string }[] = [
   { id: "exports", label: "Exports" },
   { id: "correlation", label: "Correlation / VIF" },
   { id: "pca_cluster", label: "PCA / Cluster" },
+  { id: "heatmaps", label: "Heatmaps" },
   { id: "meta_plot", label: "Parameter scatter" },
   { id: "spectrum_matrix", label: "Spectrum matrix & PCA" },
 ];
@@ -123,6 +127,282 @@ function stableNumberKey(v: number, decimals = 6): string {
   const r = Math.round(v);
   if (Math.abs(v - r) < 1e-12) return String(r);
   return v.toFixed(decimals);
+}
+
+type HeatmapFileMode = "all" | "single" | "multiple";
+type HeatmapLayoutMode = "individual" | "subplots";
+type HeatmapRow = {
+  spectrum_id: string;
+  relative_path: string;
+  file_kind: string;
+  axis_time_s: number | null;
+  axis_map_x: number | null;
+  axis_map_y: number | null;
+  value: number | null;
+};
+type HeatmapCellCustomData = {
+  spectrum_ids: string[];
+  relative_path: string;
+  axis_time_s: number | null;
+  axis_map_x: number | null;
+  axis_map_y: number | null;
+  value: number | null;
+};
+type HeatmapPlotModel = {
+  id: string;
+  title: string;
+  figure: PlotlyFigure;
+};
+type HeatmapSpectrumSelection = AnalysisSpectrumResponse & {
+  label: string;
+};
+
+function finiteUniqueSorted(values: number[]): number[] {
+  return Array.from(new Set(values.filter((v) => Number.isFinite(v)).map((v) => stableNumberKey(v, 8))))
+    .map(Number)
+    .sort((a, b) => a - b);
+}
+
+function meanFinite(values: number[]): number | null {
+  const finite = values.filter((v) => Number.isFinite(v));
+  if (!finite.length) return null;
+  return finite.reduce((a, b) => a + b, 0) / finite.length;
+}
+
+function coordinateBounds(values: number[]): [number, number] | undefined {
+  const sorted = finiteUniqueSorted(values);
+  if (!sorted.length) return undefined;
+  if (sorted.length === 1) return [sorted[0]! - 0.5, sorted[0]! + 0.5];
+  let minStep = Infinity;
+  for (let i = 1; i < sorted.length; i++) {
+    const step = Math.abs(sorted[i]! - sorted[i - 1]!);
+    if (step > 0 && step < minStep) minStep = step;
+  }
+  const pad = Number.isFinite(minStep) ? minStep / 2 : 0.5;
+  return [sorted[0]! - pad, sorted[sorted.length - 1]! + pad];
+}
+
+function safePlotName(value: string): string {
+  return value.split(/[\\/]/).pop() || value || "file";
+}
+
+function heatmapCellLabel(cell: HeatmapCellCustomData): string {
+  const file = safePlotName(cell.relative_path);
+  if (cell.axis_map_x !== null && cell.axis_map_y !== null) {
+    return `${file} x=${cell.axis_map_x.toFixed(3)}, y=${cell.axis_map_y.toFixed(3)}`;
+  }
+  if (cell.axis_time_s !== null) return `${file} t=${cell.axis_time_s.toFixed(3)} s`;
+  return file;
+}
+
+function spectrumSelectionLabel(spectrum: AnalysisSpectrumResponse): string {
+  const file = safePlotName(spectrum.relative_path ?? "");
+  if (spectrum.axis_map_x !== null && spectrum.axis_map_y !== null) {
+    return `${file} x=${spectrum.axis_map_x.toFixed(3)}, y=${spectrum.axis_map_y.toFixed(3)}`;
+  }
+  if (spectrum.axis_time_s !== null) return `${file} t=${spectrum.axis_time_s.toFixed(3)} s`;
+  return file || spectrum.spectrum_id;
+}
+
+const HEATMAP_AXIS_COLS = {
+  time: "axis_time_s",
+  mapX: "axis_map_x",
+  mapY: "axis_map_y",
+  fileKind: "file_kind",
+  relativePath: "relative_path",
+} as const;
+
+function buildSingleHeatmapFigure(rows: HeatmapRow[], feature: string, relativePath: string): PlotlyFigure | null {
+  const valid = rows.filter((r) => r.value !== null);
+  if (!valid.length) return null;
+  const fileLabel = safePlotName(relativePath);
+  const hasMap = valid.some((r) => r.axis_map_x !== null && r.axis_map_y !== null);
+  if (hasMap) {
+    const xs = finiteUniqueSorted(valid.map((r) => r.axis_map_x ?? NaN));
+    const ys = finiteUniqueSorted(valid.map((r) => r.axis_map_y ?? NaN));
+    if (!xs.length || !ys.length) return null;
+    const buckets = new Map<string, HeatmapRow[]>();
+    for (const r of valid) {
+      if (r.axis_map_x === null || r.axis_map_y === null || r.value === null) continue;
+      const key = `${stableNumberKey(r.axis_map_x, 8)}||${stableNumberKey(r.axis_map_y, 8)}`;
+      const arr = buckets.get(key) ?? [];
+      arr.push(r);
+      buckets.set(key, arr);
+    }
+    const z = ys.map((y) =>
+      xs.map((x) =>
+        meanFinite((buckets.get(`${stableNumberKey(x, 8)}||${stableNumberKey(y, 8)}`) ?? []).map((r) => r.value ?? NaN))
+      )
+    );
+    const customdata = ys.map((y) =>
+      xs.map((x) => {
+        const cellRows = buckets.get(`${stableNumberKey(x, 8)}||${stableNumberKey(y, 8)}`) ?? [];
+        const first = cellRows[0];
+        if (!first) return null;
+        return {
+          spectrum_ids: cellRows.map((r) => r.spectrum_id),
+          relative_path: relativePath,
+          axis_time_s: null,
+          axis_map_x: x,
+          axis_map_y: y,
+          value: meanFinite(cellRows.map((r) => r.value ?? NaN)),
+        } satisfies HeatmapCellCustomData;
+      })
+    );
+    const xRange = coordinateBounds(xs);
+    const yRange = coordinateBounds(ys);
+    return {
+      data: [
+        {
+          type: "heatmap",
+          x: xs,
+          y: ys,
+          z,
+          customdata,
+          colorscale: "Viridis",
+          colorbar: { title: { text: feature } },
+          hovertemplate: `${HEATMAP_AXIS_COLS.mapX}: %{x}<br>${HEATMAP_AXIS_COLS.mapY}: %{y}<br>${feature}: %{z}<extra>click to overlay spectrum</extra>`,
+        },
+      ],
+      layout: {
+        title: `${feature} map: ${fileLabel}`,
+        xaxis: { title: HEATMAP_AXIS_COLS.mapX, range: xRange },
+        yaxis: { title: HEATMAP_AXIS_COLS.mapY, range: yRange },
+        margin: { l: 70, r: 20, t: 50, b: 65 },
+      },
+    };
+  }
+
+  const timeRows = valid.filter((r) => r.axis_time_s !== null && r.value !== null).sort((a, b) => (a.axis_time_s ?? 0) - (b.axis_time_s ?? 0));
+  if (!timeRows.length) return null;
+  const timeCustomdata: HeatmapCellCustomData[][] = [
+    timeRows.map((r) => ({
+      spectrum_ids: [r.spectrum_id],
+      relative_path: relativePath,
+      axis_time_s: r.axis_time_s,
+      axis_map_x: null,
+      axis_map_y: null,
+      value: r.value,
+    })),
+  ];
+  return {
+    data: [
+      {
+        type: "heatmap",
+        x: timeRows.map((r) => r.axis_time_s),
+        y: [feature],
+        z: [timeRows.map((r) => r.value)],
+        customdata: timeCustomdata,
+        colorscale: "Viridis",
+        colorbar: { title: { text: feature } },
+        hovertemplate: `${HEATMAP_AXIS_COLS.time}: %{x}<br>${feature}: %{z}<extra>click to overlay spectrum</extra>`,
+      },
+    ],
+    layout: {
+      title: `${feature} time trace: ${fileLabel}`,
+      xaxis: { title: HEATMAP_AXIS_COLS.time },
+      yaxis: { title: "" },
+      margin: { l: 90, r: 20, t: 50, b: 65 },
+    },
+  };
+}
+
+function buildSubplotHeatmapFigure(items: { relativePath: string; figure: PlotlyFigure }[], feature: string): PlotlyFigure | null {
+  if (!items.length) return null;
+  const cols = Math.ceil(Math.sqrt(items.length));
+  const rows = Math.ceil(items.length / cols);
+  const data: Record<string, unknown>[] = [];
+  const layout: Record<string, unknown> = {
+    title: `${feature} heatmaps`,
+    margin: { l: 70, r: 30, t: 70, b: 65 },
+    showlegend: false,
+  };
+  const gapX = 0.04;
+  const gapY = 0.08;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!;
+    const src = (item.figure.data?.[0] ?? {}) as Record<string, unknown>;
+    const r = Math.floor(i / cols);
+    const c = i % cols;
+    const x0 = c / cols + gapX / 2;
+    const x1 = (c + 1) / cols - gapX / 2;
+    const y1 = 1 - r / rows - gapY / 2;
+    const y0 = 1 - (r + 1) / rows + gapY / 2;
+    const axisSuffix = i === 0 ? "" : String(i + 1);
+    data.push({
+      ...src,
+      showscale: i === items.length - 1,
+      colorbar: i === items.length - 1 ? { title: { text: feature } } : undefined,
+      xaxis: `x${axisSuffix}`,
+      yaxis: `y${axisSuffix}`,
+    });
+    const srcXaxis = (item.figure.layout?.xaxis ?? {}) as Record<string, unknown>;
+    const srcYaxis = (item.figure.layout?.yaxis ?? {}) as Record<string, unknown>;
+    layout[`xaxis${axisSuffix}`] = {
+      ...srcXaxis,
+      domain: [x0, x1],
+      title: r === rows - 1 ? srcXaxis.title ?? "" : "",
+    };
+    layout[`yaxis${axisSuffix}`] = {
+      ...srcYaxis,
+      domain: [y0, y1],
+      title: c === 0 ? srcYaxis.title ?? "" : "",
+    };
+  }
+  layout.annotations = items.map((item, i) => {
+    const r = Math.floor(i / cols);
+    const c = i % cols;
+    return {
+      text: safePlotName(item.relativePath),
+      x: (c + 0.5) / cols,
+      y: 1 - r / rows,
+      xref: "paper",
+      yref: "paper",
+      showarrow: false,
+      yanchor: "bottom",
+    };
+  });
+  return { data, layout };
+}
+
+function buildClickedSpectraFigure(spectra: HeatmapSpectrumSelection[]): PlotlyFigure | null {
+  if (!spectra.length) return null;
+  const data = spectra
+    .map((spectrum) => {
+      const x: number[] = [];
+      const y: number[] = [];
+      const n = Math.min(spectrum.x.length, spectrum.y.length);
+      for (let i = 0; i < n; i++) {
+        const xi = spectrum.x[i];
+        const yi = spectrum.y[i];
+        if (typeof xi === "number" && Number.isFinite(xi) && typeof yi === "number" && Number.isFinite(yi)) {
+          x.push(xi);
+          y.push(yi);
+        }
+      }
+      if (!x.length) return null;
+      return {
+        type: "scatter",
+        mode: "lines",
+        x,
+        y,
+        name: spectrum.label,
+        hovertemplate: "cm⁻¹: %{x}<br>intensity: %{y}<extra>%{fullData.name}</extra>",
+      };
+    })
+    .filter(Boolean) as Record<string, unknown>[];
+  if (!data.length) return null;
+  return {
+    data,
+    layout: {
+      title: "Clicked heatmap spectra",
+      xaxis: { title: "Raman Shift (cm⁻¹)" },
+      yaxis: { title: "Intensity" },
+      legend: { orientation: "h", y: -0.25, xanchor: "center", x: 0.5 },
+      margin: { l: 70, r: 20, t: 45, b: 85 },
+      showlegend: true,
+    },
+  };
 }
 
 /**
@@ -280,6 +560,17 @@ export default function AnalyzeWorkspace() {
     { spectrum_id: string; x: number; y: number; color?: number | null; x_err?: number | null; y_err?: number | null }[]
   >([]);
   const metaPlotDivRef = useRef<HTMLDivElement | null>(null);
+  const [heatmapFeature, setHeatmapFeature] = useState("");
+  const [heatmapFileMode, setHeatmapFileMode] = useState<HeatmapFileMode>("all");
+  const [heatmapSingleFile, setHeatmapSingleFile] = useState("");
+  const [heatmapSelectedFiles, setHeatmapSelectedFiles] = useState<string[]>([]);
+  const [heatmapLayoutMode, setHeatmapLayoutMode] = useState<HeatmapLayoutMode>("individual");
+  const [heatmapRows, setHeatmapRows] = useState<HeatmapRow[]>([]);
+  const [heatmapPlots, setHeatmapPlots] = useState<HeatmapPlotModel[]>([]);
+  const [heatmapSelectedSpectra, setHeatmapSelectedSpectra] = useState<HeatmapSpectrumSelection[]>([]);
+  const [heatmapSpectrumBusy, setHeatmapSpectrumBusy] = useState(false);
+  const heatmapDivByIdRef = useRef<Record<string, HTMLDivElement | null>>({});
+  const heatmapLoadedKeyRef = useRef("");
   const [spectrumClusterResult, setSpectrumClusterResult] = useState<Record<string, unknown> | null>(null);
 
   // Shared PCA/FPCA plotting preferences (used by the plot-card selector UI).
@@ -489,6 +780,29 @@ export default function AnalyzeWorkspace() {
     return out.length ? out : featureColumns;
   }, [schemaQ.data, featureColumns]);
 
+  const heatmapAvailableFiles = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const row of heatmapRows) {
+      if (!row.relative_path || seen.has(row.relative_path)) continue;
+      seen.add(row.relative_path);
+      out.push(row.relative_path);
+    }
+    return out.sort((a, b) => safePlotName(a).localeCompare(safePlotName(b)));
+  }, [heatmapRows]);
+
+  const activeHeatmapFiles = useMemo(() => {
+    if (heatmapFileMode === "all") return heatmapAvailableFiles;
+    if (heatmapFileMode === "single") return heatmapSingleFile ? [heatmapSingleFile] : [];
+    return heatmapSelectedFiles.filter((f) => heatmapAvailableFiles.includes(f));
+  }, [heatmapAvailableFiles, heatmapFileMode, heatmapSelectedFiles, heatmapSingleFile]);
+
+  useEffect(() => {
+    if (!heatmapFeature && featureColumns.length) {
+      setHeatmapFeature(featureColumns[0] ?? "");
+    }
+  }, [featureColumns, heatmapFeature]);
+
   // Keep checkbox selections aligned with the *current* run. Persisted names from localStorage
   // or a previous run can be stale — unknown keys become NaN for every row and break /explore/*.
   useEffect(() => {
@@ -623,6 +937,186 @@ export default function AnalyzeWorkspace() {
       },
     };
   }, [vifResult]);
+
+  async function loadHeatmapRows(featureOverride?: string) {
+    const feature = featureOverride || heatmapFeature || featureColumns[0] || "";
+    if (!feature) throw new Error("Select a feature column first");
+    setExploreBusy("heatmaps");
+    setLastError(null);
+    setHeatmapPlots([]);
+    setHeatmapSelectedSpectra([]);
+    try {
+      const cols = [
+        feature,
+        HEATMAP_AXIS_COLS.relativePath,
+        HEATMAP_AXIS_COLS.fileKind,
+        HEATMAP_AXIS_COLS.time,
+        HEATMAP_AXIS_COLS.mapX,
+        HEATMAP_AXIS_COLS.mapY,
+      ];
+      const { rows } = await fetchObservationColumns(runId, cols, 500_000);
+      const parsed: HeatmapRow[] = [];
+      for (const r of rows) {
+        const value = cellToNumber(r[feature]);
+        const rel = String(r[HEATMAP_AXIS_COLS.relativePath] ?? "");
+        if (!rel) continue;
+        if (value === null) continue;
+        const mapX = cellToNumber(r[HEATMAP_AXIS_COLS.mapX]);
+        const mapY = cellToNumber(r[HEATMAP_AXIS_COLS.mapY]);
+        const time = cellToNumber(r[HEATMAP_AXIS_COLS.time]);
+        if ((mapX === null || mapY === null) && time === null) continue;
+        parsed.push({
+          spectrum_id: String(r.spectrum_id ?? ""),
+          relative_path: rel,
+          file_kind: String(r[HEATMAP_AXIS_COLS.fileKind] ?? ""),
+          axis_time_s: time,
+          axis_map_x: mapX,
+          axis_map_y: mapY,
+          value,
+        });
+      }
+      setHeatmapFeature(feature);
+      setHeatmapRows(parsed);
+      const files = Array.from(new Set(parsed.map((r) => r.relative_path))).sort((a, b) => safePlotName(a).localeCompare(safePlotName(b)));
+      if (!heatmapSingleFile && files.length) setHeatmapSingleFile(files[0] ?? "");
+      if (!heatmapSelectedFiles.length) setHeatmapSelectedFiles(files);
+      if (!parsed.length) throw new Error("No map/time rows with numeric values were found for this feature.");
+      heatmapLoadedKeyRef.current = `${runId}:${feature}`;
+    } finally {
+      setExploreBusy(null);
+    }
+  }
+
+  function buildHeatmapPlots() {
+    const feature = heatmapFeature || featureColumns[0] || "";
+    if (!feature) {
+      setLastError("Select a feature column first");
+      return;
+    }
+    if (!heatmapRows.length) {
+      setLastError("Load heatmap rows first");
+      return;
+    }
+    const files = activeHeatmapFiles;
+    if (!files.length) {
+      setLastError("Select at least one file");
+      return;
+    }
+    const individual: { relativePath: string; figure: PlotlyFigure }[] = [];
+    for (const rel of files) {
+      const fileRows = heatmapRows.filter((row) => row.relative_path === rel);
+      const figure = buildSingleHeatmapFigure(fileRows, feature, rel);
+      if (figure) individual.push({ relativePath: rel, figure });
+    }
+    if (!individual.length) {
+      setLastError("No plottable map/time heatmaps for the selected files.");
+      setHeatmapPlots([]);
+      return;
+    }
+    const nextPlots =
+      heatmapLayoutMode === "subplots" && individual.length > 1
+        ? (() => {
+            const figure = buildSubplotHeatmapFigure(individual, feature);
+            return figure ? [{ id: "heatmap_subplots", title: `${feature} heatmap subplots`, figure }] : [];
+          })()
+        : individual.map((item, i) => ({
+            id: `heatmap_${i}_${item.relativePath}`,
+            title: `${feature}: ${safePlotName(item.relativePath)}`,
+            figure: item.figure,
+          }));
+    if (!nextPlots.length) {
+      setLastError("No plottable map/time heatmaps for the selected files.");
+      setHeatmapPlots([]);
+      return;
+    }
+    setHeatmapPlots(nextPlots);
+    setLastError(null);
+  }
+
+  const heatmapSpectrumFigure = useMemo(
+    () => buildClickedSpectraFigure(heatmapSelectedSpectra),
+    [heatmapSelectedSpectra]
+  );
+
+  const handleHeatmapPlotClick = useCallback(
+    async (event: any) => {
+      const point = event?.points?.[0];
+      const cell = point?.customdata as HeatmapCellCustomData | null | undefined;
+      const ids = Array.isArray(cell?.spectrum_ids) ? Array.from(new Set(cell.spectrum_ids.map(String).filter(Boolean))) : [];
+      if (!runId || !ids.length) return;
+
+      const existing = new Set(heatmapSelectedSpectra.map((s) => s.spectrum_id));
+      const missing = ids.filter((id) => !existing.has(id));
+      if (!missing.length) return;
+
+      setHeatmapSpectrumBusy(true);
+      setLastError(null);
+      try {
+        const spectra = await Promise.all(missing.map((id) => fetchAnalysisSpectrum(runId, id)));
+        const fallbackLabel = cell ? heatmapCellLabel(cell) : "";
+        setHeatmapSelectedSpectra((prev) => {
+          const seen = new Set(prev.map((s) => s.spectrum_id));
+          const next = spectra
+            .filter((s) => !seen.has(s.spectrum_id))
+            .map((s) => ({ ...s, label: spectrumSelectionLabel(s) || fallbackLabel }));
+          return [...prev, ...next];
+        });
+      } catch (e) {
+        setLastError(String((e as Error)?.message ?? e));
+      } finally {
+        setHeatmapSpectrumBusy(false);
+      }
+    },
+    [heatmapSelectedSpectra, runId]
+  );
+
+  function HeatmapPlotCard({ plot }: { plot: HeatmapPlotModel }) {
+    return (
+      <div className="card" style={{ marginTop: "10px" }}>
+        <div className="row" style={{ justifyContent: "space-between", gap: "10px", alignItems: "center" }}>
+          <div className="hint" style={{ margin: 0 }}>{plot.title}</div>
+          <button
+            type="button"
+            className="mini"
+            onClick={async () => {
+              const div = heatmapDivByIdRef.current[plot.id];
+              if (!div) return;
+              const bytes = await plotlyDivToPngBytes(div, { width: 1200, scale: 2 });
+              downloadBlob(`${plot.id.replace(/[^a-zA-Z0-9._-]+/g, "_")}.png`, new Blob([bytes as unknown as BlobPart], { type: "image/png" }));
+            }}
+          >
+            Download PNG
+          </button>
+        </div>
+        <PlotlyWrapper
+          ref={(el) => {
+            heatmapDivByIdRef.current[plot.id] = el;
+          }}
+          figure={plot.figure}
+          previousFigure={null}
+          plotStyle={{ mode: "overlay", stackSep: 0 }}
+          ghostOverlayEnabled={false}
+          className="plot-host"
+          onPlotClick={handleHeatmapPlotClick}
+        />
+      </div>
+    );
+  }
+
+  useEffect(() => {
+    if (section !== "heatmaps") return;
+    if (!runId || selectedRun?.status !== "completed") return;
+    const feature = heatmapFeature || featureColumns[0] || "";
+    if (!feature) return;
+    const key = `${runId}:${feature}`;
+    if (heatmapLoadedKeyRef.current === key) return;
+    heatmapLoadedKeyRef.current = key;
+    loadHeatmapRows(feature).catch((e) => {
+      heatmapLoadedKeyRef.current = "";
+      setLastError(String((e as Error)?.message ?? e));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, runId, selectedRun?.status, heatmapFeature, featureColumns]);
 
   const plotCards: PlotCardModel[] = useMemo(() => {
     const cards: PlotCardModel[] = [];
@@ -1634,6 +2128,113 @@ export default function AnalyzeWorkspace() {
           </div>
         ) : null}
 
+        {section === "heatmaps" ? (
+          <div style={{ marginTop: "14px" }}>
+            <div className="section-title">Map / time heatmaps</div>
+            {emptyRun || selectedRun?.status !== "completed" ? (
+              <AnalysisRunGateNotice runId={runId} selectedRun={selectedRun} />
+            ) : (
+              <>
+                <p className="hint">
+                  Plot one extracted feature over map coordinates or series/time axis. Use file selection to render one file,
+                  multiple selected files, or all map/time files in the completed analysis run.
+                </p>
+                <div className="row" style={{ flexWrap: "wrap", gap: "8px", alignItems: "flex-end" }}>
+                  <label className="inline">
+                    Feature
+                    <select value={heatmapFeature} onChange={(e) => setHeatmapFeature(e.target.value)}>
+                      <option value="">Select feature…</option>
+                      {featureColumns.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!!exploreBusy || !(heatmapFeature || featureColumns.length)}
+                    onClick={() => loadHeatmapRows().catch((e) => setLastError(String((e as Error)?.message ?? e)))}
+                  >
+                    {exploreBusy === "heatmaps" ? "Loading…" : "Refresh files"}
+                  </button>
+                  <label className="inline">
+                    Files
+                    <select value={heatmapFileMode} onChange={(e) => setHeatmapFileMode(e.target.value as HeatmapFileMode)}>
+                      <option value="all">All files</option>
+                      <option value="single">Single file</option>
+                      <option value="multiple">Multiple selected</option>
+                    </select>
+                  </label>
+                  <label className="inline">
+                    Layout
+                    <select value={heatmapLayoutMode} onChange={(e) => setHeatmapLayoutMode(e.target.value as HeatmapLayoutMode)}>
+                      <option value="individual">Individual plots</option>
+                      <option value="subplots">Subplots</option>
+                    </select>
+                  </label>
+                  <button type="button" disabled={!heatmapRows.length || !!exploreBusy} onClick={buildHeatmapPlots}>
+                    Plot heatmaps
+                  </button>
+                </div>
+
+                {heatmapAvailableFiles.length ? (
+                  <div className="card-inner" style={{ display: "grid", gap: "8px", marginTop: "10px" }}>
+                    <div className="hint">
+                      Available map/time files are loaded automatically from <code>{HEATMAP_AXIS_COLS.relativePath}</code>,{" "}
+                      <code>{HEATMAP_AXIS_COLS.mapX}</code>, <code>{HEATMAP_AXIS_COLS.mapY}</code>, and{" "}
+                      <code>{HEATMAP_AXIS_COLS.time}</code>. Files: {heatmapAvailableFiles.length}. Rows: {heatmapRows.length}.
+                    </div>
+                    {heatmapFileMode === "single" ? (
+                      <label className="inline" style={{ justifyContent: "space-between" }}>
+                        File
+                        <select value={heatmapSingleFile} onChange={(e) => setHeatmapSingleFile(e.target.value)} style={{ minWidth: "320px" }}>
+                          {heatmapAvailableFiles.map((f) => (
+                            <option key={f} value={f}>
+                              {safePlotName(f)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    {heatmapFileMode === "multiple" ? (
+                      <>
+                        <div className="row" style={{ gap: "6px", flexWrap: "wrap" }}>
+                          <button type="button" className="mini" onClick={() => setHeatmapSelectedFiles(heatmapAvailableFiles)}>
+                            Select all
+                          </button>
+                          <button type="button" className="mini" onClick={() => setHeatmapSelectedFiles([])}>
+                            Clear
+                          </button>
+                        </div>
+                        <div style={{ maxHeight: 180, overflow: "auto", border: "1px solid rgba(255,255,255,0.08)", padding: "6px" }}>
+                          {heatmapAvailableFiles.map((f) => (
+                            <label key={f} className="inline" style={{ display: "block" }} title={f}>
+                              <input
+                                type="checkbox"
+                                checked={heatmapSelectedFiles.includes(f)}
+                                onChange={(e) => setHeatmapSelectedFiles(toggleCol(heatmapSelectedFiles, f, e.target.checked))}
+                              />{" "}
+                              {safePlotName(f)}
+                            </label>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="hint" style={{ marginTop: "8px" }}>
+                    Map/time files will appear automatically when the selected completed run has rows with{" "}
+                    <code>{HEATMAP_AXIS_COLS.mapX}</code> / <code>{HEATMAP_AXIS_COLS.mapY}</code> or{" "}
+                    <code>{HEATMAP_AXIS_COLS.time}</code>.
+                  </div>
+                )}
+
+              </>
+            )}
+          </div>
+        ) : null}
+
         {section === "meta_plot" ? (
           <div style={{ marginTop: "14px" }}>
             <div className="section-title">Parameter vs parameter</div>
@@ -2402,6 +3003,42 @@ export default function AnalyzeWorkspace() {
 
       <div className="preprocess-right card">
         <div className="section-title">Plots &amp; results</div>
+        {section === "heatmaps" && heatmapPlots.length ? (
+          <div style={{ marginTop: "10px" }}>
+            {heatmapPlots.map((plot) => (
+              <HeatmapPlotCard key={plot.id} plot={plot} />
+            ))}
+            <div className="card" style={{ marginTop: "10px" }}>
+              <div className="row" style={{ justifyContent: "space-between", gap: "10px", alignItems: "center" }}>
+                <div className="hint" style={{ margin: 0 }}>
+                  Click heatmap cells to overlay spectra below.
+                  {heatmapSpectrumBusy ? " Loading spectrum…" : ""}
+                </div>
+                <button
+                  type="button"
+                  className="mini"
+                  disabled={!heatmapSelectedSpectra.length}
+                  onClick={() => setHeatmapSelectedSpectra([])}
+                >
+                  Clear spectra
+                </button>
+              </div>
+              {heatmapSpectrumFigure ? (
+                <PlotlyWrapper
+                  figure={heatmapSpectrumFigure}
+                  previousFigure={null}
+                  plotStyle={{ mode: "overlay", stackSep: 0 }}
+                  ghostOverlayEnabled={false}
+                  className="plot-host"
+                />
+              ) : (
+                <div className="hint" style={{ marginTop: "8px" }}>
+                  No spectra selected yet.
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
         {section === "meta_plot" && metaScatterFig ? (
           <PlotlyWrapper
             ref={metaPlotDivRef}

@@ -14,6 +14,7 @@ from sersflow.core.spectrum import XY
 Acquisition = Literal["fixed", "nearest_peak"]
 Extrapolation = Literal["nan", "clip"]
 InterpMethod = Literal["nearest", "linear_interp"]
+ProbeSource = Literal["signal", "baseline"]
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class ProbeSpec:
     window_cm1: float | None
     peak_find: dict[str, Any]
     no_peak_fallback: Literal["none", "fixed_nearest"]
+    source: ProbeSource
+    baseline_step_id: str | None
 
 
 def _safe_id_fragment(s: str) -> str:
@@ -75,6 +78,12 @@ def parse_probes(params: dict[str, Any]) -> list[ProbeSpec]:
         fb = str(row.get("no_peak_fallback", "none")).strip().lower()
         if fb not in ("none", "fixed_nearest"):
             raise ValueError(f"spectral_intensities.probes[{i}].no_peak_fallback must be none or fixed_nearest")
+        src = str(row.get("source", "signal")).strip().lower()
+        if src not in ("signal", "baseline"):
+            raise ValueError(f"spectral_intensities.probes[{i}].source must be signal or baseline")
+        baseline_step_id = str(row.get("baseline_step_id") or "").strip() or None
+        if src == "baseline" and not baseline_step_id:
+            raise ValueError(f"spectral_intensities.probes[{i}].baseline_step_id is required when source is baseline")
         out.append(
             ProbeSpec(
                 id=tid,
@@ -85,9 +94,120 @@ def parse_probes(params: dict[str, Any]) -> list[ProbeSpec]:
                 window_cm1=window,
                 peak_find=peak_find,
                 no_peak_fallback=fb,  # type: ignore[arg-type]
+                source=src,  # type: ignore[arg-type]
+                baseline_step_id=baseline_step_id,
             )
         )
     return out
+
+
+def _step_enabled(step: Any) -> bool:
+    if isinstance(step, dict):
+        return bool(step.get("enabled", True))
+    return bool(getattr(step, "enabled", True))
+
+
+def _step_name(step: Any) -> str:
+    if isinstance(step, dict):
+        return str(step.get("name", ""))
+    return str(getattr(step, "name", ""))
+
+
+def _step_id(step: Any) -> str | None:
+    if isinstance(step, dict):
+        sid = step.get("step_id")
+    else:
+        sid = getattr(step, "step_id", None)
+    text = str(sid or "").strip()
+    return text or None
+
+
+def _step_params(step: Any) -> dict[str, Any]:
+    if isinstance(step, dict):
+        params = step.get("params")
+    else:
+        params = getattr(step, "params", None)
+    return dict(params) if isinstance(params, dict) else {}
+
+
+def _baseline_step_index(
+    pipeline: Any,
+    baseline_step_id: str,
+    *,
+    before_index: int | None = None,
+) -> int:
+    steps = getattr(pipeline, "steps", None) or []
+    for i, step in enumerate(steps):
+        if _step_id(step) != baseline_step_id:
+            continue
+        if not _step_enabled(step):
+            raise ValueError("baseline_step_id must refer to an enabled baseline step")
+        if _step_name(step) != "baseline":
+            raise ValueError("baseline_step_id must refer to a baseline step")
+        if before_index is not None and i >= before_index:
+            raise ValueError("baseline_step_id must refer to an earlier pipeline step")
+        return i
+    raise ValueError(f"baseline_step_id {baseline_step_id!r} does not match any pipeline step")
+
+
+def resolve_baseline_curve_xy(
+    pipeline: Any,
+    baseline_step_id: str,
+    *,
+    per_step_input_xy: dict[int, XY],
+    before_index: int | None = None,
+) -> XY:
+    """
+    Reconstruct the baseline curve for a baseline step: input_y - output_y.
+
+    Uses per-step input captured during pipeline execution and re-applies the baseline transform.
+    """
+    steps = getattr(pipeline, "steps", None) or []
+    sns = assign_pipeline_step_nums(steps)
+    k = _baseline_step_index(pipeline, baseline_step_id, before_index=before_index)
+    baseline_step = steps[k]
+    sn = sns[k]
+    baseline_input = per_step_input_xy.get(sn)
+    if baseline_input is None:
+        raise ValueError("selected baseline step has no available input/output")
+    from sersflow.core.pipeline.steps import DEFAULT_STEPS
+
+    impl = DEFAULT_STEPS.get("baseline")
+    if impl is None:
+        raise ValueError("baseline step implementation is unavailable")
+    baseline_output = impl.transform(baseline_input, _step_params(baseline_step))
+    if (
+        baseline_input.x.size != baseline_output.x.size
+        or baseline_input.y.size != baseline_output.y.size
+        or baseline_input.x.size != baseline_input.y.size
+    ):
+        raise ValueError("selected baseline step input/output arrays are incompatible")
+    baseline_y = baseline_input.y.astype(float, copy=False) - baseline_output.y.astype(float, copy=False)
+    return XY(x=baseline_input.x, y=baseline_y)
+
+
+def _resolve_baseline_curves_for_probes(
+    pipeline: Any,
+    probes: list[ProbeSpec],
+    *,
+    per_step_input_xy: dict[int, XY] | None,
+    before_index: int,
+) -> dict[str, XY]:
+    if per_step_input_xy is None:
+        raise ValueError("per_step_input_xy is required for baseline probes")
+    needed = {p.baseline_step_id for p in probes if p.source == "baseline" and p.baseline_step_id}
+    curves: dict[str, XY] = {}
+    for bid in needed:
+        if bid is None:
+            continue
+        if bid not in curves:
+            curves[bid] = resolve_baseline_curve_xy(
+                pipeline,
+                bid,
+                per_step_input_xy=per_step_input_xy,
+                before_index=before_index,
+            )
+    return curves
 
 
 def _sort_xy(xy: XY) -> tuple[np.ndarray, np.ndarray]:
@@ -118,30 +238,56 @@ def _fixed_intensity(
     return float(np.interp(t, xs, ys, left=left, right=right))
 
 
-def evaluate_spectral_intensity_probes(xy: XY, params: dict[str, Any]) -> dict[str, float | None]:
-    probes = parse_probes(params)
+def _probe_xy(
+    p: ProbeSpec,
+    xy_signal: XY,
+    *,
+    baseline_curves: dict[str, XY] | None,
+) -> XY:
+    if p.source == "baseline":
+        if not p.baseline_step_id:
+            raise ValueError(f"probe {p.id!r} requires baseline_step_id when source is baseline")
+        if baseline_curves is None or p.baseline_step_id not in baseline_curves:
+            raise ValueError(f"baseline curve for step {p.baseline_step_id!r} is unavailable")
+        return baseline_curves[p.baseline_step_id]
+    return xy_signal
+
+
+def _evaluate_probe(p: ProbeSpec, xy: XY) -> dict[str, float | None]:
     xs, ys = _sort_xy(xy)
     out: dict[str, float | None] = {}
-    for p in probes:
-        ikey = intensity_feature_key(p.id, kind="I")
-        if p.acquisition == "fixed":
-            out[ikey] = _fixed_intensity(xs, ys, p.target_cm1, p.method, p.extrapolation)
-            continue
+    ikey = intensity_feature_key(p.id, kind="I")
+    if p.acquisition == "fixed":
+        out[ikey] = _fixed_intensity(xs, ys, p.target_cm1, p.method, p.extrapolation)
+        return out
 
-        intensity, pos = nearest_peak_to_target(
-            xy,
-            target_cm1=p.target_cm1,
-            window_cm1=p.window_cm1,
-            peak_find=p.peak_find,
-        )
-        pk = intensity_feature_key(p.id, kind="peak_pos")
-        if intensity is None and p.no_peak_fallback == "fixed_nearest":
-            intensity = _fixed_intensity(xs, ys, p.target_cm1, "nearest", p.extrapolation)
-        # If no peak was detected, keep peak_pos numeric for downstream tools: use the probe target.
-        if pos is None:
-            pos = float(p.target_cm1)
-        out[pk] = pos
-        out[ikey] = intensity
+    intensity, pos = nearest_peak_to_target(
+        xy,
+        target_cm1=p.target_cm1,
+        window_cm1=p.window_cm1,
+        peak_find=p.peak_find,
+    )
+    pk = intensity_feature_key(p.id, kind="peak_pos")
+    if intensity is None and p.no_peak_fallback == "fixed_nearest":
+        intensity = _fixed_intensity(xs, ys, p.target_cm1, "nearest", p.extrapolation)
+    if pos is None:
+        pos = float(p.target_cm1)
+    out[pk] = pos
+    out[ikey] = intensity
+    return out
+
+
+def evaluate_spectral_intensity_probes(
+    xy: XY,
+    params: dict[str, Any],
+    *,
+    baseline_curves: dict[str, XY] | None = None,
+) -> dict[str, float | None]:
+    probes = parse_probes(params)
+    out: dict[str, float | None] = {}
+    for p in probes:
+        xy_use = _probe_xy(p, xy, baseline_curves=baseline_curves)
+        out.update(_evaluate_probe(p, xy_use))
     return out
 
 
@@ -188,6 +334,29 @@ def preview_feature_keys_for_pipeline(pipeline: Any) -> list[str]:
     return dedupe_parallel(raw, nums)
 
 
+def spectral_intensity_feature_key_groups_for_pipeline(pipeline: Any) -> dict[int, tuple[list[str], list[str]]]:
+    """
+    Map step_num -> (base_keys, final_keys) for enabled spectral_intensities steps.
+    """
+    steps = getattr(pipeline, "steps", None) or []
+    sns = assign_pipeline_step_nums(steps)
+    raw, nums = _raw_si_keys_and_nums(pipeline)
+    final_keys = dedupe_parallel(raw, nums)
+    si_indices = [i for i, s in enumerate(steps) if getattr(s, "enabled", True) and s.name == "spectral_intensities"]
+    multi = len(si_indices) > 1
+    out: dict[int, tuple[list[str], list[str]]] = {}
+    key_cursor = 0
+    for i in si_indices:
+        step = steps[i]
+        base_keys = feature_keys_for_probes(step.params)
+        prefix = f"s{i}_" if multi else ""
+        step_raw = [f"{prefix}{k}" for k in base_keys]
+        final = final_keys[key_cursor : key_cursor + len(step_raw)]
+        key_cursor += len(step_raw)
+        out[sns[i]] = (base_keys, final)
+    return out
+
+
 def collect_spectral_intensity_features_for_pipeline(
     xy: XY,
     pipeline: Any,
@@ -220,7 +389,18 @@ def collect_spectral_intensity_features_for_pipeline(
         key_cursor += n
 
         xy_use = per_step_input_xy.get(sns[i], xy) if per_step_input_xy is not None else xy
-        raw_feats = evaluate_spectral_intensity_probes(xy_use, step.params)
+        probes = parse_probes(step.params)
+        baseline_curves = _resolve_baseline_curves_for_probes(
+            pipeline,
+            probes,
+            per_step_input_xy=per_step_input_xy,
+            before_index=i,
+        )
+        raw_feats = evaluate_spectral_intensity_probes(
+            xy_use,
+            step.params,
+            baseline_curves=baseline_curves or None,
+        )
         for bk, fk in zip(base_keys, step_final_keys):
             merged[fk] = raw_feats.get(bk)
         ordered_keys.extend(step_final_keys)

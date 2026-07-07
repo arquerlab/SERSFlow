@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import FastAPI
+
+from sersflow.api.middleware.auth import AuthMiddleware, auth_disabled
+from sersflow.api.middleware.data_scope import DataScopeMiddleware
+from sersflow.api.routers.auth import router as auth_router
 
 from sersflow.api.routers.datasets import router as datasets_router
 from sersflow.api.routers.io import router as io_router
@@ -18,8 +23,11 @@ from sersflow.api.routers.explore import router as explore_router
 
 
 app = FastAPI(title="SERSFlow API", version="0.1.0")
+app.add_middleware(DataScopeMiddleware)
+app.add_middleware(AuthMiddleware)
 
 app.include_router(meta_router)
+app.include_router(auth_router)
 app.include_router(io_router)
 app.include_router(plot_router)
 app.include_router(datasets_router)
@@ -30,6 +38,16 @@ app.include_router(sessions_router)
 app.include_router(fitting_router)
 app.include_router(analysis_router)
 app.include_router(explore_router)
+
+logger = logging.getLogger(__name__)
+
+
+@app.on_event("startup")
+def _warn_if_auth_disabled() -> None:
+    if auth_disabled():
+        logger.warning(
+            "SERSFLOW_AUTH_DISABLED is set — API is open with user_id=dev. Do not use in production."
+        )
 
 
 def run() -> None:

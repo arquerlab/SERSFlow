@@ -20,10 +20,12 @@ class UploadRegistryItem:
     relative_path: str
     size_bytes: int
     saved_at: str
+    modified_utc: str | None = None
     labels: dict[str, Any] | None = None
     wn_min: float | None = None
     wn_max: float | None = None
     spectrum_count: int | None = None
+    owner_user_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -33,6 +35,8 @@ class UploadRegistryItem:
             "size_bytes": int(self.size_bytes),
             "saved_at": self.saved_at,
         }
+        if self.modified_utc is not None:
+            d["modified_utc"] = self.modified_utc
         if self.labels is not None:
             d["labels"] = self.labels
         if self.wn_min is not None:
@@ -41,6 +45,8 @@ class UploadRegistryItem:
             d["wn_max"] = float(self.wn_max)
         if self.spectrum_count is not None:
             d["spectrum_count"] = int(self.spectrum_count)
+        if self.owner_user_id is not None:
+            d["owner_user_id"] = self.owner_user_id
         return d
 
 
@@ -268,10 +274,12 @@ def make_registry_item(
     filename: str,
     relative_subpath: str | None = None,
     size_bytes: int,
+    modified_utc: str | None = None,
     labels: dict[str, Any] | None = None,
     wn_min: float | None = None,
     wn_max: float | None = None,
     spectrum_count: int | None = None,
+    owner_user_id: str | None = None,
 ) -> UploadRegistryItem:
     rel_part = relative_subpath if relative_subpath else filename
     rel = str(Path(batch_id) / rel_part).replace("\\", "/")
@@ -281,10 +289,12 @@ def make_registry_item(
         relative_path=rel,
         size_bytes=int(size_bytes),
         saved_at=datetime.now(timezone.utc).isoformat(),
+        modified_utc=modified_utc,
         labels=labels,
         wn_min=wn_min,
         wn_max=wn_max,
         spectrum_count=spectrum_count,
+        owner_user_id=owner_user_id,
     )
 
 

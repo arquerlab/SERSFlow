@@ -7,6 +7,8 @@ from typing import Any, Callable
 import numpy as np
 from scipy.interpolate import interp1d
 
+from sersflow.core.metrics.feature_operations import parse_feature_operations
+from sersflow.core.metrics.integration_features import parse_integration_windows
 from sersflow.core.pipeline.hashing import canonical_json
 from sersflow.core.preprocess.baseline import baseline_kwargs, correct_baseline
 from sersflow.core.preprocess.cosmic_ray import remove_cosmic_rays
@@ -16,6 +18,7 @@ from sersflow.core.preprocess.noise import apply_savitzky_golay
 from sersflow.core.spectrum import XY
 
 logger = logging.getLogger(__name__)
+
 
 Transform = Callable[[XY, dict[str, Any]], XY]
 
@@ -199,6 +202,22 @@ def _spectral_intensities(xy: XY, params: dict[str, Any]) -> XY:
     return XY(x=xy.x, y=xy.y)
 
 
+def _spectral_integrations(xy: XY, params: dict[str, Any]) -> XY:
+    """
+    No-op on XY; params describe integration windows evaluated for batch/export.
+    """
+    parse_integration_windows(params)
+    return XY(x=xy.x, y=xy.y)
+
+
+def _feature_operations(xy: XY, params: dict[str, Any]) -> XY:
+    """
+    No-op on XY; params describe formulas evaluated against previously extracted features.
+    """
+    parse_feature_operations(params)
+    return XY(x=xy.x, y=xy.y)
+
+
 def _dedupe_x_average_y(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Sort by x ascending; duplicate x values get mean y (stable for np.interp)."""
     order = np.argsort(x)
@@ -211,6 +230,62 @@ def _dedupe_x_average_y(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.nd
     counts = np.bincount(inv)
     y_agg = sums / np.maximum(counts, 1)
     return ux, y_agg.astype(float)
+
+
+def _spectrum_derivative(xy: XY, params: dict[str, Any]) -> XY:
+    method = str(params.get("method", "gradient"))
+    if method != "gradient":
+        raise ValueError(f"Unknown spectrum_derivative method: {method}")
+    x = np.asarray(xy.x, dtype=np.float64).ravel()
+    y = np.asarray(xy.y, dtype=np.float64).ravel()
+    if x.size == 0 or y.size == 0:
+        return xy
+    if x.size != y.size:
+        raise ValueError("spectrum_derivative: x and y must have the same length")
+    xs, ys = _dedupe_x_average_y(x, y)
+    if xs.size < 2:
+        return XY(x=xs, y=ys)
+    order = int(params.get("order", 1))
+    if order < 1:
+        raise ValueError("spectrum_derivative: order must be >= 1")
+    out = np.asarray(ys, dtype=np.float64)
+    edge_order = 2 if xs.size >= 3 else 1
+    for _ in range(order):
+        out = np.gradient(out, xs, edge_order=edge_order)
+    return XY(x=xs, y=np.asarray(out, dtype=float))
+
+
+def _reference_transform(xy: XY, params: dict[str, Any]) -> XY:
+    x = np.asarray(xy.x, dtype=np.float64).ravel()
+    y = np.asarray(xy.y, dtype=np.float64).ravel()
+    if x.size == 0 or y.size == 0:
+        return xy
+    if x.size != y.size:
+        raise ValueError("reference_transform: x and y must have the same length")
+
+    rx_raw = params.get("_reference_x")
+    ry_raw = params.get("_reference_y")
+    if rx_raw is None or ry_raw is None:
+        raise ValueError("reference_transform requires a selected reference spectrum")
+    rx = np.asarray(rx_raw, dtype=np.float64).ravel()
+    ry = np.asarray(ry_raw, dtype=np.float64).ravel()
+    if rx.size == 0 or ry.size == 0:
+        raise ValueError("reference_transform reference spectrum is empty")
+    if rx.size != ry.size:
+        raise ValueError("reference_transform reference x and y must have the same length")
+
+    rx_s, ry_s = _dedupe_x_average_y(rx, ry)
+    if rx_s.size < 2:
+        raise ValueError("reference_transform reference spectrum needs at least two x points")
+    ref_y = np.interp(x, rx_s, ry_s, left=float(ry_s[0]), right=float(ry_s[-1]))
+    operation = str(params.get("operation", "subtract")).strip().lower()
+    if operation == "subtract":
+        return XY(x=xy.x, y=np.asarray(y - ref_y, dtype=float))
+    if operation == "divide":
+        out = np.full_like(y, np.nan, dtype=np.float64)
+        np.divide(y, ref_y, out=out, where=np.abs(ref_y) > 1e-12)
+        return XY(x=xy.x, y=out.astype(float))
+    raise ValueError("reference_transform operation must be subtract or divide")
 
 
 def _uniform_grid_step(x_min: float, x_max: float, step: float) -> np.ndarray:
@@ -326,6 +401,10 @@ DEFAULT_STEPS: dict[str, StepImpl] = {
     "baseline_curve": StepImpl(name="baseline_curve", impl_version="1", transform=_baseline_curve),
     "fitting": StepImpl(name="fitting", impl_version="3", transform=_fitting),
     "spectral_intensities": StepImpl(name="spectral_intensities", impl_version="1", transform=_spectral_intensities),
+    "spectral_integrations": StepImpl(name="spectral_integrations", impl_version="1", transform=_spectral_integrations),
+    "feature_operations": StepImpl(name="feature_operations", impl_version="1", transform=_feature_operations),
+    "spectrum_derivative": StepImpl(name="spectrum_derivative", impl_version="1", transform=_spectrum_derivative),
+    "reference_transform": StepImpl(name="reference_transform", impl_version="1", transform=_reference_transform),
 }
 
 

@@ -207,7 +207,7 @@ def test_purge_blocks_path_only_dataset_dependency(tmp_path: Path, monkeypatch: 
     rel = "b/legacy.txt"
     target = root / rel
     target.parent.mkdir(parents=True)
-    create_dataset(metadata=DatasetMetadata(name="legacy"), spectra=[SpectrumRef(spectrum_id="s1", relative_path=rel)])
+    create_dataset(owner_user_id="dev", metadata=DatasetMetadata(name="legacy"), spectra=[SpectrumRef(spectrum_id="s1", relative_path=rel)])
     append_unloaded_registry(
         root,
         [

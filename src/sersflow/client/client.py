@@ -59,6 +59,11 @@ class SersflowClient:
     def close(self) -> None:
         self.http.close()
 
+    def login(self, username: str, password: str) -> dict[str, Any]:
+        r = self.http.post("/auth/login", json={"username": username, "password": password})
+        r.raise_for_status()
+        return r.json()
+
     def __enter__(self) -> SersflowClient:
         return self
 

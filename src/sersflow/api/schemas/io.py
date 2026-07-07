@@ -32,6 +32,7 @@ class UploadRegistryItem(BaseModel):
     relative_path: str
     size_bytes: int = Field(ge=0)
     saved_at: str
+    modified_utc: str | None = None
     wn_min: float | None = None
     wn_max: float | None = None
     spectrum_count: int | None = None
@@ -91,6 +92,7 @@ class UnloadedRegistryItem(BaseModel):
     relative_path: str
     size_bytes: int = Field(ge=0)
     saved_at: str
+    modified_utc: str | None = None
     unloaded_at: str = ""
     labels: dict[str, Any] = Field(default_factory=dict)
 

@@ -7,10 +7,29 @@ from typing import Any
 
 from sersflow.api.schemas.pipeline import Pipeline, PipelineStep
 from sersflow.api.schemas.sessions import SubsetStrategy
-from sersflow.api.services.sessions_service import pipeline_hash, resolve_subset_indices, subset_hash
-from sersflow.core.metrics.fitting_features import collect_fitting_features_for_pipeline, preview_fitting_feature_keys_for_pipeline
-from sersflow.core.metrics.intensity_probes import collect_spectral_intensity_features_for_pipeline, preview_feature_keys_for_pipeline
-from sersflow.core.pipeline.engine import EngineConfig, run_pipeline_parallel_no_cache
+from sersflow.api.services.reference_runtime import filter_reference_spectra, hydrate_reference_transforms
+from sersflow.api.services.sessions_service import resolve_subset_indices
+from sersflow.core.metrics.feature_operations import (
+    evaluate_feature_operations,
+    operation_feature_key_groups_for_pipeline,
+    preview_operation_feature_keys_for_pipeline,
+)
+from sersflow.core.metrics.fitting_features import (
+    collect_fitting_features_for_pipeline,
+    fitting_feature_key_groups_for_pipeline,
+    preview_fitting_feature_keys_for_pipeline,
+)
+from sersflow.core.metrics.integration_features import (
+    collect_integration_features_for_pipeline,
+    integration_feature_key_groups_for_pipeline,
+    preview_integration_feature_keys_for_pipeline,
+)
+from sersflow.core.metrics.intensity_probes import (
+    collect_spectral_intensity_features_for_pipeline,
+    preview_feature_keys_for_pipeline,
+    spectral_intensity_feature_key_groups_for_pipeline,
+)
+from sersflow.core.pipeline.engine import EngineConfig, run_pipeline, run_pipeline_parallel_no_cache
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 from sersflow.infra.analysis_store import (
     insert_spectrum_rows_batch,
@@ -19,7 +38,7 @@ from sersflow.infra.analysis_store import (
     update_run_status,
 )
 from sersflow.infra.analysis_store import get_run as store_get_run
-from sersflow.infra.datasets_store import get_dataset
+from sersflow.infra.datasets_store import get_dataset_internal
 from sersflow.infra.sessions_store import get_session
 
 logger = logging.getLogger(__name__)
@@ -57,8 +76,29 @@ def _default_analysis_spectral_intensities_step() -> PipelineStep:
 
 
 def _all_analysis_feature_keys(pipeline: Pipeline) -> list[str]:
-    """spectral_intensities columns + fitted Gaussian parameters (pos, amp, fwhm, area)."""
-    return [*preview_fitting_feature_keys_for_pipeline(pipeline), *preview_feature_keys_for_pipeline(pipeline)]
+    """Feature columns in pipeline order."""
+    step_nums = assign_pipeline_step_nums(pipeline.steps)
+    fitting_groups = fitting_feature_key_groups_for_pipeline(pipeline)
+    intensity_groups = spectral_intensity_feature_key_groups_for_pipeline(pipeline)
+    integration_groups = integration_feature_key_groups_for_pipeline(pipeline)
+    operation_groups = operation_feature_key_groups_for_pipeline(pipeline)
+    out: list[str] = []
+    for i, step in enumerate(pipeline.steps):
+        if not step.enabled:
+            continue
+        sn = step_nums[i]
+        if step.name == "fitting":
+            out.extend(fitting_groups.get(sn, []))
+        elif step.name == "spectral_intensities":
+            _base, final = intensity_groups.get(sn, ([], []))
+            out.extend(final)
+        elif step.name == "spectral_integrations":
+            _base, final = integration_groups.get(sn, ([], []))
+            out.extend(final)
+        elif step.name == "feature_operations":
+            _base, final = operation_groups.get(sn, ([], []))
+            out.extend(final)
+    return out
 
 
 def _effective_pipeline_for_analysis(pipeline: Pipeline) -> tuple[Pipeline, bool]:
@@ -68,7 +108,12 @@ def _effective_pipeline_for_analysis(pipeline: Pipeline) -> tuple[Pipeline, bool
     When no enabled spectral_intensities step exists, the effective pipeline appends a default step
     (single probe at 1000 cm⁻¹). Users can add their own step in Prepare for meaningful probes.
     """
-    keys = preview_feature_keys_for_pipeline(pipeline)
+    keys = [
+        *preview_fitting_feature_keys_for_pipeline(pipeline),
+        *preview_feature_keys_for_pipeline(pipeline),
+        *preview_integration_feature_keys_for_pipeline(pipeline),
+        *preview_operation_feature_keys_for_pipeline(pipeline),
+    ]
     if keys:
         return pipeline, False
     merged = Pipeline(steps=[*pipeline.steps, _default_analysis_spectral_intensities_step()])
@@ -87,6 +132,57 @@ def _pipeline_subset_from_inline_run(rec: Any) -> tuple[Pipeline, SubsetStrategy
     return pl, sub
 
 
+def _collect_feature_row(
+    xy: Any,
+    pipeline: Pipeline,
+    *,
+    per_step_input_xy: dict[int, Any],
+    null_row: dict[str, Any],
+) -> dict[str, Any]:
+    feats = dict(null_row)
+    accumulated: dict[str, Any] = {}
+    step_nums = assign_pipeline_step_nums(pipeline.steps)
+
+    fitting_groups = fitting_feature_key_groups_for_pipeline(pipeline)
+    intensity_groups = spectral_intensity_feature_key_groups_for_pipeline(pipeline)
+    integration_groups = integration_feature_key_groups_for_pipeline(pipeline)
+    operation_groups = operation_feature_key_groups_for_pipeline(pipeline)
+
+    _, fitting_values = collect_fitting_features_for_pipeline(xy, pipeline, per_step_input_xy=per_step_input_xy)
+    _, intensity_values = collect_spectral_intensity_features_for_pipeline(xy, pipeline, per_step_input_xy=per_step_input_xy)
+    _, integration_values = collect_integration_features_for_pipeline(xy, pipeline, per_step_input_xy=per_step_input_xy)
+
+    for i, step in enumerate(pipeline.steps):
+        if not step.enabled:
+            continue
+        sn = step_nums[i]
+        if step.name == "fitting":
+            for key in fitting_groups.get(sn, []):
+                value = fitting_values.get(key)
+                feats[key] = value
+                accumulated[key] = value
+        elif step.name == "spectral_intensities":
+            _base, final = intensity_groups.get(sn, ([], []))
+            for key in final:
+                value = intensity_values.get(key)
+                feats[key] = value
+                accumulated[key] = value
+        elif step.name == "spectral_integrations":
+            _base, final = integration_groups.get(sn, ([], []))
+            for key in final:
+                value = integration_values.get(key)
+                feats[key] = value
+                accumulated[key] = value
+        elif step.name == "feature_operations":
+            base, final = operation_groups.get(sn, ([], []))
+            raw_ops = evaluate_feature_operations(step.params, accumulated)
+            for base_key, final_key in zip(base, final):
+                value = raw_ops.get(base_key)
+                feats[final_key] = value
+                accumulated[final_key] = value
+    return feats
+
+
 def prepare_run_context(*, rec: Any) -> tuple[Pipeline, SubsetStrategy, Any]:
     """
     Resolve pipeline and subset for a run record.
@@ -101,6 +197,41 @@ def prepare_run_context(*, rec: Any) -> tuple[Pipeline, SubsetStrategy, Any]:
 
     pl, sub = _pipeline_subset_from_inline_run(rec)
     return pl, sub, None
+
+
+def spectrum_xy_for_analysis_run(*, rec: Any, spectrum_id: str) -> Any:
+    """
+    Return the final pipeline XY for one spectrum from an analysis run.
+
+    Heatmap feature values are produced from the run's saved pipeline, so clicked spectra should use
+    the same hydrated pipeline context for visual comparison.
+    """
+    pipeline, _preview_subset, sess = prepare_run_context(rec=rec)
+    effective_pipeline, _used_fallback = _effective_pipeline_for_analysis(pipeline)
+    ds = get_dataset_internal(rec.dataset_id)
+    if ds is None:
+        raise ValueError("dataset not found")
+
+    ref = next((s for s in ds.spectra if s.spectrum_id == spectrum_id), None)
+    if ref is None:
+        raise KeyError("spectrum not found in analysis dataset")
+
+    effective_pipeline = hydrate_reference_transforms(
+        effective_pipeline,
+        ds,
+        cache_namespace=(sess.cache.cache_namespace if sess and sess.cache else rec.run_id),
+    )
+    ns = (sess.cache.cache_namespace if sess and sess.cache else None) or rec.run_id
+    final = run_pipeline(
+        inputs=[ref],
+        pipeline=effective_pipeline,
+        config=EngineConfig(cache_namespace=ns),
+        strict=True,
+    )
+    xy = final.get(spectrum_id)
+    if xy is None:
+        raise ValueError("spectrum pipeline result was empty")
+    return xy
 
 
 def execute_analysis_run(*, run_id: str, job_id: str | None) -> None:
@@ -119,6 +250,14 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
 
         pipeline, _preview_subset, sess = prepare_run_context(rec=rec)
         effective_pipeline, used_si_fallback = _effective_pipeline_for_analysis(pipeline)
+        ds = get_dataset_internal(rec.dataset_id)
+        if ds is None:
+            raise ValueError("dataset not found")
+        effective_pipeline = hydrate_reference_transforms(
+            effective_pipeline,
+            ds,
+            cache_namespace=(sess.cache.cache_namespace if sess and sess.cache else run_id),
+        )
         keys = _all_analysis_feature_keys(effective_pipeline)
         if not keys:
             raise ValueError("pipeline has no spectral_intensities step and default probe injection failed")
@@ -129,12 +268,8 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
                 run_id,
             )
 
-        ds = get_dataset(rec.dataset_id)
-        if ds is None:
-            raise ValueError("dataset not found")
-
         indices = resolve_subset_indices(dataset=ds, subset=_ANALYSIS_COHORT, pipeline=effective_pipeline)
-        refs = [ds.spectra[i] for i in indices]
+        refs = filter_reference_spectra([ds.spectra[i] for i in indices], effective_pipeline)
         total = len(refs)
         if total == 0:
             raise ValueError("no spectra in resolved subset")
@@ -190,18 +325,12 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
         done = 0
         null_row = {k: None for k in keys}
         for sid, xy in final.items():
-            feats = dict(null_row)
             pin = per_inputs.get(sid) or {}
             try:
-                _, fd = collect_fitting_features_for_pipeline(xy, effective_pipeline, per_step_input_xy=pin)
-                feats.update(fd)
+                feats = _collect_feature_row(xy, effective_pipeline, per_step_input_xy=pin, null_row=null_row)
             except Exception as e:
-                logger.warning("fitting feature extraction failed for spectrum %s (skipped): %s", sid, e)
-            try:
-                _, sd = collect_spectral_intensity_features_for_pipeline(xy, effective_pipeline, per_step_input_xy=pin)
-                feats.update(sd)
-            except Exception as e:
-                logger.warning("spectral feature extraction failed for spectrum %s (skipped): %s", sid, e)
+                logger.warning("feature extraction failed for spectrum %s (skipped): %s", sid, e)
+                feats = dict(null_row)
             buffer.append((sid, feats))
             done += 1
             if len(buffer) >= COMMIT_BATCH:

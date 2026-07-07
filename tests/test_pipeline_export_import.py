@@ -21,13 +21,13 @@ def test_pipeline_export_import_roundtrip_preserves_step_wiring(tmp_path: Path, 
             ),
         ]
     )
-    rec = create_pipeline(name="share me", pipeline=pipeline)
+    rec = create_pipeline(owner_user_id="dev", name="share me", pipeline=pipeline)
     pkg = export_pipeline_package(rec)
     assert pkg.schema_version == "sersflow.pipeline.v1"
     assert pkg.pipeline.steps[1].input_from == "after_step"
     assert pkg.pipeline.steps[1].after_step_id == "1"
 
-    imported = import_pipeline_package(name="share me imported", pipeline=pkg.pipeline)
-    got = get_pipeline(imported.pipeline_id)
+    imported = import_pipeline_package(name="share me imported", pipeline=pkg.pipeline, owner_user_id="dev")
+    got = get_pipeline(imported.pipeline_id, owner_user_id="dev")
     assert got is not None
     assert got.pipeline.model_dump(mode="json") == pipeline.model_dump(mode="json")

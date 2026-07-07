@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
+
+from sersflow.api.deps import current_user_id
+from sersflow.api.services.ownership import (
+    OwnershipError,
+    assert_paths_owner,
+    filter_registry_by_owner,
+    invalidate_registry_cache,
+)
 
 from sersflow.api.schemas.io import (
     AutoLabelsRequest,
@@ -44,6 +54,41 @@ router = APIRouter(prefix="/io", tags=["IO"])
 
 _LABEL_PARENT_LEVELS = 3
 logger = logging.getLogger(__name__)
+
+def _ms_to_utc_iso(ms: int | float) -> str | None:
+    try:
+        return datetime.fromtimestamp(float(ms) / 1000.0, tz=timezone.utc).isoformat()
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def _parse_source_modified_ms_json(raw: str | None) -> dict[str, int]:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, int] = {}
+    for key, value in data.items():
+        rel = str(key or "").strip().replace("\\", "/")
+        if not rel:
+            continue
+        try:
+            out[rel] = int(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _source_modified_utc_iso(source_mtime_by_path: dict[str, int], rel_subpath: str) -> str | None:
+    rel = str(rel_subpath or "").replace("\\", "/")
+    ms = source_mtime_by_path.get(rel)
+    if ms is None:
+        return None
+    return _ms_to_utc_iso(ms)
 
 
 def _sanitize_relative_upload_subpath(raw_name: str) -> str:
@@ -90,6 +135,40 @@ def _ensure_upload_wn_metadata(root_dir: Path, row: dict[str, Any]) -> dict[str,
     except Exception:
         return row
 
+
+def _ensure_upload_modified_utc(row: dict[str, Any]) -> dict[str, Any]:
+    """Fill modified_utc from labels.acquired_utc for legacy registry rows when missing."""
+    if row.get("modified_utc"):
+        return row
+    labels = row.get("labels") if isinstance(row.get("labels"), dict) else {}
+    acquired = labels.get("acquired_utc")
+    if not acquired:
+        return row
+    out = dict(row)
+    out["modified_utc"] = acquired
+    return out
+
+
+def _ensure_upload_acquired_utc_label(row: dict[str, Any]) -> dict[str, Any]:
+    """
+    Ensure `labels.acquired_utc` is present when the registry already stores it.
+
+    Server-side file mtimes reflect upload time, so we never derive acquired_utc
+    from the on-disk copy.
+    """
+    labels = row.get("labels") if isinstance(row.get("labels"), dict) else {}
+    if labels.get("acquired_utc"):
+        return row
+    acquired = row.get("modified_utc")
+    if not acquired:
+        return row
+    out = dict(row)
+    next_labels = dict(labels)
+    next_labels["acquired_utc"] = acquired
+    out["labels"] = next_labels
+    return out
+
+
 def _format_mib_3(bytes_count: int | float) -> str:
     mb = (float(bytes_count) if bytes_count else 0.0) / (1024.0 * 1024.0)
     if not (mb > 0.0):
@@ -98,7 +177,11 @@ def _format_mib_3(bytes_count: int | float) -> str:
 
 
 @router.post("/upload")
-async def upload_files(files: list[UploadFile] = File(...)) -> Response:
+async def upload_files(
+    request: Request,
+    files: list[UploadFile] = File(...),
+    source_modified_ms_json: str | None = Form(None),
+) -> Response:
     """
     Upload multiple files and store them on disk.
 
@@ -106,12 +189,15 @@ async def upload_files(files: list[UploadFile] = File(...)) -> Response:
     (persisted to the upload registry and SQLite).
     """
     root_dir = upload_root()
+    user_id = current_user_id(request)
     batch_id, batch_dir = new_batch_dir(root_dir)
     logger.info("Upload start: batch=%s files=%s", batch_id, len(files) if files else 0)
 
     saved = 0
     total_bytes = 0
     registry_items: list[dict[str, Any]] = []
+
+    source_mtime_by_path = _parse_source_modified_ms_json(source_modified_ms_json)
 
     con: sqlite3.Connection | None = None
     try:
@@ -143,16 +229,22 @@ async def upload_files(files: list[UploadFile] = File(...)) -> Response:
                 parent_levels=_LABEL_PARENT_LEVELS,
                 previous_labels=prev,
             )
+            acquired = _source_modified_utc_iso(source_mtime_by_path, rel_subpath)
+            if acquired:
+                labels = dict(labels)
+                labels["acquired_utc"] = acquired
 
             item = make_registry_item(
                 batch_id=batch_id,
                 filename=name,
                 relative_subpath=rel_subpath,
                 size_bytes=int(size),
+                modified_utc=acquired,
                 labels=labels,
                 wn_min=None,
                 wn_max=None,
                 spectrum_count=None,
+                owner_user_id=user_id,
             ).to_dict()
             registry_items.append(item)
             upsert_upload_labels(con, relative_path=item["relative_path"], labels=labels)
@@ -169,6 +261,7 @@ async def upload_files(files: list[UploadFile] = File(...)) -> Response:
                 pass
 
     append_upload_registry(root_dir, registry_items)
+    invalidate_registry_cache()
     try:
         from sersflow.infra.datasets_store import relink_path_only_dataset_rows_from_upload_items
 
@@ -183,9 +276,10 @@ async def upload_files(files: list[UploadFile] = File(...)) -> Response:
 
 
 @router.get("/uploads", response_model=UploadListResponse)
-def list_uploaded_files(limit: int = Query(5000, ge=1, le=50000)) -> dict[str, Any]:
+def list_uploaded_files(request: Request, limit: int = Query(5000, ge=1, le=50000)) -> dict[str, Any]:
+    user_id = current_user_id(request)
     root_dir = upload_root()
-    items = read_upload_registry(root_dir)
+    items = filter_registry_by_owner(read_upload_registry(root_dir), user_id)
     limited = items[-limit:]
     rels = [str(x.get("relative_path") or "") for x in limited]
     con = with_connection()
@@ -203,6 +297,8 @@ def list_uploaded_files(limit: int = Query(5000, ge=1, le=50000)) -> dict[str, A
             row["labels"] = db_labels[rel]
         else:
             row["labels"] = reg_labels or {}
+        row = _ensure_upload_acquired_utc_label(row)
+        row = _ensure_upload_modified_utc(row)
         row = _ensure_upload_wn_metadata(root_dir, row)
         merged.append(row)
 
@@ -212,9 +308,10 @@ def list_uploaded_files(limit: int = Query(5000, ge=1, le=50000)) -> dict[str, A
 
 
 @router.get("/unloaded", response_model=UnloadedListResponse)
-def list_unloaded_files(limit: int = Query(5000, ge=1, le=50000)) -> dict[str, Any]:
+def list_unloaded_files(request: Request, limit: int = Query(5000, ge=1, le=50000)) -> dict[str, Any]:
+    user_id = current_user_id(request)
     root_dir = upload_root()
-    items = read_unloaded_registry(root_dir)
+    items = filter_registry_by_owner(read_unloaded_registry(root_dir), user_id)
     limited = items[-limit:]
     rels = [str(x.get("relative_path") or "") for x in limited]
     con = with_connection()
@@ -232,22 +329,30 @@ def list_unloaded_files(limit: int = Query(5000, ge=1, le=50000)) -> dict[str, A
             row["labels"] = db_labels[rel]
         else:
             row["labels"] = reg_labels or {}
+        row = _ensure_upload_acquired_utc_label(row)
+        row = _ensure_upload_modified_utc(row)
         merged.append(row)
 
     return {"items": merged, "count": len(items)}
 
 
 @router.api_route("/labels", methods=["PUT", "POST"])
-def update_labels(payload: UpdateLabelsRequest) -> dict[str, Any]:
+def update_labels(payload: UpdateLabelsRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
     rel = payload.relative_path.strip()
     if not rel or "\x00" in rel:
         raise HTTPException(status_code=400, detail="Invalid relative_path")
+    try:
+        assert_paths_owner(user_id, [rel])
+    except OwnershipError:
+        raise HTTPException(status_code=404, detail="Upload not found") from None
     labels = dict(payload.labels)
-    root_dir = upload_root()
     con = with_connection()
     try:
         prev_map = fetch_upload_labels_for_paths(con, [rel])
         prev = prev_map.get(rel) or {}
+        if prev.get("acquired_utc"):
+            labels["acquired_utc"] = prev["acquired_utc"]
         if prev.get("current_is_density") is False and labels.get("current_is_density") is True:
             logger.warning(
                 "Labels %s: update sets current_is_density True but stored value was False — check consistency.",
@@ -267,7 +372,8 @@ def update_labels(payload: UpdateLabelsRequest) -> dict[str, Any]:
 
 
 @router.post("/labels/auto")
-def auto_labels(payload: AutoLabelsRequest) -> dict[str, Any]:
+def auto_labels(payload: AutoLabelsRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
     root_dir = upload_root()
     unique_paths = []
     seen: set[str] = set()
@@ -282,6 +388,10 @@ def auto_labels(payload: AutoLabelsRequest) -> dict[str, Any]:
 
     if not unique_paths:
         raise HTTPException(status_code=400, detail="No valid relative_paths provided")
+    try:
+        assert_paths_owner(user_id, unique_paths)
+    except OwnershipError:
+        raise HTTPException(status_code=404, detail="Upload not found") from None
 
     con = with_connection()
     updated = 0
@@ -300,6 +410,10 @@ def auto_labels(payload: AutoLabelsRequest) -> dict[str, Any]:
                     parent_levels=_LABEL_PARENT_LEVELS,
                     previous_labels=prev_map.get(rel),
                 )
+                prev = prev_map.get(rel) or {}
+                if prev.get("acquired_utc"):
+                    labels = dict(labels)
+                    labels["acquired_utc"] = prev["acquired_utc"]
                 upsert_upload_labels(con, relative_path=rel, labels=labels)
                 updated += 1
             except Exception:
@@ -317,15 +431,20 @@ def auto_labels(payload: AutoLabelsRequest) -> dict[str, Any]:
 
 
 @router.post("/unload")
-def unload_files(payload: UnloadRequest) -> Response:
+def unload_files(payload: UnloadRequest, request: Request) -> Response:
+    user_id = current_user_id(request)
     root_dir = upload_root()
     try:
+        assert_paths_owner(user_id, payload.relative_paths)
         unloaded, missing = unload_files_from_registry(
             upload_root_dir=root_dir, relative_paths=payload.relative_paths
         )
+    except OwnershipError:
+        raise HTTPException(status_code=403, detail="Forbidden") from None
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    invalidate_registry_cache()
     return Response(
         content=f"Unloaded {unloaded} file(s). Missing: {missing}. Files remain on disk.",
         media_type="text/plain",
@@ -333,20 +452,32 @@ def unload_files(payload: UnloadRequest) -> Response:
 
 
 @router.post("/purge", response_model=PurgeResponse)
-def purge_files(payload: PurgeRequest) -> dict[str, Any]:
+def purge_files(payload: PurgeRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
     root_dir = upload_root()
     try:
+        assert_paths_owner(user_id, payload.relative_paths)
         deleted, missing, blocked = purge_files_from_registry(
             upload_root_dir=root_dir, relative_paths=payload.relative_paths
         )
+    except OwnershipError:
+        raise HTTPException(status_code=403, detail="Forbidden") from None
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    invalidate_registry_cache()
     return {"deleted": deleted, "missing": missing, "blocked": blocked}
 
 
 @router.post("/purge/preview", response_model=PurgePreviewResponse)
-def preview_purge(payload: PurgePreviewRequest | None = None) -> dict[str, Any]:
+def preview_purge(payload: PurgePreviewRequest | None, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
     root_dir = upload_root()
+    rel_paths = payload.relative_paths if payload else None
+    if rel_paths:
+        try:
+            assert_paths_owner(user_id, rel_paths)
+        except OwnershipError:
+            raise HTTPException(status_code=404, detail="Upload not found") from None
     try:
         return preview_purge_files(
             upload_root_dir=root_dir,
