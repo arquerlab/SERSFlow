@@ -2,6 +2,7 @@ import { $ } from "./ui/dom.js";
 import { createUploadsController, createUploadedLabelsEditorController, formatFileSizeMb } from "./ui/uploads.js";
 import { fetchFigure, getSelectedPaths, plotFromEndpoint } from "./ui/plot.js";
 import { buildFileOptionsHtml, createMapUi, createSeriesUi } from "./ui/plot_selectors.js";
+import { wireColumnSplitter } from "./ui/column_splitter.js";
 
 const drop = $("drop");
 const fileInput = $("files");
@@ -21,7 +22,6 @@ const selectNoneBtn = $("selectNoneBtn");
 const unloadBtn = $("unloadBtn");
 const unloadAllBtn = $("unloadAllBtn");
 const purgeHiddenBtn = $("purgeHiddenBtn");
-const labelsEditorMeta = $("labelsEditorMeta");
 const labelsEditor = $("labelsEditor");
 
 const rawRefreshBtn = $("rawRefreshBtn");
@@ -91,7 +91,7 @@ function _parseExtensionFilterList() {
 }
 
 function _extFilterMode() {
-  const v = extFilterModeSelect ? String(extFilterModeSelect.value || "") : "skip";
+  const v = extFilterModeSelect ? String(extFilterModeSelect.value || "") : "only";
   return v === "only" ? "only" : "skip";
 }
 
@@ -132,7 +132,6 @@ const uploads = createUploadsController({
   onUploadedItemsChange: () => syncUploadsAfterListChange(),
 });
 uploadedLabelsEditor = createUploadedLabelsEditorController({
-  fileMetaEl: labelsEditorMeta,
   editorEl: labelsEditor,
   onRefreshFromUploads: () => refreshUploadedList(),
 });
@@ -641,4 +640,23 @@ addPlotFileBtn.addEventListener("click", () => {
 
 initTabs();
 refreshUploadedList();
+
+wireColumnSplitter({
+  layoutEl: $("rawLayout"),
+  leftEl: $("rawLeft"),
+  handleEl: $("rawSplitHandle"),
+  storageKey: "sersflow:raw-sidebar-w",
+  defaultWidth: 340,
+  minWidth: 280,
+  maxWidth: 720,
+  onResizeEnd: () => {
+    if (plotDiv && window.Plotly) {
+      try {
+        window.Plotly.Plots.resize(plotDiv);
+      } catch {
+        // ignore
+      }
+    }
+  },
+});
 

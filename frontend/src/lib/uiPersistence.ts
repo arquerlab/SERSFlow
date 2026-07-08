@@ -57,12 +57,18 @@ export type AnalyzeUiPrefsV1 = {
   clusterCols?: string[];
   clusterSeed?: number;
   matrixUpTo?: string;
+  selectedMatrixJobId?: string;
   fpcaN?: number | "";
   pcaScaler?: "none" | "standard";
   discreteScaler?: "none" | "standard";
   // Plot selector + plot settings (PCA/FPCA + cluster overlays)
   scoresXpc?: number;
   scoresYpc?: number;
+  scoresXMeta?: string;
+  scoresYMeta?: string;
+  scoresColorMeta?: string;
+  pcVsMetaPcs?: number[];
+  pcVsMetaX?: string;
   pairplotPcs?: number[];
   loadingsPc?: number;
   loadingsTopN?: number;

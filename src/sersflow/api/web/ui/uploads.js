@@ -536,7 +536,8 @@ export function createUploadedLabelsEditorController({ fileListEl, fileMetaEl, e
   function updateMeta() {
     if (!fileMetaEl) return;
     const total = Number.isFinite(Number(totalCount)) && totalCount > 0 ? totalCount : fileItems.length;
-    fileMetaEl.textContent = `${fileItems.length} shown • ${total} total • ${selectedRels.size} selected for metadata`;
+    const n = selectedRels.size;
+    fileMetaEl.textContent = n ? `${n} selected for editing` : `${fileItems.length} shown • ${total} total`;
   }
 
   function setContext({ items, selectedPaths, total }) {
@@ -687,13 +688,7 @@ export function createUploadedLabelsEditorController({ fileListEl, fileMetaEl, e
 
     const selected = selectedItems();
     const selectedCount = selected.length;
-    if (selectedCount === 0) {
-      const p = document.createElement("p");
-      p.className = "hint";
-      p.textContent = "Select one or more uploaded files/folders to edit metadata.";
-      editorEl.appendChild(p);
-      return;
-    }
+    if (selectedCount === 0) return;
 
     const info = document.createElement("p");
     info.className = "hint";

@@ -192,6 +192,8 @@ export function postMatrixJob(body: {
   dataset_id?: string | null;
   analysis_run_id?: string | null;
   session_id?: string | null;
+  pipeline_id?: string | null;
+  pipeline_name?: string | null;
   pipeline?: Pipeline | null;
   up_to_step?: string | null;
   async?: boolean;
@@ -207,6 +209,10 @@ export type MatrixJobStatus = {
   matrix_job_id: string;
   status: string;
   dataset_id: string;
+  pipeline_id?: string | null;
+  pipeline_name?: string | null;
+  analysis_run_id?: string | null;
+  up_to_step?: string | null;
   npz_path: string | null;
   manifest: Record<string, unknown> | null;
   error: string | null;
@@ -220,6 +226,32 @@ export function getMatrixJob(id: string) {
 
 export function getMatrixJobExportUrl(id: string) {
   return `/explore/matrix-jobs/${encodeURIComponent(id)}/export.csv`;
+}
+
+export type MatrixJobListItem = {
+  matrix_job_id: string;
+  dataset_id: string;
+  pipeline_id?: string | null;
+  pipeline_name?: string | null;
+  analysis_run_id?: string | null;
+  up_to_step?: string | null;
+  status: string;
+  created_at: string;
+  finished_at: string | null;
+  error: string | null;
+};
+
+export type MatrixJobListResponse = { items: MatrixJobListItem[]; limit: number; offset: number };
+
+export function listMatrixJobs(datasetId: string, limit = 200, offset = 0) {
+  const p = new URLSearchParams({ dataset_id: datasetId, limit: String(limit), offset: String(offset) });
+  return fetchJson<MatrixJobListResponse>(`/explore/matrix-jobs?${p}`);
+}
+
+export function deleteMatrixJob(id: string) {
+  return fetchJson<{ ok: boolean }>(`/explore/matrix-jobs/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }
 
 export function getExplorePcaExportUrl(

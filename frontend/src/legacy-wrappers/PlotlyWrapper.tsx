@@ -15,6 +15,7 @@ type PlotlyWrapperProps = {
   ghostOverlayEnabled: boolean;
   className?: string;
   onPlotClick?: (event: any) => void;
+  onPlotHover?: (event: any) => void;
 };
 
 function applyStacking(data: any[], stackSep: number) {
@@ -40,7 +41,7 @@ function styleGhostTrace(tr: any) {
 }
 
 export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
-  ({ figure, previousFigure, plotStyle, ghostOverlayEnabled, className, onPlotClick }, ref) => {
+  ({ figure, previousFigure, plotStyle, ghostOverlayEnabled, className, onPlotClick, onPlotHover }, ref) => {
   const divRef = useRef<HTMLDivElement | null>(null);
   useImperativeHandle(ref, () => divRef.current as HTMLDivElement);
 
@@ -56,7 +57,13 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
 
   const themed = useMemo(() => {
     if (!combined) return null;
-    const data = styleTraces(combined.data, { kindHint: "unknown" });
+    // Theme traces and also suppress Plotly's default "trace 0" legend labels.
+    // Plotly will render a legend entry for unnamed traces when showlegend=true.
+    const data = styleTraces(combined.data, { kindHint: "unknown" }).map((tr) => {
+      const name = typeof (tr as any).name === "string" ? ((tr as any).name as string).trim() : "";
+      if (!name && (tr as any).showlegend === undefined) return { ...tr, showlegend: false };
+      return tr;
+    });
     // Keep the current spectra legend convention if the author set a bottom-horizontal legend.
     const legend = (combined.layout as any)?.legend;
     const wantBottomLegend = legend && legend.orientation === "h" && typeof legend.y === "number" && legend.y < 0;
@@ -78,10 +85,22 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
     }
     Plotly.react(el, themed.data, themed.layout, {
       responsive: true,
-      // Let the page/body receive wheel scroll unless the user deliberately zooms (e.g. pinch).
-      // Prevents the plot from “eating” scroll, which makes the sidebar feel fixed.
       scrollZoom: false,
     });
+  }, [themed]);
+
+  useEffect(() => {
+    const el = divRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      try {
+        Plotly.Plots.resize(el);
+      } catch {
+        // ignore
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [themed]);
 
   useEffect(() => {
@@ -92,6 +111,15 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
       el.removeListener?.("plotly_click", onPlotClick);
     };
   }, [onPlotClick]);
+
+  useEffect(() => {
+    const el = divRef.current as any;
+    if (!el || !onPlotHover) return;
+    el.on("plotly_hover", onPlotHover);
+    return () => {
+      el.removeListener?.("plotly_hover", onPlotHover);
+    };
+  }, [onPlotHover]);
 
   return <div ref={divRef} className={className} />;
 }

@@ -92,6 +92,24 @@ export type SessionRunFinalResponse = { items: SpectrumSeries[] };
 export type SessionRunMetricsResponse = { items: SpectrumMetrics[] };
 export type SessionRunIntermediatesResponse = { items: { spectrum_id: string; steps: Record<string, { x: number[]; y: number[] }> }[] };
 
+export type SessionQcPreviewRequest = {
+  scope: "subset" | "all";
+  step_id: string;
+  step_params: Record<string, unknown>;
+};
+
+export type SessionQcScoreRow = { spectrum_id: string; score: number | null; flagged: boolean };
+export type SessionQcPreviewResponse = {
+  step_id: string;
+  step_name: string;
+  summary: { total: number; flagged_count: number; flagged_pct: number };
+  histogram: { bins: number[]; counts: number[]; nonfinite: number };
+  threshold: number;
+  direction: "below" | "above";
+  scores: SessionQcScoreRow[];
+  meta: Record<string, unknown>;
+};
+
 export type PipelineLibraryItem = {
   pipeline_id: string;
   name: string;
@@ -222,6 +240,15 @@ export function runSession(sessionId: string, payload: SessionRunRequest, init?:
       ...init,
     }
   );
+}
+
+export function previewSessionQc(sessionId: string, payload: SessionQcPreviewRequest, init?: RequestInit) {
+  return fetchJson<SessionQcPreviewResponse>(`/sessions/${encodeURIComponent(sessionId)}/qc/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    ...init,
+  });
 }
 
 export type PipelineRunRequest = { inputs: SpectrumRef[]; pipeline: Pipeline; return: { kind: "final" } | { kind: "metrics_only"; metrics: string[] }; up_to_step?: string | null; cache_namespace?: string | null };

@@ -12,7 +12,17 @@ export function formatErrorDetail(detail: unknown, status: number): string {
 export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { cache: "no-store", credentials: "include", ...init });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (!res.ok) {
+        throw new Error(text.trim() || formatErrorDetail(null, res.status));
+      }
+      throw new Error(`Expected JSON response from ${url}, received non-JSON body`);
+    }
+  }
   if (!res.ok) {
     const detail =
       (data && typeof data === "object" && "detail" in data ? (data as { detail?: unknown }).detail : null) ?? text;

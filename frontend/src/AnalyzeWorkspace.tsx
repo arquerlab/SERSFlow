@@ -9,10 +9,11 @@ import {
 } from "./lib/uiPersistence";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PlotlyWrapper, type PlotlyFigure } from "./legacy-wrappers/PlotlyWrapper";
+import { ResizableSplit } from "./components/ResizableSplit";
 import Plotly from "plotly.js-dist-min";
 import { DatasetPicker } from "./components/DatasetPicker";
 import { listDatasets, listPipelines, type PipelineLibraryItem, type SubsetStrategy } from "./preprocess/api";
-import { downloadBlob, downloadCsv, plotlyDivToPngBytes, rowsToCsv, zipFiles } from "./analyze/export";
+import { downloadBlob, downloadCsv, plotlyDivToPngBytes, plotlyDivToSvgText, rowsToCsv, zipFiles } from "./analyze/export";
 import type { ClusterResult, PcaLikeResult, PcaScaler, PlotCardModel } from "./analyze/types";
 import {
   buildCumulativeEvr,
@@ -20,6 +21,7 @@ import {
   buildLoadingsSpectrum,
   buildLoadingsTopN,
   buildScoresPairplot,
+  buildScoresPcVsMetaSubplots,
   buildScoresScatter,
   buildScree,
 } from "./analyze/pcaPlots";
@@ -51,6 +53,8 @@ import {
   postSpectrumCluster,
   postVif,
   getMatrixJob,
+  listMatrixJobs,
+  deleteMatrixJob,
   type AnalysisRunSummary,
   type AnalysisSpectrumResponse,
 } from "./analyze/api";
@@ -533,6 +537,9 @@ export default function AnalyzeWorkspace() {
 
   const [matrixUpTo, setMatrixUpTo] = useState(() => analyzeUiLoaded.matrixUpTo ?? "");
   const [matrixJobId, setMatrixJobId] = useState<string | null>(null);
+  const [selectedMatrixJobId, setSelectedMatrixJobId] = useState<string>(
+    () => String((analyzeUiLoaded as any).selectedMatrixJobId ?? "")
+  );
   const [fpcaN, setFpcaN] = useState<number | "">(() => {
     const n = analyzeUiLoaded.fpcaN;
     if (n === "" || n === undefined) return "";
@@ -560,6 +567,8 @@ export default function AnalyzeWorkspace() {
     { spectrum_id: string; x: number; y: number; color?: number | null; x_err?: number | null; y_err?: number | null }[]
   >([]);
   const metaPlotDivRef = useRef<HTMLDivElement | null>(null);
+  const corrPlotDivRef = useRef<HTMLDivElement | null>(null);
+  const vifPlotDivRef = useRef<HTMLDivElement | null>(null);
   const [heatmapFeature, setHeatmapFeature] = useState("");
   const [heatmapFileMode, setHeatmapFileMode] = useState<HeatmapFileMode>("all");
   const [heatmapSingleFile, setHeatmapSingleFile] = useState("");
@@ -580,6 +589,15 @@ export default function AnalyzeWorkspace() {
   const [scoresYpc, setScoresYpc] = useState(() =>
     typeof analyzeUiLoaded.scoresYpc === "number" && Number.isFinite(analyzeUiLoaded.scoresYpc) ? analyzeUiLoaded.scoresYpc : 3
   );
+  const [scoresColorMeta, setScoresColorMeta] = useState<string>(() => String((analyzeUiLoaded as any).scoresColorMeta ?? ""));
+  const [scoresMetaById, setScoresMetaById] = useState<Record<string, Record<string, number | null>>>({});
+  const [pcVsMetaPcs, setPcVsMetaPcs] = useState<number[]>(
+    () => (Array.isArray((analyzeUiLoaded as any).pcVsMetaPcs) ? ((analyzeUiLoaded as any).pcVsMetaPcs as any[]) : [2, 3])
+      .map((x: any) => Number(x))
+      .filter((n: number) => Number.isFinite(n) && n >= 1)
+      .map((n: number) => Math.floor(n))
+  );
+  const [pcVsMetaX, setPcVsMetaX] = useState<string>(() => String((analyzeUiLoaded as any).pcVsMetaX ?? ""));
   const [pairplotPcs, setPairplotPcs] = useState<number[]>(() =>
     Array.isArray(analyzeUiLoaded.pairplotPcs) && analyzeUiLoaded.pairplotPcs.length ? analyzeUiLoaded.pairplotPcs : [2, 3, 4, 5, 6]
   );
@@ -658,11 +676,15 @@ export default function AnalyzeWorkspace() {
       clusterCols,
       clusterSeed,
       matrixUpTo,
+      selectedMatrixJobId,
       fpcaN,
       pcaScaler,
       discreteScaler,
       scoresXpc,
       scoresYpc,
+      scoresColorMeta,
+      pcVsMetaPcs,
+      pcVsMetaX,
       pairplotPcs,
       loadingsPc,
       loadingsTopN,
@@ -678,11 +700,15 @@ export default function AnalyzeWorkspace() {
     clusterCols,
     clusterSeed,
     matrixUpTo,
+    selectedMatrixJobId,
     fpcaN,
     pcaScaler,
     discreteScaler,
     scoresXpc,
     scoresYpc,
+    scoresColorMeta,
+    pcVsMetaPcs,
+    pcVsMetaX,
     pairplotPcs,
     loadingsPc,
     loadingsTopN,
@@ -719,6 +745,40 @@ export default function AnalyzeWorkspace() {
   const selectedRun: AnalysisRunSummary | undefined = useMemo(() => {
     return (runsQ.data ?? []).find((r) => r.run_id === runId);
   }, [runsQ.data, runId]);
+
+  // Load numeric metadata values for PCA score scatter axis/color overrides.
+  useEffect(() => {
+    if (!runId || selectedRun?.status !== "completed") return;
+    const cols = [scoresColorMeta, pcVsMetaX].map((s) => String(s || "").trim()).filter(Boolean);
+    const uniq = Array.from(new Set(cols));
+    if (!uniq.length) {
+      setScoresMetaById({});
+      return;
+    }
+    let cancelled = false;
+    fetchObservationColumns(runId, uniq, 250_000)
+      .then(({ rows }) => {
+        if (cancelled) return;
+        const byId: Record<string, Record<string, number | null>> = {};
+        for (const r of rows) {
+          const sid = String((r as any).spectrum_id ?? "");
+          if (!sid) continue;
+          const cur = byId[sid] ?? {};
+          for (const c of uniq) {
+            const v = cellToNumber((r as any)[c]);
+            cur[c] = v;
+          }
+          byId[sid] = cur;
+        }
+        setScoresMetaById(byId);
+      })
+      .catch(() => {
+        if (!cancelled) setScoresMetaById({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, selectedRun?.status, scoresColorMeta, pcVsMetaX]);
 
   const schemaQ = useQuery({
     queryKey: ["observationSchema", runId],
@@ -758,7 +818,32 @@ export default function AnalyzeWorkspace() {
     },
   });
 
-  const effectiveMatrixId = matrixJobId ?? matrixPollQ.data?.matrix_job_id ?? null;
+  const effectiveMatrixId = selectedMatrixJobId || matrixJobId || matrixPollQ.data?.matrix_job_id || null;
+
+  const matrixJobsQ = useQuery({
+    queryKey: ["matrixJobs", datasetId],
+    enabled: !!datasetId && section === "spectrum_matrix",
+    queryFn: () => listMatrixJobs(String(datasetId), 200, 0),
+  });
+
+  const matrixSelectedQ = useQuery({
+    queryKey: ["matrixJob", effectiveMatrixId],
+    queryFn: () => getMatrixJob(effectiveMatrixId!),
+    enabled: !!effectiveMatrixId,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status;
+      if (!effectiveMatrixId) return false;
+      if (s === "completed" || s === "failed") return false;
+      return 1000;
+    },
+  });
+
+  const selectedMatrixIsCompleted = !!(
+    effectiveMatrixId &&
+    matrixSelectedQ.data?.matrix_job_id === effectiveMatrixId &&
+    matrixSelectedQ.data.status === "completed" &&
+    !!matrixSelectedQ.data.npz_path
+  );
 
   const featureColumns = useMemo(
     () => runDetailQ.data?.run.feature_columns ?? [],
@@ -906,7 +991,8 @@ export default function AnalyzeWorkspace() {
         ],
         layout: {
           title: warn ? "Correlation (large matrix — may be slow to render)" : "Pearson correlation",
-          margin: { l: 120, r: 20, t: 44, b: 120 },
+          // Give the colorbar enough space (the theme defaults to a small right margin).
+          margin: { l: 120, r: 85, t: 44, b: 120 },
           // Provide ticktext so the wrapper can detect dense axes and hide tick labels.
           // This keeps the view clean for large matrices while preserving hover detail.
           xaxis: { ticktext: names },
@@ -934,6 +1020,7 @@ export default function AnalyzeWorkspace() {
         title: "Variance inflation factor",
         margin: { l: 60, r: 20, t: 20, b: 120 },
         xaxis: { tickangle: -45 },
+        yaxis: { title: { text: "VIF" } },
       },
     };
   }, [vifResult]);
@@ -1075,18 +1162,38 @@ export default function AnalyzeWorkspace() {
       <div className="card" style={{ marginTop: "10px" }}>
         <div className="row" style={{ justifyContent: "space-between", gap: "10px", alignItems: "center" }}>
           <div className="hint" style={{ margin: 0 }}>{plot.title}</div>
-          <button
-            type="button"
-            className="mini"
-            onClick={async () => {
-              const div = heatmapDivByIdRef.current[plot.id];
-              if (!div) return;
-              const bytes = await plotlyDivToPngBytes(div, { width: 1200, scale: 2 });
-              downloadBlob(`${plot.id.replace(/[^a-zA-Z0-9._-]+/g, "_")}.png`, new Blob([bytes as unknown as BlobPart], { type: "image/png" }));
-            }}
-          >
-            Download PNG
-          </button>
+          <div className="row" style={{ gap: "6px", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="mini"
+              onClick={async () => {
+                const div = heatmapDivByIdRef.current[plot.id];
+                if (!div) return;
+                const bytes = await plotlyDivToPngBytes(div, { width: 1200, scale: 2 });
+                downloadBlob(
+                  `${plot.id.replace(/[^a-zA-Z0-9._-]+/g, "_")}.png`,
+                  new Blob([bytes as unknown as BlobPart], { type: "image/png" })
+                );
+              }}
+            >
+              Download PNG
+            </button>
+            <button
+              type="button"
+              className="mini"
+              onClick={async () => {
+                const div = heatmapDivByIdRef.current[plot.id];
+                if (!div) return;
+                const svg = await plotlyDivToSvgText(div, { width: 1200, background: "white" });
+                downloadBlob(
+                  `${plot.id.replace(/[^a-zA-Z0-9._-]+/g, "_")}.svg`,
+                  new Blob([svg], { type: "image/svg+xml;charset=utf-8" })
+                );
+              }}
+            >
+              Download SVG
+            </button>
+          </div>
         </div>
         <PlotlyWrapper
           ref={(el) => {
@@ -1153,9 +1260,33 @@ export default function AnalyzeWorkspace() {
     const includeFeaturePca = section === "pca_cluster";
     const includeSpectrumPca = section === "spectrum_matrix";
 
+    function metaValuesFor(result: PcaLikeResult | null, col: string): (number | null)[] | null {
+      if (!result) return null;
+      const ids = Array.isArray((result as any).spectrum_ids) ? ((result as any).spectrum_ids as any[]).map(String) : null;
+      if (!ids?.length) return null;
+      const c = String(col || "").trim();
+      if (!c) return null;
+      return ids.map((sid) => scoresMetaById?.[sid]?.[c] ?? null);
+    }
+
+    const colorBy = scoresColorMeta
+      ? { values: metaValuesFor(pca ?? fpcaD ?? fpcaF, scoresColorMeta) ?? [], label: scoresColorMeta }
+      : undefined;
+
     if (includeFeaturePca && pca) {
-      if (wantP.has("scores_scatter")) pushBuilt("pca", "pca", buildScoresScatter(pca, { xPc: scoresXpc, yPc: scoresYpc }), "PCA");
-      if (wantP.has("scores_pairplot")) pushBuilt("pca", "pca", buildScoresPairplot(pca, { pcs: pairplotPcs, maxPcs: 8 }), "PCA");
+      if (wantP.has("scores_scatter"))
+        pushBuilt(
+          "pca",
+          "pca",
+          buildScoresScatter(pca, { xPc: scoresXpc, yPc: scoresYpc, colorBy }),
+          "PCA"
+        );
+      if (pcVsMetaX && pcVsMetaPcs.length) {
+        const xMeta = { values: metaValuesFor(pca, pcVsMetaX) ?? [], label: pcVsMetaX };
+        pushBuilt("pca", "pca", buildScoresPcVsMetaSubplots(pca, { pcs: pcVsMetaPcs, xMeta, maxPcs: 12 }), "PCA");
+      }
+      if (wantP.has("scores_pairplot"))
+        pushBuilt("pca", "pca", buildScoresPairplot(pca, { pcs: pairplotPcs, maxPcs: 8, colorBy }), "PCA");
       if (wantP.has("scree")) pushBuilt("pca", "pca", buildScree(pca), "PCA");
       if (wantP.has("cumulative_evr")) pushBuilt("pca", "pca", buildCumulativeEvr(pca), "PCA");
       if (wantP.has("loadings_topn")) {
@@ -1168,8 +1299,20 @@ export default function AnalyzeWorkspace() {
     }
 
     if (includeSpectrumPca && fpcaD) {
-      if (wantP.has("scores_scatter")) pushBuilt("fpca_discrete", "fpca_discrete", buildScoresScatter(fpcaD, { xPc: scoresXpc, yPc: scoresYpc }), "FPCA discrete");
-      if (wantP.has("scores_pairplot")) pushBuilt("fpca_discrete", "fpca_discrete", buildScoresPairplot(fpcaD, { pcs: pairplotPcs, maxPcs: 8 }), "FPCA discrete");
+      if (wantP.has("scores_scatter"))
+        pushBuilt(
+          "fpca_discrete",
+          "fpca_discrete",
+          buildScoresScatter(fpcaD, { xPc: scoresXpc, yPc: scoresYpc, colorBy }),
+          "FPCA discrete"
+        );
+      if (wantP.has("scores_pairplot"))
+        pushBuilt(
+          "fpca_discrete",
+          "fpca_discrete",
+          buildScoresPairplot(fpcaD, { pcs: pairplotPcs, maxPcs: 8, colorBy }),
+          "FPCA discrete"
+        );
       if (wantP.has("scree")) pushBuilt("fpca_discrete", "fpca_discrete", buildScree(fpcaD), "FPCA discrete");
       if (wantP.has("cumulative_evr")) pushBuilt("fpca_discrete", "fpca_discrete", buildCumulativeEvr(fpcaD), "FPCA discrete");
       if (wantP.has("loadings_topn")) {
@@ -1185,8 +1328,15 @@ export default function AnalyzeWorkspace() {
     }
 
     if (includeSpectrumPca && fpcaF) {
-      if (wantP.has("scores_scatter")) pushBuilt("fpca_fda", "fpca_fda", buildScoresScatter(fpcaF, { xPc: scoresXpc, yPc: scoresYpc }), "FPCA fda");
-      if (wantP.has("scores_pairplot")) pushBuilt("fpca_fda", "fpca_fda", buildScoresPairplot(fpcaF, { pcs: pairplotPcs, maxPcs: 8 }), "FPCA fda");
+      if (wantP.has("scores_scatter"))
+        pushBuilt(
+          "fpca_fda",
+          "fpca_fda",
+          buildScoresScatter(fpcaF, { xPc: scoresXpc, yPc: scoresYpc, colorBy }),
+          "FPCA fda"
+        );
+      if (wantP.has("scores_pairplot"))
+        pushBuilt("fpca_fda", "fpca_fda", buildScoresPairplot(fpcaF, { pcs: pairplotPcs, maxPcs: 8, colorBy }), "FPCA fda");
       if (wantP.has("scree")) pushBuilt("fpca_fda", "fpca_fda", buildScree(fpcaF), "FPCA fda");
       if (wantP.has("cumulative_evr")) pushBuilt("fpca_fda", "fpca_fda", buildCumulativeEvr(fpcaF), "FPCA fda");
       if (wantP.has("loadings_topn")) {
@@ -1258,6 +1408,21 @@ export default function AnalyzeWorkspace() {
             >
               Download PNG
             </button>
+            <button
+              type="button"
+              className="mini"
+              onClick={async () => {
+                const div = plotDivByIdRef.current[card.id];
+                if (!div) return;
+                const svg = await plotlyDivToSvgText(div, { width: 1200, background: "white" });
+                downloadBlob(
+                  card.defaultPngName.replace(/\.png$/i, ".svg"),
+                  new Blob([svg], { type: "image/svg+xml;charset=utf-8" })
+                );
+              }}
+            >
+              Download SVG
+            </button>
             <button type="button" className="mini" onClick={() => downloadCsv(card.defaultCsvName, card.csvRows)}>
               Download CSV
             </button>
@@ -1310,6 +1475,29 @@ export default function AnalyzeWorkspace() {
       }
       const zip = zipFiles(files);
       downloadBlob("plots_png.zip", zip);
+    } catch (e) {
+      setLastError(String((e as Error)?.message ?? e));
+    } finally {
+      setExportBusy(null);
+    }
+  }
+
+  async function exportAllSvgZip() {
+    setLastError(null);
+    setExportBusy("svg");
+    try {
+      const files: { path: string; bytes: string }[] = [];
+      for (const c of plotCards) {
+        const div = plotDivByIdRef.current[c.id];
+        if (!div) continue;
+        const svg = await plotlyDivToSvgText(div, { width: 1200, background: "white" });
+        files.push({ path: `${c.zipFolder}/${c.defaultPngName.replace(/\.png$/i, ".svg")}`, bytes: svg });
+      }
+      if (!files.length) {
+        throw new Error("No rendered plots were available for SVG export yet. Scroll until plots are visible, then retry.");
+      }
+      const zip = zipFiles(files);
+      downloadBlob("plots_svg.zip", zip);
     } catch (e) {
       setLastError(String((e as Error)?.message ?? e));
     } finally {
@@ -1464,6 +1652,12 @@ export default function AnalyzeWorkspace() {
       .filter((x): x is { value: string; label: string; legacyName: string } => !!x);
   }, [selectedPipeline]);
 
+  function matrixStepLabel(value: string | null | undefined): string {
+    const v = String(value || "").trim();
+    if (!v) return "Final (all steps)";
+    return matrixStepOptions.find((o) => o.value === v)?.label ?? "Final (all steps)";
+  }
+
   // Back-compat: migrate previously stored "matrixUpTo" (often a step name like "normalize")
   // to the first matching option value when the pipeline changes.
   useEffect(() => {
@@ -1476,6 +1670,13 @@ export default function AnalyzeWorkspace() {
 
   return (
     <div className="preprocess-grid analyze-layout">
+      <div className="preprocess-split-row">
+        <ResizableSplit
+          storageKey="sersflow:analyze-sidebar-w"
+          defaultWidth={360}
+          minWidth={280}
+          maxWidth={720}
+          left={
       <div className="preprocess-left card">
         <div className="section-title">Features &amp; statistics</div>
         <p className="hint" style={{ margin: "0 0 10px" }}>
@@ -2012,8 +2213,8 @@ export default function AnalyzeWorkspace() {
                   StandardScaler is usually helpful for feature PCA when selected columns use different units or intensity scales.
                 </div>
 
-                <div className="hint" style={{ marginTop: "10px" }}>
-                  Plot settings
+                <div className="subsection-title" style={{ marginTop: "10px" }}>
+                  PC pairplots
                 </div>
                 <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "flex-end" }}>
                   <label className="inline">
@@ -2039,9 +2240,53 @@ export default function AnalyzeWorkspace() {
                       }}
                     />
                   </label>
+                  <label className="inline" title="Optional: color the scores scatter/pairplot by a numeric metadata column.">
+                    Color by (metadata)
+                    <select value={scoresColorMeta} onChange={(e) => setScoresColorMeta(String(e.target.value || ""))}>
+                      <option value="">—</option>
+                      {selectableColumns.map((c) => (
+                        <option key={`pca-cmeta-${c}`} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <label className="inline">
                     Loadings topN
                     <input type="number" min={1} max={200} value={loadingsTopN} onChange={(e) => setLoadingsTopN(Number(e.target.value))} />
+                  </label>
+                </div>
+
+                <div className="subsection-title" style={{ marginTop: "10px" }}>
+                  Plot settings (PC vs metadata)
+                </div>
+                <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <label className="inline" title="Comma-separated list of PCs. Each PC will produce one plot: PC vs metadata.">
+                    PCs
+                    <input
+                      type="text"
+                      value={pcVsMetaPcs.join(",")}
+                      onChange={(e) => {
+                        const pcs = e.target.value
+                          .split(",")
+                          .map((x) => Number(x.trim()))
+                          .filter((n) => Number.isFinite(n) && n >= 1)
+                          .map((n) => Math.floor(n));
+                        setPcVsMetaPcs(pcs.length ? pcs : []);
+                      }}
+                      placeholder="e.g. 1,2,3"
+                    />
+                  </label>
+                  <label className="inline" title="Metadata column used for X axis in PC vs metadata plots.">
+                    Metadata (X axis)
+                    <select value={pcVsMetaX} onChange={(e) => setPcVsMetaX(String(e.target.value || ""))}>
+                      <option value="">—</option>
+                      {selectableColumns.map((c) => (
+                        <option key={`pc-vs-meta-x-${c}`} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 </div>
 
@@ -2081,48 +2326,7 @@ export default function AnalyzeWorkspace() {
                   ))}
                 </div>
 
-                {schemaQ.data ? (
-                  <>
-                    <div className="row" style={{ gap: "6px", flexWrap: "wrap" }}>
-                      <button
-                        type="button"
-                        className="mini"
-                        onClick={() => {
-                          const all = [...schemaQ.data!.feature_keys, ...schemaQ.data!.axis_keys, ...schemaQ.data!.meta_keys];
-                          setCorrCols((prev) => updateSelection(prev, all, "select_all"));
-                        }}
-                      >
-                        Select all (all groups)
-                      </button>
-                      <button
-                        type="button"
-                        className="mini"
-                        onClick={() => {
-                          const all = [...schemaQ.data!.feature_keys, ...schemaQ.data!.axis_keys, ...schemaQ.data!.meta_keys];
-                          setCorrCols((prev) => updateSelection(prev, all, "clear"));
-                        }}
-                      >
-                        Clear all
-                      </button>
-                    </div>
-                    {renderColumnGridWithSelectAll("Spectral features", schemaQ.data.feature_keys, corrCols, setCorrCols)}
-                    {renderColumnGridWithSelectAll("Axes & grid", schemaQ.data.axis_keys, corrCols, setCorrCols)}
-                    {renderColumnGridWithSelectAll("Experiment metadata (upload)", schemaQ.data.meta_keys, corrCols, setCorrCols)}
-                  </>
-                ) : (
-                  <div style={{ maxHeight: 140, overflow: "auto", border: "1px solid rgba(255,255,255,0.08)", padding: "6px" }}>
-                    {featureColumns.map((c) => (
-                      <label key={c} className="inline" style={{ display: "block" }}>
-                        <input
-                          type="checkbox"
-                          checked={corrCols.includes(c)}
-                          onChange={(e) => setCorrCols(toggleCol(corrCols, c, e.target.checked))}
-                        />{" "}
-                        {c}
-                      </label>
-                    ))}
-                  </div>
-                )}
+                {/* For PCA we no longer show the detailed Axes / metadata column menu; correlation/VIF handles column selection above. */}
               </>
             )}
           </div>
@@ -2572,6 +2776,27 @@ export default function AnalyzeWorkspace() {
                   </button>
                   <button
                     type="button"
+                    disabled={!metaScatterFig || !metaPlotDivRef.current}
+                    onClick={async () => {
+                      const el = metaPlotDivRef.current;
+                      if (!el) return;
+                      try {
+                        await Plotly.downloadImage(el, {
+                          format: "svg",
+                          filename: `scatter_${metaX}_${metaY}`,
+                          width: 1200,
+                          height: 800,
+                          scale: 1,
+                        });
+                      } catch (e) {
+                        setLastError(String((e as Error).message));
+                      }
+                    }}
+                  >
+                    Export plot (SVG)
+                  </button>
+                  <button
+                    type="button"
                     disabled={!metaScatterCsvRows.length}
                     onClick={() => {
                       const headerCols = ["spectrum_id", metaX, metaY];
@@ -2614,6 +2839,104 @@ export default function AnalyzeWorkspace() {
               <div className="hint">Select dataset and pipeline.</div>
             ) : (
               <>
+                <div className="section-title" style={{ marginTop: "10px" }}>
+                  Spectrum matrices
+                </div>
+                {!datasetId ? (
+                  <div className="hint">Select a dataset to load matrices.</div>
+                ) : matrixJobsQ.isLoading ? (
+                  <div className="hint">Loading matrices…</div>
+                ) : matrixJobsQ.isError ? (
+                  <div className="err">
+                    Could not load matrices: {String((matrixJobsQ.error as Error)?.message ?? matrixJobsQ.error)}
+                  </div>
+                ) : (
+                  <div style={{ maxHeight: 220, overflow: "auto", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <table className="data-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr>
+                          <th style={{ width: 52 }}>Use</th>
+                          <th>Matrix</th>
+                          <th>Dataset</th>
+                          <th>Pipeline</th>
+                          <th>Run</th>
+                          <th>Step</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(matrixJobsQ.data?.items ?? []).map((it) => (
+                          <tr key={it.matrix_job_id}>
+                            <td>
+                              <input
+                                type="radio"
+                                name="matrix_job_pick"
+                                checked={selectedMatrixJobId === it.matrix_job_id}
+                                onChange={() => setSelectedMatrixJobId(it.matrix_job_id)}
+                                title="Use this matrix job for FPCA/cluster below"
+                              />
+                            </td>
+                            <td style={{ fontFamily: "monospace", fontSize: 12 }} title={it.matrix_job_id}>
+                              {it.matrix_job_id.slice(0, 10)}…
+                            </td>
+                            <td
+                              title={`${(datasetsQ.data?.items ?? []).find((d) => d.dataset_id === it.dataset_id)?.metadata?.name ?? it.dataset_id}\n${it.dataset_id}`}
+                            >
+                              {(datasetsQ.data?.items ?? []).find((d) => d.dataset_id === it.dataset_id)?.metadata?.name ??
+                                it.dataset_id.slice(0, 10) + "…"}
+                            </td>
+                            <td title={it.pipeline_id ?? it.pipeline_name ?? it.matrix_job_id}>
+                              {it.pipeline_name ?? it.pipeline_id ?? "—"}
+                            </td>
+                            <td
+                              title={`${(runsQ.data ?? []).find((r) => r.run_id === it.analysis_run_id)?.label ?? it.analysis_run_id ?? ""}\n${it.analysis_run_id ?? ""}`}
+                            >
+                              {(runsQ.data ?? []).find((r) => r.run_id === it.analysis_run_id)?.label ??
+                                (it.analysis_run_id ? it.analysis_run_id.slice(0, 10) + "…" : "—")}
+                            </td>
+                            <td title={it.up_to_step ?? ""}>{matrixStepLabel(it.up_to_step)}</td>
+                            <td>
+                              {it.status}
+                              {it.error ? <div className="err">{it.error}</div> : null}
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="mini danger"
+                                onClick={async () => {
+                                  try {
+                                    await deleteMatrixJob(it.matrix_job_id);
+                                    if (selectedMatrixJobId === it.matrix_job_id) {
+                                      setSelectedMatrixJobId("");
+                                    }
+                                    if (matrixJobId === it.matrix_job_id) {
+                                      setMatrixJobId(null);
+                                    }
+                                    void matrixJobsQ.refetch();
+                                  } catch (e) {
+                                    setLastError(String((e as Error).message));
+                                  }
+                                }}
+                                title="Delete this matrix job"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {!(matrixJobsQ.data?.items ?? []).length ? (
+                          <tr>
+                            <td colSpan={8} className="hint" style={{ padding: "8px" }}>
+                              No matrices yet. Start a matrix job below.
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
                 <label className="inline">
                   up_to_step (optional)
                   <select value={matrixUpTo} onChange={(e) => setMatrixUpTo(e.target.value)}>
@@ -2638,12 +2961,19 @@ export default function AnalyzeWorkspace() {
                       setFpcaFdaExploreId(null);
                       try {
                         const resp = await postMatrixJob({
+                          // Prefer tying the matrix to the current analysis run for reproducibility.
+                          analysis_run_id: runId || null,
                           dataset_id: datasetId,
-                          pipeline: selectedPipeline.pipeline,
+                          pipeline_id: selectedPipeline.pipeline_id,
+                          pipeline_name: selectedPipeline.name,
+                          // Back-compat / fallback: if the run didn't persist a pipeline snapshot yet, send the pipeline.
+                          pipeline: runId ? null : selectedPipeline.pipeline,
                           up_to_step: matrixUpTo || null,
                           async: true,
                         });
                         setMatrixJobId(resp.matrix_job_id);
+                        setSelectedMatrixJobId(resp.matrix_job_id);
+                        void matrixJobsQ.refetch();
                       } catch (e) {
                         setLastError(String((e as Error).message));
                       } finally {
@@ -2656,7 +2986,7 @@ export default function AnalyzeWorkspace() {
                   <button
                     type="button"
                     className="mini"
-                    disabled={matrixPollQ.data?.status !== "completed" || !effectiveMatrixId}
+                    disabled={!selectedMatrixIsCompleted || !effectiveMatrixId}
                     onClick={() => {
                       if (!effectiveMatrixId) return;
                       safeDownload(
@@ -2669,26 +2999,26 @@ export default function AnalyzeWorkspace() {
                     Download matrix CSV
                   </button>
                 </div>
-                {matrixJobId || matrixPollQ.data ? (
+                {effectiveMatrixId && matrixSelectedQ.data ? (
                   <div className="hint" style={{ marginTop: "10px" }}>
                     <div>
-                      <b>Job:</b> {matrixJobId ?? matrixPollQ.data?.matrix_job_id}
+                      <b>Job:</b> {matrixSelectedQ.data.matrix_job_id}
                     </div>
                     <div>
-                      <b>Status:</b> {matrixPollQ.data?.status ?? "—"}
+                      <b>Status:</b> {matrixSelectedQ.data.status ?? "—"}
                     </div>
                     <div style={{ wordBreak: "break-all" }}>
-                      <b>NPZ:</b> {matrixPollQ.data?.npz_path ?? "—"}
+                      <b>NPZ:</b> {matrixSelectedQ.data.npz_path ?? "—"}
                     </div>
-                    {matrixPollQ.data?.error ? (
+                    {matrixSelectedQ.data.error ? (
                       <div className="err" style={{ marginTop: "6px" }}>
-                        {matrixPollQ.data.error}
+                        {matrixSelectedQ.data.error}
                       </div>
                     ) : null}
                   </div>
                 ) : (
                   <div className="hint" style={{ marginTop: "8px" }}>
-                    No matrix job yet.
+                    No matrix selected yet.
                   </div>
                 )}
               </>
@@ -2697,8 +3027,8 @@ export default function AnalyzeWorkspace() {
             <div className="section-title" style={{ marginTop: "14px" }}>
               Spectrum multivariate
             </div>
-            {!matrixPollQ.data?.npz_path || matrixPollQ.data?.status !== "completed" || !effectiveMatrixId ? (
-              <div className="hint">Complete a matrix job above first.</div>
+            {!selectedMatrixIsCompleted ? (
+              <div className="hint">Select a completed matrix job above first.</div>
             ) : (
               <>
                 <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
@@ -3000,7 +3330,8 @@ export default function AnalyzeWorkspace() {
           </div>
         ) : null}
       </div>
-
+          }
+          right={
       <div className="preprocess-right card">
         <div className="section-title">Plots &amp; results</div>
         {section === "heatmaps" && heatmapPlots.length ? (
@@ -3049,8 +3380,68 @@ export default function AnalyzeWorkspace() {
             className="plot-host"
           />
         ) : null}
+        {section === "correlation" && (corrFigure || vifFigure) ? (
+          <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "center", marginTop: "8px" }}>
+            <div className="hint" style={{ margin: 0 }}>
+              Export
+            </div>
+            <button
+              type="button"
+              className="mini"
+              disabled={!corrFigure || !corrPlotDivRef.current}
+              onClick={async () => {
+                const div = corrPlotDivRef.current;
+                if (!div) return;
+                const bytes = await plotlyDivToPngBytes(div, { width: 1200, scale: 2 });
+                downloadBlob("correlation.png", new Blob([bytes as unknown as BlobPart], { type: "image/png" }));
+              }}
+            >
+              Correlation PNG
+            </button>
+            <button
+              type="button"
+              className="mini"
+              disabled={!corrFigure || !corrPlotDivRef.current}
+              onClick={async () => {
+                const div = corrPlotDivRef.current;
+                if (!div) return;
+                const svg = await plotlyDivToSvgText(div, { width: 1200, background: "white" });
+                downloadBlob("correlation.svg", new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+              }}
+            >
+              Correlation SVG
+            </button>
+            <button
+              type="button"
+              className="mini"
+              disabled={!vifFigure || !vifPlotDivRef.current}
+              onClick={async () => {
+                const div = vifPlotDivRef.current;
+                if (!div) return;
+                const bytes = await plotlyDivToPngBytes(div, { width: 1200, scale: 2 });
+                downloadBlob("vif.png", new Blob([bytes as unknown as BlobPart], { type: "image/png" }));
+              }}
+            >
+              VIF PNG
+            </button>
+            <button
+              type="button"
+              className="mini"
+              disabled={!vifFigure || !vifPlotDivRef.current}
+              onClick={async () => {
+                const div = vifPlotDivRef.current;
+                if (!div) return;
+                const svg = await plotlyDivToSvgText(div, { width: 1200, background: "white" });
+                downloadBlob("vif.svg", new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+              }}
+            >
+              VIF SVG
+            </button>
+          </div>
+        ) : null}
         {section === "correlation" && corrFigure ? (
           <PlotlyWrapper
+            ref={corrPlotDivRef}
             figure={corrFigure.figure}
             previousFigure={null}
             plotStyle={{ mode: "overlay", stackSep: 0 }}
@@ -3060,6 +3451,7 @@ export default function AnalyzeWorkspace() {
         ) : null}
         {section === "correlation" && vifFigure ? (
           <PlotlyWrapper
+            ref={vifPlotDivRef}
             figure={vifFigure}
             previousFigure={null}
             plotStyle={{ mode: "overlay", stackSep: 0 }}
@@ -3124,6 +3516,9 @@ export default function AnalyzeWorkspace() {
               <button type="button" disabled={!!exportBusy} onClick={exportAllPngZip}>
                 {exportBusy === "png" ? "Exporting PNG…" : "Export all PNG (zip)"}
               </button>
+              <button type="button" disabled={!!exportBusy} onClick={exportAllSvgZip}>
+                {exportBusy === "svg" ? "Exporting SVG…" : "Export all SVG (zip)"}
+              </button>
               <button type="button" disabled={!!exportBusy} onClick={exportAllCsvZip}>
                 {exportBusy === "csv" ? "Exporting CSV…" : "Export all CSV (zip)"}
               </button>
@@ -3140,6 +3535,9 @@ export default function AnalyzeWorkspace() {
         {section === "exports" && (!runId || selectedRun?.status !== "completed") ? (
           <AnalysisRunGateNotice runId={runId} selectedRun={selectedRun} compact />
         ) : null}
+      </div>
+          }
+        />
       </div>
     </div>
   );

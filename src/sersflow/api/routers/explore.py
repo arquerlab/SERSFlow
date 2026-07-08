@@ -59,7 +59,9 @@ from sersflow.infra.explore_store import (
     artifacts_root,
     create_explore_run,
     create_matrix_job_pending,
+    delete_matrix_job,
     finish_explore_run,
+    list_matrix_jobs,
     prune_explore_runs,
 )
 
@@ -160,6 +162,9 @@ def post_matrix_job(payload: MatrixExportRequest, request: Request) -> MatrixExp
         jid = create_matrix_job_pending(
             dataset_id=rec.dataset_id,
             session_id=None,
+            source_analysis_run_id=rec.run_id,
+            pipeline_id=getattr(rec, "pipeline_id", None),
+            pipeline_name=getattr(rec, "pipeline_name", None),
             pipeline_hash=rec.pipeline_hash,
             pipeline_json=rec.pipeline_json,
             subset_hash=rec.subset_hash,
@@ -203,6 +208,9 @@ def post_matrix_job(payload: MatrixExportRequest, request: Request) -> MatrixExp
     jid = create_matrix_job_pending(
         dataset_id=payload.dataset_id,
         session_id=session_id,
+        source_analysis_run_id=None,
+        pipeline_id=payload.pipeline_id,
+        pipeline_name=payload.pipeline_name,
         pipeline_hash=ph,
         pipeline_json=pipeline_json,
         subset_hash=sh,
@@ -228,11 +236,47 @@ def get_matrix_job_status(matrix_job_id: str, request: Request) -> dict[str, Any
         "matrix_job_id": mj.matrix_job_id,
         "status": mj.status,
         "dataset_id": mj.dataset_id,
+        "pipeline_id": getattr(mj, "pipeline_id", None),
+        "pipeline_name": getattr(mj, "pipeline_name", None),
+        "analysis_run_id": getattr(mj, "source_analysis_run_id", None),
+        "up_to_step": mj.up_to_step,
         "npz_path": mj.npz_path,
         "manifest": manifest,
         "error": mj.error,
         "created_at": mj.created_at,
         "finished_at": mj.finished_at,
+    }
+
+
+@router.get("/matrix-jobs")
+def list_matrix_jobs_endpoint(
+    dataset_id: str,
+    request: Request,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    if get_dataset_for_user(dataset_id, user_id) is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    items = list_matrix_jobs(dataset_id=dataset_id, limit=limit, offset=offset)
+    return {
+        "items": [
+            {
+                "matrix_job_id": it.matrix_job_id,
+                "dataset_id": it.dataset_id,
+                "pipeline_id": getattr(it, "pipeline_id", None),
+                "pipeline_name": getattr(it, "pipeline_name", None),
+                "analysis_run_id": getattr(it, "source_analysis_run_id", None),
+                "up_to_step": it.up_to_step,
+                "status": it.status,
+                "created_at": it.created_at,
+                "finished_at": it.finished_at,
+                "error": it.error,
+            }
+            for it in items
+        ],
+        "limit": limit,
+        "offset": offset,
     }
 
 
@@ -249,6 +293,18 @@ def export_matrix_job_csv(matrix_job_id: str, request: Request) -> StreamingResp
         return _csv_streaming_response(gen, f"matrix_{matrix_job_id}.csv")
     except (OSError, ValueError, KeyError) as e:
         raise HTTPException(status_code=500, detail=f"Matrix export failed: {e}") from e
+
+
+@router.delete("/matrix-jobs/{matrix_job_id}")
+def delete_matrix_job_endpoint(matrix_job_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    mj = get_matrix_job_for_user(matrix_job_id, user_id)
+    if mj is None:
+        raise HTTPException(status_code=404, detail="Matrix job not found")
+    ok = delete_matrix_job(matrix_job_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Matrix job not found")
+    return {"ok": True}
 
 
 def _pca_artifact_path(explore_id: str, user_id: str) -> tuple[str, str]:

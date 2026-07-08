@@ -36,32 +36,74 @@ function scalerTitleSuffix(result: PcaLikeResult): string {
 
 export function buildScoresScatter(
   result: PcaLikeResult,
-  opts: { xPc: number; yPc: number }
+  opts: {
+    xPc: number;
+    yPc: number;
+    xOverride?: { values: (number | null)[]; label: string };
+    yOverride?: { values: (number | null)[]; label: string };
+    colorBy?: { values: (number | null)[]; label: string };
+  }
 ): { figure: PlotlyFigure; csvRows: CsvRow[]; title: string; defaultName: string } | null {
   const scores = getScores(result);
   if (!scores) return null;
   const ids = getSpectrumIds(result) ?? scores.map((_, i) => String(i));
   const xi = pcIndex1To0(opts.xPc);
   const yi = pcIndex1To0(opts.yPc);
-  const x = scores.map((r) => (typeof r[xi] === "number" ? r[xi] : null));
-  const y = scores.map((r) => (typeof r[yi] === "number" ? r[yi] : null));
+  const pcX = scores.map((r) => (typeof r[xi] === "number" ? r[xi] : null));
+  const pcY = scores.map((r) => (typeof r[yi] === "number" ? r[yi] : null));
   if (scores[0].length <= Math.max(xi, yi)) return null;
-  const title = `Scores scatter (PC${xi + 1} vs PC${yi + 1})${scalerTitleSuffix(result)}`;
+
+  const x = opts.xOverride?.values?.length === ids.length ? opts.xOverride.values : pcX;
+  const y = opts.yOverride?.values?.length === ids.length ? opts.yOverride.values : pcY;
+  const xLabel = opts.xOverride?.values?.length === ids.length ? opts.xOverride.label : `PC${xi + 1}`;
+  const yLabel = opts.yOverride?.values?.length === ids.length ? opts.yOverride.label : `PC${yi + 1}`;
+
+  const title = `Scores scatter (${xLabel} vs ${yLabel})${scalerTitleSuffix(result)}`;
   const figure: PlotlyFigure = {
-    data: [{ type: "scatter", mode: "markers", x, y, text: ids, marker: { size: 6 }, hovertemplate: "%{text}<br>x=%{x}<br>y=%{y}<extra></extra>" }],
+    data: [
+      {
+        type: "scatter",
+        mode: "markers",
+        x,
+        y,
+        text: ids,
+        marker: { size: 6 },
+        hovertemplate: "%{text}<br>x=%{x}<br>y=%{y}<extra></extra>",
+      },
+    ],
     layout: {
       title,
-      xaxis: { title: { text: `PC${xi + 1}` } },
-      yaxis: { title: { text: `PC${yi + 1}` } },
+      xaxis: { title: { text: xLabel } },
+      yaxis: { title: { text: yLabel } },
     },
   };
-  const csvRows: CsvRow[] = ids.map((sid, i) => ({
-    spectrum_id: sid,
-    [`PC${xi + 1}`]: x[i],
-    [`PC${yi + 1}`]: y[i],
-  }));
-  const defaultName = `scores_scatter_PC${xi + 1}_PC${yi + 1}`;
+
+  if (opts.colorBy?.values?.length === ids.length) {
+    const c = opts.colorBy.values;
+    const any = c.some((v) => typeof v === "number" && Number.isFinite(v));
+    if (any) {
+      (figure.data[0] as any).marker = {
+        ...(figure.data[0] as any).marker,
+        color: c,
+        colorscale: "Viridis",
+        showscale: true,
+        colorbar: { title: opts.colorBy.label },
+      };
+    }
+  }
+
+  const csvRows: CsvRow[] = ids.map((sid, i) => {
+    const row: CsvRow = { spectrum_id: sid, [xLabel]: x[i], [yLabel]: y[i] };
+    if (opts.colorBy?.values?.length === ids.length) row[opts.colorBy.label] = opts.colorBy.values[i] ?? null;
+    return row;
+  });
+  const defaultName = `scores_scatter_${safeKey(xLabel)}_vs_${safeKey(yLabel)}`;
   return { figure, csvRows, title, defaultName };
+}
+
+function safeKey(label: string): string {
+  const s = String(label || "").trim();
+  return (s || "axis").replace(/[^a-zA-Z0-9._-]+/g, "_");
 }
 
 export function buildScree(
@@ -98,7 +140,11 @@ export function buildCumulativeEvr(
 
 export function buildScoresPairplot(
   result: PcaLikeResult,
-  opts: { pcs: number[]; maxPcs?: number }
+  opts: {
+    pcs: number[];
+    maxPcs?: number;
+    colorBy?: { values: (number | null)[]; label: string };
+  }
 ): { figure: PlotlyFigure; csvRows: CsvRow[]; title: string; defaultName: string } | null {
   const scores = getScores(result);
   if (!scores) return null;
@@ -128,6 +174,20 @@ export function buildScoresPairplot(
     // SPLoM needs a bit more breathing room for axis labels.
     layout: { title, height: 650, margin: { l: 70, r: 20, t: 20, b: 70 } },
   };
+
+  if (opts.colorBy?.values?.length === ids.length) {
+    const c = opts.colorBy.values;
+    const any = c.some((v) => typeof v === "number" && Number.isFinite(v));
+    if (any) {
+      (figure.data[0] as any).marker = {
+        ...(figure.data[0] as any).marker,
+        color: c,
+        colorscale: "Viridis",
+        showscale: true,
+        colorbar: { title: opts.colorBy.label },
+      };
+    }
+  }
   const csvRows: CsvRow[] = ids.map((sid, rowIdx) => {
     const row: CsvRow = { spectrum_id: sid };
     for (const pc1 of uniq) {
@@ -138,6 +198,105 @@ export function buildScoresPairplot(
   });
   const defaultName = `scores_pairplot_PC${uniq[0]}_to_PC${uniq[uniq.length - 1]}`;
   return { figure, csvRows, title, defaultName };
+}
+
+export function buildScoresPcVsMetaSubplots(
+  result: PcaLikeResult,
+  opts: {
+    pcs: number[];
+    xMeta: { values: (number | null)[]; label: string };
+    maxPcs?: number;
+  }
+): { figure: PlotlyFigure; csvRows: CsvRow[]; title: string; defaultName: string } | null {
+  const scores = getScores(result);
+  if (!scores) return null;
+  const ids = getSpectrumIds(result) ?? scores.map((_, i) => String(i));
+  if (opts.xMeta.values.length !== ids.length) return null;
+  const pcs = (opts.pcs ?? [])
+    .map((p) => Math.max(1, Math.floor(p)))
+    .filter((p) => Number.isFinite(p));
+  const uniq = Array.from(new Set(pcs)).slice(0, Math.max(1, opts.maxPcs ?? 12));
+  if (!uniq.length) return null;
+
+  const validPcs = uniq.filter((pc1) => scores[0].length > pcIndex1To0(pc1));
+  if (!validPcs.length) return null;
+
+  const cols = validPcs.length >= 3 ? 2 : 1;
+  const rows = Math.ceil(validPcs.length / cols);
+  const gapX = 0.08;
+  const gapY = 0.12;
+  const cellW = (1 - gapX * (cols - 1)) / cols;
+  const cellH = (1 - gapY * (rows - 1)) / rows;
+
+  const data: any[] = [];
+  const layout: Record<string, any> = {
+    title: `PC vs ${opts.xMeta.label}${scalerTitleSuffix(result)}`,
+    height: Math.max(420, rows * 320),
+    margin: { l: 60, r: 20, t: 30, b: 60 },
+    annotations: [],
+    showlegend: false,
+  };
+
+  validPcs.forEach((pc1, idx) => {
+    const pc0 = pcIndex1To0(pc1);
+    const col = idx % cols;
+    const row = Math.floor(idx / cols);
+    const x0 = col * (cellW + gapX);
+    const x1 = x0 + cellW;
+    const y1 = 1 - row * (cellH + gapY);
+    const y0 = y1 - cellH;
+    const axisSuffix = idx === 0 ? "" : String(idx + 1);
+    const xaxisKey = `xaxis${axisSuffix}`;
+    const yaxisKey = `yaxis${axisSuffix}`;
+
+    layout[xaxisKey] = {
+      domain: [x0, x1],
+      anchor: `y${axisSuffix || ""}`,
+      title: { text: opts.xMeta.label },
+    };
+    layout[yaxisKey] = {
+      domain: [y0, y1],
+      anchor: `x${axisSuffix || ""}`,
+      title: { text: `PC${pc1}` },
+    };
+    layout.annotations.push({
+      text: `PC${pc1}`,
+      x: (x0 + x1) / 2,
+      y: y1 + 0.04,
+      xref: "paper",
+      yref: "paper",
+      showarrow: false,
+      font: { size: 13, color: "black" },
+    });
+
+    data.push({
+      type: "scatter",
+      mode: "markers",
+      x: opts.xMeta.values,
+      y: scores.map((r) => (typeof r[pc0] === "number" ? r[pc0] : null)),
+      text: ids,
+      marker: { size: 6 },
+      hovertemplate: "%{text}<br>x=%{x}<br>y=%{y}<extra></extra>",
+      xaxis: `x${axisSuffix}`,
+      yaxis: `y${axisSuffix}`,
+      showlegend: false,
+    });
+  });
+
+  const csvRows: CsvRow[] = ids.map((sid, i) => {
+    const row: CsvRow = { spectrum_id: sid, [opts.xMeta.label]: opts.xMeta.values[i] ?? null };
+    for (const pc1 of validPcs) {
+      row[`PC${pc1}`] = scores[i]?.[pcIndex1To0(pc1)] ?? null;
+    }
+    return row;
+  });
+
+  return {
+    figure: { data, layout },
+    csvRows,
+    title: `PC vs ${opts.xMeta.label}`,
+    defaultName: `pc_vs_${safeKey(opts.xMeta.label)}_${validPcs.map((pc) => `PC${pc}`).join("_")}`,
+  };
 }
 
 export function buildLoadingsTopN(

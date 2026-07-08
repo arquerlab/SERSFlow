@@ -15,6 +15,8 @@ class MatrixExportRequest(BaseModel):
     dataset_id: str | None = Field(default=None, min_length=1)
     analysis_run_id: str | None = Field(default=None, min_length=1)
     session_id: str | None = None
+    pipeline_id: str | None = Field(default=None, min_length=1)
+    pipeline_name: str | None = Field(default=None, min_length=1)
     pipeline: Pipeline | None = None
     up_to_step: str | None = None
     async_: bool = Field(default=False, alias="async")

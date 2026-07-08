@@ -7,6 +7,7 @@ from typing import Any
 
 from sersflow.api.schemas.pipeline import Pipeline, PipelineStep
 from sersflow.api.schemas.sessions import SubsetStrategy
+from sersflow.api.services.pipeline_qc import apply_pipeline_qc_filters, pipeline_without_qc_steps
 from sersflow.api.services.reference_runtime import filter_reference_spectra, hydrate_reference_transforms
 from sersflow.api.services.sessions_service import resolve_subset_indices
 from sersflow.core.metrics.feature_operations import (
@@ -258,6 +259,20 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
             ds,
             cache_namespace=(sess.cache.cache_namespace if sess and sess.cache else run_id),
         )
+        # Apply QC/filter steps (cohort exclusions) before batch processing.
+        ns = (sess.cache.cache_namespace if sess and sess.cache else None) or run_id
+        # Analysis runs always process the full dataset; session subset is preview-only.
+        indices = resolve_subset_indices(dataset=ds, subset=_ANALYSIS_COHORT, pipeline=effective_pipeline)
+        refs = filter_reference_spectra([ds.spectra[i] for i in indices], effective_pipeline)
+        refs, _qc_report = apply_pipeline_qc_filters(
+            dataset=ds,
+            pipeline=effective_pipeline,
+            refs=refs,
+            cache_namespace=ns,
+            strict=True,
+        )
+        effective_pipeline = pipeline_without_qc_steps(effective_pipeline)
+
         keys = _all_analysis_feature_keys(effective_pipeline)
         if not keys:
             raise ValueError("pipeline has no spectral_intensities step and default probe injection failed")
@@ -268,8 +283,6 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
                 run_id,
             )
 
-        indices = resolve_subset_indices(dataset=ds, subset=_ANALYSIS_COHORT, pipeline=effective_pipeline)
-        refs = filter_reference_spectra([ds.spectra[i] for i in indices], effective_pipeline)
         total = len(refs)
         if total == 0:
             raise ValueError("no spectra in resolved subset")
@@ -277,7 +290,6 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
         if job_id:
             update_job_progress(job_id=job_id, status="running", progress_done=0, progress_total=total)
 
-        ns = (sess.cache.cache_namespace if sess and sess.cache else None) or run_id
         cfg = EngineConfig(cache_namespace=ns)
 
         # IMPORTANT: preserve pipeline wiring (input_from / after_step_id) and numbering (step_id),

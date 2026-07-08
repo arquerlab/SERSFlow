@@ -35,6 +35,9 @@ def ensure_schema() -> None:
               matrix_job_id TEXT PRIMARY KEY,
               dataset_id TEXT NOT NULL,
               session_id TEXT NULL,
+              source_analysis_run_id TEXT NULL,
+              pipeline_id TEXT NULL,
+              pipeline_name TEXT NULL,
               pipeline_hash TEXT NOT NULL,
               pipeline_json TEXT NULL,
               subset_hash TEXT NOT NULL,
@@ -70,6 +73,18 @@ def ensure_schema() -> None:
             con.execute("ALTER TABLE matrix_jobs ADD COLUMN pipeline_json TEXT NULL")
         except Exception:
             pass
+        try:
+            con.execute("ALTER TABLE matrix_jobs ADD COLUMN source_analysis_run_id TEXT NULL")
+        except Exception:
+            pass
+        try:
+            con.execute("ALTER TABLE matrix_jobs ADD COLUMN pipeline_id TEXT NULL")
+        except Exception:
+            pass
+        try:
+            con.execute("ALTER TABLE matrix_jobs ADD COLUMN pipeline_name TEXT NULL")
+        except Exception:
+            pass
 
 
 @dataclass(frozen=True)
@@ -77,6 +92,9 @@ class MatrixJobRecord:
     matrix_job_id: str
     dataset_id: str
     session_id: str | None
+    source_analysis_run_id: str | None
+    pipeline_id: str | None
+    pipeline_name: str | None
     pipeline_hash: str
     pipeline_json: str | None
     subset_hash: str
@@ -109,6 +127,9 @@ def create_matrix_job_pending(
     *,
     dataset_id: str,
     session_id: str | None,
+    source_analysis_run_id: str | None = None,
+    pipeline_id: str | None = None,
+    pipeline_name: str | None = None,
     pipeline_hash: str,
     pipeline_json: str | None,
     subset_hash: str,
@@ -121,14 +142,18 @@ def create_matrix_job_pending(
         con.execute(
             """
             INSERT INTO matrix_jobs(
-              matrix_job_id, dataset_id, session_id, pipeline_hash, pipeline_json, subset_hash, up_to_step,
+              matrix_job_id, dataset_id, session_id, source_analysis_run_id, pipeline_id, pipeline_name,
+              pipeline_hash, pipeline_json, subset_hash, up_to_step,
               status, npz_path, manifest_json, created_at, finished_at, error
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 jid,
                 dataset_id,
                 session_id,
+                source_analysis_run_id,
+                pipeline_id,
+                pipeline_name,
                 pipeline_hash,
                 pipeline_json,
                 subset_hash,
@@ -183,6 +208,9 @@ def get_matrix_job(matrix_job_id: str) -> MatrixJobRecord | None:
             matrix_job_id=row["matrix_job_id"],
             dataset_id=row["dataset_id"],
             session_id=row["session_id"],
+            source_analysis_run_id=row["source_analysis_run_id"] if "source_analysis_run_id" in row.keys() else None,
+            pipeline_id=row["pipeline_id"] if "pipeline_id" in row.keys() else None,
+            pipeline_name=row["pipeline_name"] if "pipeline_name" in row.keys() else None,
             pipeline_hash=row["pipeline_hash"],
             pipeline_json=row["pipeline_json"],
             subset_hash=row["subset_hash"],
@@ -194,6 +222,54 @@ def get_matrix_job(matrix_job_id: str) -> MatrixJobRecord | None:
             finished_at=row["finished_at"],
             error=row["error"],
         )
+
+
+def list_matrix_jobs(*, dataset_id: str, limit: int = 200, offset: int = 0) -> list[MatrixJobRecord]:
+    ensure_schema()
+    lim = max(1, min(int(limit), 2000))
+    off = max(0, int(offset))
+    with connect() as con:
+        rows = con.execute(
+            """
+            SELECT * FROM matrix_jobs
+            WHERE dataset_id = ?
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (dataset_id, lim, off),
+        ).fetchall()
+        out: list[MatrixJobRecord] = []
+        for row in rows:
+            out.append(
+                MatrixJobRecord(
+                    matrix_job_id=row["matrix_job_id"],
+                    dataset_id=row["dataset_id"],
+                    session_id=row["session_id"],
+                    source_analysis_run_id=row["source_analysis_run_id"]
+                    if "source_analysis_run_id" in row.keys()
+                    else None,
+                    pipeline_id=row["pipeline_id"] if "pipeline_id" in row.keys() else None,
+                    pipeline_name=row["pipeline_name"] if "pipeline_name" in row.keys() else None,
+                    pipeline_hash=row["pipeline_hash"],
+                    pipeline_json=row["pipeline_json"],
+                    subset_hash=row["subset_hash"],
+                    up_to_step=row["up_to_step"],
+                    status=row["status"],
+                    npz_path=row["npz_path"],
+                    manifest_json=row["manifest_json"],
+                    created_at=row["created_at"],
+                    finished_at=row["finished_at"],
+                    error=row["error"],
+                )
+            )
+        return out
+
+
+def delete_matrix_job(matrix_job_id: str) -> bool:
+    ensure_schema()
+    with connect() as con:
+        cur = con.execute("DELETE FROM matrix_jobs WHERE matrix_job_id = ?", (matrix_job_id,))
+        return cur.rowcount > 0
 
 
 def create_explore_run(

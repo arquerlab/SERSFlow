@@ -15,6 +15,7 @@ export const pipelineStepSpecs: Record<
       {
         id: "zscore",
         label: "zscore",
+        // Compares local points to a neighborhood and flags extreme spikes.
         defaults: {
           threshold: 5.0,
           window: 5,
@@ -28,6 +29,7 @@ export const pipelineStepSpecs: Record<
       {
         id: "derivative",
         label: "derivative",
+        // Uses derivative magnitude to detect narrow spikes.
         defaults: {
           threshold: 3.0,
           window: 3,
@@ -40,12 +42,43 @@ export const pipelineStepSpecs: Record<
       },
     ],
     commonFields: [
-      { key: "threshold", kind: "number", label: "threshold" },
-      { key: "window", kind: "int", label: "window" },
-      { key: "interpolation", kind: "select", label: "interpolation", options: ["median", "linear", "cubic"] },
-      { key: "max_width", kind: "int", label: "max_width" },
-      { key: "min_intensity_ratio", kind: "number", label: "min_intensity_ratio" },
-      { key: "n_iterations", kind: "int", label: "n_iterations" },
+      {
+        key: "threshold",
+        kind: "number",
+        label: "threshold",
+        description: "Detection sensitivity. Higher values are less aggressive (fewer points flagged as cosmic rays).",
+      },
+      {
+        key: "window",
+        kind: "int",
+        label: "window",
+        description: "Neighborhood half-window (in points) used to compute local statistics for spike detection.",
+      },
+      {
+        key: "interpolation",
+        kind: "select",
+        label: "interpolation",
+        options: ["median", "linear", "cubic"],
+        description: "How flagged spike regions are replaced after detection.",
+      },
+      {
+        key: "max_width",
+        kind: "int",
+        label: "max_width",
+        description: "Maximum spike width (in points) to correct; wider features are less likely to be cosmic rays.",
+      },
+      {
+        key: "min_intensity_ratio",
+        kind: "number",
+        label: "min_intensity_ratio",
+        description: "Extra guardrail to avoid correcting broad peaks: spike intensity must exceed local baseline by this ratio.",
+      },
+      {
+        key: "n_iterations",
+        kind: "int",
+        label: "n_iterations",
+        description: "Number of detect→correct passes. More iterations can catch multiple spikes but may over-correct.",
+      },
     ],
   },
   baseline: {
@@ -128,12 +161,43 @@ export const pipelineStepSpecs: Record<
           interp: "linear",
         },
         fields: [
-          { key: "min_x", kind: "number", label: "min_x" },
-          { key: "max_x", kind: "number", label: "max_x" },
-          { key: "grid_mode", kind: "select", label: "grid_mode", options: ["step", "points"] },
-          { key: "step", kind: "number", label: "step" },
-          { key: "n_points", kind: "int", label: "n_points" },
-          { key: "interp", kind: "select", label: "interp", options: ["linear", "cubic"] },
+          { key: "min_x", kind: "number", label: "min_x", description: "Lower Raman-shift bound for the common grid." },
+          { key: "max_x", kind: "number", label: "max_x", description: "Upper Raman-shift bound for the common grid." },
+          {
+            key: "grid_mode",
+            kind: "select",
+            label: "grid_mode",
+            options: ["step", "points"],
+            description: "Choose to define the grid by a fixed step size (cm⁻¹) or by a fixed number of points.",
+          },
+          { key: "step", kind: "number", label: "step", description: "Grid spacing in cm⁻¹ when grid_mode=step." },
+          { key: "n_points", kind: "int", label: "n_points", description: "Number of points when grid_mode=points." },
+          { key: "interp", kind: "select", label: "interp", options: ["linear", "cubic"], description: "Interpolation method used during resampling." },
+        ],
+      },
+    ],
+  },
+
+  noise_savgol: {
+    methodLabel: "method",
+    methods: [
+      {
+        id: "savgol",
+        label: "Savitzky–Golay",
+        defaults: { window_length: 11, polyorder: 3 },
+        fields: [
+          {
+            key: "window_length",
+            kind: "int",
+            label: "window_length",
+            description: "Filter window length (in points). Must be an odd integer; larger values smooth more but can blur peaks.",
+          },
+          {
+            key: "polyorder",
+            kind: "int",
+            label: "polyorder",
+            description: "Polynomial order fitted within each window. Smaller values smooth more; must be < window_length.",
+          },
         ],
       },
     ],

@@ -55,13 +55,13 @@
               <label class="inline" title="Choose whether to skip extensions or only allow them">
                 Filter mode
                 <select id="extFilterMode">
-                  <option value="skip" selected>Skip</option>
-                  <option value="only">Only</option>
+                  <option value="skip">Skip</option>
+                  <option value="only" selected>Only</option>
                 </select>
               </label>
               <label class="inline" title="Comma-separated file extensions (without dots)">
                 Extensions
-                <input id="excludeExts" type="text" value="png,jpg,jpeg,gif,tif,tiff" style="width: 220px" />
+                <input id="excludeExts" type="text" value="wdf" style="width: 220px" />
               </label>
               <button id="uploadBtn" type="button">Upload</button>
               <button id="clearSelectionBtn" type="button">Clear selection</button>
@@ -90,25 +90,17 @@
               <div id="uploadedList"></div>
             </div>
             <div class="labels-editor-wrap card-inner">
-              <div class="section-title" style="margin: 0 0 8px">Edit labels</div>
-              <div class="uploads-meta" id="labelsEditorMeta" style="margin: 0 0 8px">
-                Select files or folders from the upload list to edit metadata.
+              <div class="labels-editor-header">
+                <div class="section-title" style="margin: 0">Edit labels</div>
+                <button
+                  type="button"
+                  class="param-help"
+                  title="Select files/folders, edit current metadata or add new labels, then click Save/Apply. Empty cells are stored as JSON null. Values accept JSON literals (e.g. 2, true, &quot;text&quot;) or plain text.&#10;&#10;Some labels are loaded automatically by a deterministic algorithm. Click Reload Auto Labels to reload and overwrite current labels. Labels autoloaded: sample, gas, ph, current_density_A_cm2 (A·cm⁻²), potential_V (V), potential_ref (VRHE, OCP, or V when only a plain …V token was parsed), laser_nm, laser_power_pct, electrolyte, concentration_M (molar)."
+                  aria-label="Edit labels help"
+                >
+                  ?
+                </button>
               </div>
-              <p class="hint" style="margin: 0 0 8px">
-                Select one or more files/folders, edit values, then <b>Save</b> (bulk apply). Empty cells are stored as JSON
-                <code>null</code>. Values accept JSON literals (e.g. <code>2</code>, <code>true</code>,
-                <code>"text"</code>) or plain text.
-              </p>
-              <p class="hint" style="margin: 0 0 8px">
-                <b>Standard keys</b> (always use these names):
-                <code>sample</code>, <code>gas</code>, <code>ph</code>,
-                <code>current_density_A_cm2</code> (A·cm⁻²),
-                <code>potential_V</code> (V), <code>potential_ref</code> (<code>VRHE</code>,
-                <code>OCP</code>, or <code>V</code> when only a plain “…V” token was parsed),
-                <code>laser_nm</code>, <code>laser_power_pct</code>, <code>electrolyte</code>,
-                <code>concentration_M</code> (molar).
-                Use <b>Add custom row</b> only for rare extra fields.
-              </p>
               <div id="labelsEditor"></div>
             </div>
           </div>
@@ -137,8 +129,8 @@
           <div class="hint">
             Select files in the left column, then choose a plotting action.
           </div>
-          <div class="raw-layout">
-            <aside class="raw-left">
+          <div class="raw-layout resizable-raw-split" id="rawLayout">
+            <aside class="raw-left" id="rawLeft">
               <div class="raw-selectors card-inner">
                 <div class="row raw-selectors-head">
                   <div class="section-title" style="margin: 0">Files to plot</div>
@@ -147,7 +139,8 @@
                 <div id="plotFileSelectors" class="selectors"></div>
               </div>
             </aside>
-            <main class="raw-right">
+            <div id="rawSplitHandle" class="column-split-handle" role="separator" aria-orientation="vertical"></div>
+            <main class="raw-right" id="rawRight">
               <div class="raw-plot card-inner">
                 <div class="section-title">Plot</div>
                 <div id="plot" class="plot"></div>

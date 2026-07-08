@@ -13,6 +13,7 @@ from sersflow.api.schemas.sessions import SubsetStrategy
 _MATRIX_COHORT = SubsetStrategy(kind="all")
 from sersflow.api.services.sessions_service import resolve_subset_indices
 from sersflow.api.services.reference_runtime import filter_reference_spectra, hydrate_reference_transforms
+from sersflow.api.services.pipeline_qc import apply_pipeline_qc_filters, pipeline_without_qc_steps
 from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline_parallel_no_cache
 from sersflow.infra.datasets_store import get_dataset_internal
@@ -62,6 +63,14 @@ def execute_matrix_export_job(matrix_job_id: str) -> None:
 
         indices = resolve_subset_indices(dataset=ds, subset=_MATRIX_COHORT, pipeline=pipeline)
         refs = filter_reference_spectra([ds.spectra[i] for i in indices], pipeline)
+        refs, _qc_report = apply_pipeline_qc_filters(
+            dataset=ds,
+            pipeline=pipeline,
+            refs=refs,
+            cache_namespace=ns,
+            strict=True,
+        )
+        pipeline = pipeline_without_qc_steps(pipeline)
         if len(refs) > _max_spectra():
             raise ValueError(f"too many spectra (max {_max_spectra()})")
 

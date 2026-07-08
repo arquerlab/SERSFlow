@@ -8,7 +8,9 @@ import {
   savePrepareUiPrefs,
 } from "./lib/uiPersistence";
 import { PlotlyWrapper } from "./legacy-wrappers/PlotlyWrapper";
-import { SpectrumCheckboxListWrapper, type SpectrumCheckboxListHandle } from "./legacy-wrappers/SpectrumCheckboxListWrapper";
+import { UploadDatasetPicker, type UploadDatasetPickerHandle } from "./legacy-wrappers/UploadDatasetPicker";
+import { ResizableSplit } from "./components/ResizableSplit";
+import { ResizableVerticalSplit } from "./components/ResizableVerticalSplit";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   clearAllDatasets,
@@ -97,8 +99,6 @@ import { addSavedSubset, clearSavedSubsets, deleteSavedSubset, loadSavedSubsets,
 import {
   type EditorStep,
   type FieldSpec,
-  inputSelectValue,
-  parseInputSelectValue,
   sanitizeStepInputs,
 } from "./preprocess/editorTypes";
 import { pipelineOptionLabel } from "./preprocess/labels";
@@ -126,7 +126,11 @@ import {
   referenceTransformToApiParams,
 } from "./preprocess/referenceTransformUtils";
 import { runExplorePlot as runExplorePlotCore } from "./preprocess/explorePlotRunner";
+import { LowSignalFilterEditor } from "./preprocess/LowSignalFilterEditor";
+import { OutlierDetectionEditor } from "./preprocess/OutlierDetectionEditor";
 import { AnalyzeContextBanner } from "./preprocess/components/AnalyzeContextBanner";
+import { PipelineCard } from "./preprocess/components/PipelineCard";
+import { PipelineStepList } from "./preprocess/components/PipelineStepList";
 import { DatasetPicker } from "./components/DatasetPicker";
 
 function ParamLabel({ label, description }: { label: string; description?: string }) {
@@ -157,7 +161,7 @@ export default function PreprocessingWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const preparePrefs = useMemo(() => loadPrepareUiPrefs(), []);
   const queryClient = useQueryClient();
-  const uploadsListRef = useRef<SpectrumCheckboxListHandle>(null);
+  const uploadsListRef = useRef<UploadDatasetPickerHandle>(null);
   const datasetImportInputRef = useRef<HTMLInputElement | null>(null);
   const pipelineImportInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedUploads, setSelectedUploads] = useState<string[]>([]);
@@ -441,6 +445,12 @@ export default function PreprocessingWorkspace() {
   });
 
   const selectedStep = steps.find((s) => s.id === selectedStepId) ?? null;
+
+  useEffect(() => {
+    if (!selectedStepId && steps.length > 0) {
+      setSelectedStepId(steps[0]!.id);
+    }
+  }, [steps, selectedStepId]);
 
   function setSelectedStepParams(nextParams: Record<string, any>) {
     if (!selectedStep) return;
@@ -762,6 +772,60 @@ export default function PreprocessingWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRun, mode, sessionId, pipelineDepForAutoRun, plotView, subsetIndices.join(",")]);
 
+  type StepCategory = "Data Preparation" | "Preprocessing" | "Transformation" | "Feature Extraction";
+  type StepPickerItem = {
+    category: StepCategory;
+    name: string;
+    label: string;
+    description: string;
+  };
+
+  const stepPicker: StepPickerItem[] = [
+    // Data Preparation
+    { category: "Data Preparation", name: "crop", label: "Crop", description: "Restrict spectra to a selected Raman-shift range." },
+    {
+      category: "Data Preparation",
+      name: "low_signal_filter",
+      label: "Low-Signal Filter",
+      description:
+        "Detect and exclude laser-off, blocked-beam, or abnormally low-count spectra using configurable intensity metrics and thresholds.",
+    },
+    {
+      category: "Data Preparation",
+      name: "outlier_detection",
+      label: "Outlier Detection",
+      description:
+        "Detect anomalous whole spectra using interpretable methods (correlation / PCA-based), with options to flag or exclude.",
+    },
+
+    // Preprocessing
+    { category: "Preprocessing", name: "cosmic_ray_removal", label: "Cosmic Ray Removal", description: "Detect and correct narrow spike artifacts." },
+    { category: "Preprocessing", name: "baseline", label: "Baseline Correction", description: "Estimate and subtract fluorescence or background contributions." },
+    { category: "Preprocessing", name: "noise_savgol", label: "Smoothing", description: "Reduce high-frequency spectral noise." },
+    {
+      category: "Preprocessing",
+      name: "align_resample",
+      label: "Alignment & Resampling",
+      description: "Align spectral features and interpolate spectra onto a common Raman-shift axis.",
+    },
+
+    // Transformation
+    { category: "Transformation", name: "normalize", label: "Normalization", description: "Transform spectral intensity scale (vector/area/peak/SNV/min–max, etc.)." },
+    { category: "Transformation", name: "spectrum_derivative", label: "Derivative", description: "Calculate first- or higher-order spectral derivatives." },
+    {
+      category: "Transformation",
+      name: "reference_transform",
+      label: "Reference Transformation",
+      description: "Transform each spectrum relative to a selected reference spectrum (difference/ratio/log-ratio).",
+    },
+
+    // Feature Extraction
+    { category: "Feature Extraction", name: "spectral_intensities", label: "Peak Identification", description: "Detect and characterize spectral peaks (intensity probes for analysis columns)." },
+    { category: "Feature Extraction", name: "fitting", label: "Peak Fitting", description: "Fit analytical peak models and extract fitted parameters." },
+    { category: "Feature Extraction", name: "spectral_integrations", label: "Peak Integration", description: "Calculate integrated intensity over selected spectral regions or fitted peaks." },
+    { category: "Feature Extraction", name: "feature_operations", label: "Metric Calculation", description: "Create derived metrics by applying mathematical expressions and operations to previously extracted features." },
+  ];
+
   function addStepTemplate(name: string) {
     const defaultBaseline = defaultMethodForCategory(baselineCatalog, "whittaker") ?? baselineCatalog.methods[0];
     const templates: Record<string, any> = {
@@ -822,6 +886,16 @@ export default function PreprocessingWorkspace() {
         enabled: true,
         params: defaultReferenceTransformParams() as unknown as Record<string, unknown>,
       },
+      low_signal_filter: {
+        name: "low_signal_filter",
+        enabled: true,
+        params: { metric: "median", threshold: 0, percentile: 10, action: "exclude" },
+      },
+      outlier_detection: {
+        name: "outlier_detection",
+        enabled: true,
+        params: { method: "correlation_to_median", threshold: 0.98, action: "exclude", pca_scaler: "none", n_components: 8 },
+      },
     };
     const t = templates[name] ?? { name, enabled: true, params: {} };
     const id = crypto.randomUUID();
@@ -833,7 +907,24 @@ export default function PreprocessingWorkspace() {
   return (
     <div className="preprocess-grid">
       <div className="preprocess-top card">
-        <div className="section-title">Pipeline &amp; preview</div>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: "10px" }}>
+          <div className="section-title" style={{ margin: 0 }}>
+            Pipeline &amp; preview
+          </div>
+          <button
+            type="button"
+            className="param-help"
+            aria-label="Pipeline and preview help"
+            title={
+              "Manage your datasets\n" +
+              "- Select you active dataset from the database\n" +
+              "- Restore files from old dataset to active uploaded files to edit metadata\n" +
+              "- Import new dataset one or export your active one"
+            }
+          >
+            ?
+          </button>
+        </div>
         <p className="hint" style={{ margin: "0 0 10px" }}>
           Choose a <b>Dataset</b> below. The random subset here is only for <b>preview plots</b>. Batch feature extraction and
           multivariate stats use the <b>full dataset</b> from <b>Features &amp; statistics</b> after you save the pipeline.
@@ -894,62 +985,73 @@ export default function PreprocessingWorkspace() {
             onChange={(e) => handleDatasetImportFile(e.currentTarget.files?.[0]).catch((err) => setLastError(String(err?.message ?? err)))}
           />
         </div>
-        <div className="row">
-          <div className="hint" style={{ marginLeft: "8px" }}>
-            Session: {sessionId ?? "—"}
+        <div className="row" style={{ alignItems: "flex-start", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
+          <div className="row" style={{ flexWrap: "wrap", gap: "10px", alignItems: "center" }}>
+            <div className="hint" style={{ marginLeft: "8px" }}>
+              Session: {sessionId ?? "—"}
+            </div>
+            <div className="hint" style={{ marginLeft: "8px" }}>
+              Subset: {subsetSource} | Seed: {subsetSeed} {subsetLocked ? "| Locked" : ""}
+            </div>
+            <label className="inline">
+              Mode
+              <select value={mode} onChange={(e) => setMode(String(e.target.value) === "batch" ? "batch" : "explore")}>
+                <option value="explore">Explore</option>
+                <option value="batch">Batch</option>
+              </select>
+            </label>
+            <label className="inline">
+              Plot mode
+              <select value={plotMode} onChange={(e) => setPlotMode(e.target.value as any)}>
+                <option value="overlay">Overlay</option>
+                <option value="stack">Stack</option>
+              </select>
+            </label>
+            <label className="inline">
+              Stack separation
+              <input type="number" value={sep} onChange={(e) => setSep(Number(e.target.value || 0))} />
+            </label>
+            <label className="inline">
+              <input type="checkbox" checked={ghost} onChange={(e) => setGhost(e.target.checked)} />
+              Ghost overlay
+            </label>
+            <label className="inline">
+              <input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} disabled={mode !== "explore"} />
+              Auto-run
+            </label>
+            {mode === "explore" ? (
+              <button
+                type="button"
+                onClick={() => createRandomSubset({ labelPrefix: "Random" })}
+                disabled={!sessionId || !datasetId || subsetLocked}
+              >
+                Create subset
+              </button>
+            ) : null}
+            {mode === "explore" ? (
+              <button
+                type="button"
+                onClick={() => createRandomSubset({ labelPrefix: "Random" })}
+                disabled={!sessionId || !datasetId || subsetLocked}
+              >
+                Resample
+              </button>
+            ) : null}
+            {mode === "explore" ? (
+              <button type="button" onClick={() => setSubsetLocked((x) => !x)} className={subsetLocked ? "danger" : ""}>
+                {subsetLocked ? "Unlock subset" : "Lock subset"}
+              </button>
+            ) : null}
           </div>
-          <div className="hint" style={{ marginLeft: "8px" }}>
-            Subset: {subsetSource} | Seed: {subsetSeed} {subsetLocked ? "| Locked" : ""}
-          </div>
-          <label className="inline">
-            Mode
-            <select value={mode} onChange={(e) => setMode(String(e.target.value) === "batch" ? "batch" : "explore")}>
-              <option value="explore">Explore</option>
-              <option value="batch">Batch</option>
-            </select>
-          </label>
-          <label className="inline">
-            Plot mode
-            <select value={plotMode} onChange={(e) => setPlotMode(e.target.value as any)}>
-              <option value="overlay">Overlay</option>
-              <option value="stack">Stack</option>
-            </select>
-          </label>
-          <label className="inline">
-            Stack separation
-            <input type="number" value={sep} onChange={(e) => setSep(Number(e.target.value || 0))} />
-          </label>
-          <label className="inline">
-            <input type="checkbox" checked={ghost} onChange={(e) => setGhost(e.target.checked)} />
-            Ghost overlay
-          </label>
-          <label className="inline">
-            <input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} disabled={mode !== "explore"} />
-            Auto-run
-          </label>
-          {mode === "explore" ? (
-            <button
-              type="button"
-              onClick={() => createRandomSubset({ labelPrefix: "Random" })}
-              disabled={!sessionId || !datasetId || subsetLocked}
-            >
-              Create subset
-            </button>
-          ) : null}
-          {mode === "explore" ? (
-            <button
-              type="button"
-              onClick={() => createRandomSubset({ labelPrefix: "Random" })}
-              disabled={!sessionId || !datasetId || subsetLocked}
-            >
-              Resample
-            </button>
-          ) : null}
-          {mode === "explore" ? (
-            <button type="button" onClick={() => setSubsetLocked((x) => !x)} className={subsetLocked ? "danger" : ""}>
-              {subsetLocked ? "Unlock subset" : "Lock subset"}
-            </button>
-          ) : null}
+
+          <button
+            type="button"
+            className="param-help"
+            aria-label="Preview options help"
+            title={"Preview options\n- Select plotting style\n- Create subset to preview your data"}
+          >
+            ?
+          </button>
         </div>
         {lastError ? (
           <div className="err" style={{ marginTop: "10px" }}>
@@ -963,9 +1065,58 @@ export default function PreprocessingWorkspace() {
         ) : null}
       </div>
 
+      <div className="preprocess-body">
+        <ResizableVerticalSplit
+          storageKey="sersflow:prepare-body-h"
+          defaultHeight={560}
+          minHeight={260}
+          maxHeight={1400}
+          allowPageScroll
+          top={
+            <div className="preprocess-split-row">
+              <ResizableSplit
+                storageKey="sersflow:prepare-sidebar-w"
+                defaultWidth={400}
+                minWidth={280}
+                maxWidth={720}
+                left={
       <div className="preprocess-left card">
-        <div className="section-title">Uploads → Dataset</div>
-        <SpectrumCheckboxListWrapper ref={uploadsListRef} onSelectionChange={setSelectedUploads} />
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: "10px" }}>
+          <div className="section-title" style={{ margin: 0 }}>
+            Create new dataset
+          </div>
+          <button
+            type="button"
+            className="param-help"
+            aria-label="Create new dataset help"
+            title={
+              "Create new dataset\n" +
+              "- Select within your active uploaded files (add filters if needed) and create your own dataset for latter analysis"
+            }
+          >
+            ?
+          </button>
+        </div>
+        <div className="row" style={{ marginTop: "8px", alignItems: "flex-end", flexWrap: "wrap", gap: "10px" }}>
+          <button
+            type="button"
+            onClick={() => createFromUploadsM.mutate({ paths: selectedUploads, name: newDatasetName })}
+            disabled={selectedUploads.length === 0 || createFromUploadsM.isPending}
+          >
+            {createFromUploadsM.isPending ? "Creating…" : "Create dataset"}
+          </button>
+          <label className="inline" style={{ margin: 0, display: "flex", width: "100%", maxWidth: "420px" }}>
+            Dataset name (optional)
+            <input
+              type="text"
+              value={newDatasetName}
+              onChange={(e) => setNewDatasetName(e.target.value)}
+              placeholder="Leave empty for an auto name (Unnamed dataset …)"
+              style={{ flex: 1, minWidth: "120px" }}
+            />
+          </label>
+        </div>
+        <UploadDatasetPicker ref={uploadsListRef} onSelectionChange={setSelectedUploads} />
         <div className="hint">
           Selected uploads: {selectedUploads.length}. You can create a dataset from a single file or many.
         </div>
@@ -974,99 +1125,17 @@ export default function PreprocessingWorkspace() {
             One file is enough. Series or map files expand to multiple spectra inside the dataset.
           </div>
         ) : null}
-        <label className="inline" style={{ marginTop: "8px", display: "flex", width: "100%", maxWidth: "420px" }}>
-          Dataset name (optional)
-          <input
-            type="text"
-            value={newDatasetName}
-            onChange={(e) => setNewDatasetName(e.target.value)}
-            placeholder="Leave empty for an auto name (Unnamed dataset …)"
-            style={{ flex: 1, minWidth: "120px" }}
-          />
-        </label>
         <div className="hint" style={{ marginTop: "4px" }}>
           Shown in the dataset list. If you leave this blank, the server picks a default name.
-        </div>
-        <div className="row" style={{ marginTop: "10px" }}>
-          <button
-            type="button"
-            onClick={() => createFromUploadsM.mutate({ paths: selectedUploads, name: newDatasetName })}
-            disabled={selectedUploads.length === 0 || createFromUploadsM.isPending}
-          >
-            {createFromUploadsM.isPending ? "Creating…" : "Create dataset from selected (1+ files)"}
-          </button>
         </div>
         {datasetId && datasetQ.data?.dataset ? (
           <div className="hint" style={{ marginTop: "8px" }}>
             Dataset spectra: {datasetQ.data.dataset.spectra?.length ?? 0}
           </div>
         ) : null}
-
-        <div className="section-title" style={{ marginTop: "12px" }}>
-          Subsets
-        </div>
-        <div className="row" style={{ marginBottom: "8px" }}>
-          <button
-            type="button"
-            className="mini danger"
-            onClick={() => {
-              if (!datasetId) return;
-              clearSavedSubsets(datasetId);
-              setSavedSubsets([]);
-              setActiveSubsetId(null);
-              setSubsetIndices([]);
-              setSubsetSource("—");
-            }}
-            disabled={!datasetId || savedSubsets.length === 0}
-          >
-            Clear all subsets
-          </button>
-        </div>
-        <div style={{ display: "grid", gap: "6px" }}>
-          {savedSubsets.length ? (
-            savedSubsets
-              .slice()
-              .sort((a, b) => b.createdAt - a.createdAt)
-              .map((s) => (
-                <div key={s.id} className="card-inner" style={{ display: "grid", gap: "6px" }}>
-                  <div className="row" style={{ justifyContent: "space-between" }}>
-                    <button
-                      type="button"
-                      className="mini"
-                      onClick={() => applySavedSubset(s)}
-                      style={{ fontWeight: s.id === activeSubsetId ? 900 : 700 }}
-                      disabled={!sessionId}
-                    >
-                      {s.label}
-                    </button>
-                    <button
-                      type="button"
-                      className="mini danger"
-                      onClick={() => {
-                        if (!datasetId) return;
-                        const next = deleteSavedSubset(datasetId, s.id);
-                        setSavedSubsets(next);
-                        if (activeSubsetId === s.id) {
-                          setActiveSubsetId(null);
-                          setSubsetSource("—");
-                          setSubsetIndices([]);
-                        }
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                  <div className="hint">
-                    size={s.size} seed={s.seed ?? "—"}
-                  </div>
-                </div>
-              ))
-          ) : (
-            <div className="hint">No saved subsets yet. Create one to start plotting.</div>
-          )}
-        </div>
       </div>
-
+                }
+                right={
       <div className="preprocess-center card">
         <div className="section-title">Plot</div>
         {explorePlotStatus ? (
@@ -1135,52 +1204,105 @@ export default function PreprocessingWorkspace() {
           ghostOverlayEnabled={ghost}
           className="plot"
         />
-      </div>
 
-      <div className="preprocess-bottom card" id="pipeline-library-section">
-        <div className="section-title">Pipeline</div>
-        <div className="row">
-          <button type="button" className="mini" onClick={() => addStepTemplate("noise_savgol")}>
-            + noise
-          </button>
-          <button type="button" className="mini" onClick={() => addStepTemplate("cosmic_ray_removal")}>
-            + cosmic
-          </button>
-          <button type="button" className="mini" onClick={() => addStepTemplate("baseline")}>
-            + baseline
-          </button>
-          <button type="button" className="mini" onClick={() => addStepTemplate("crop")}>
-            + crop
-          </button>
+        <div className="section-title" style={{ marginTop: "12px" }}>
+          Subsets
+        </div>
+        <div className="row" style={{ marginBottom: "8px" }}>
           <button
             type="button"
-            className="mini"
-            onClick={() => addStepTemplate("align_resample")}
-            title="Resample onto a uniform Raman shift grid (use after crop for matrix export / spectrum PCA)"
+            className="mini danger"
+            onClick={() => {
+              if (!datasetId) return;
+              clearSavedSubsets(datasetId);
+              setSavedSubsets([]);
+              setActiveSubsetId(null);
+              setSubsetIndices([]);
+              setSubsetSource("—");
+            }}
+            disabled={!datasetId || savedSubsets.length === 0}
           >
-            + resample
+            Clear all subsets
           </button>
-          <button type="button" className="mini" onClick={() => addStepTemplate("normalize")}>
-            + norm
-          </button>
-          <button type="button" className="mini" onClick={() => addStepTemplate("spectrum_derivative")} title="Calculate derivative of the spectrum">
-            + derivative
-          </button>
-          <button type="button" className="mini" onClick={() => addStepTemplate("reference_transform")} title="Subtract or divide by a selected reference spectrum">
-            + reference
-          </button>
-          <button type="button" className="mini" onClick={() => addStepTemplate("fitting")}>
-            + fit
-          </button>
-          <button type="button" className="mini" onClick={() => addStepTemplate("spectral_intensities")} title="Intensity probes for analysis (I_* columns)">
-            + intensities
-          </button>
-          <button type="button" className="mini" onClick={() => addStepTemplate("spectral_integrations")} title="Integration windows for analysis (area_* columns)">
-            + integration
-          </button>
-          <button type="button" className="mini" onClick={() => addStepTemplate("feature_operations")} title="Derived feature formulas from previous feature columns">
-            + feature ops
-          </button>
+        </div>
+        <div className="subset-tiles">
+          {savedSubsets.length ? (
+            savedSubsets
+              .slice()
+              .sort((a, b) => b.createdAt - a.createdAt)
+              .map((s) => (
+                <div key={s.id} className="card-inner subset-tile">
+                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                    <button
+                      type="button"
+                      className="mini"
+                      onClick={() => applySavedSubset(s)}
+                      style={{ fontWeight: s.id === activeSubsetId ? 900 : 700, maxWidth: "100%" }}
+                      disabled={!sessionId}
+                      title={s.label}
+                    >
+                      <span style={{ display: "inline-block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {s.label}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="mini danger"
+                      onClick={() => {
+                        if (!datasetId) return;
+                        const next = deleteSavedSubset(datasetId, s.id);
+                        setSavedSubsets(next);
+                        if (activeSubsetId === s.id) {
+                          setActiveSubsetId(null);
+                          setSubsetSource("—");
+                          setSubsetIndices([]);
+                        }
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                  <div className="hint">
+                    size={s.size} seed={s.seed ?? "—"}
+                  </div>
+                </div>
+              ))
+          ) : (
+            <div className="hint">No saved subsets yet. Create one to start plotting.</div>
+          )}
+        </div>
+      </div>
+                }
+              />
+            </div>
+          }
+          bottom={
+            <div className="preprocess-bottom card" id="pipeline-library-section">
+        <div className="section-title">Pipeline</div>
+        <div className="pipeline-step-picker" role="group" aria-label="Add pipeline step">
+          {(["Data Preparation", "Preprocessing", "Transformation", "Feature Extraction"] as StepCategory[]).map((cat) => {
+            const items = stepPicker.filter((x) => x.category === cat);
+            return (
+              <div key={cat} className="pipeline-step-picker-col">
+                <div className="pipeline-step-picker-title">{cat}</div>
+                <div className="pipeline-step-picker-items">
+                  {items.map((it) => (
+                    <button
+                      key={`${cat}:${it.name}`}
+                      type="button"
+                      className="mini pipeline-step-picker-btn"
+                      onClick={() => addStepTemplate(it.name)}
+                      title={it.description}
+                    >
+                      + {it.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="row" style={{ marginTop: "10px" }}>
           <button type="button" onClick={() => savePipelineM.mutate(buildPipeline())} disabled={!sessionId || savePipelineM.isPending}>
             {savePipelineM.isPending ? "Saving…" : "Save pipeline"}
           </button>
@@ -1322,104 +1444,19 @@ export default function PreprocessingWorkspace() {
           saving to the library, or <b>Update selected</b> to change an existing library entry.
         </div>
 
-        <div style={{ marginTop: "10px", display: "grid", gap: "8px" }}>
-          {steps.map((st, idx) => (
-            <div key={st.id} className="card-inner" style={{ display: "grid", gap: "8px" }}>
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <button type="button" className="mini" onClick={() => setSelectedStepId(st.id)} style={{ fontWeight: st.id === selectedStepId ? 900 : 700 }}>
-                  {idx + 1}. {st.name}
-                </button>
-                <div className="row" style={{ gap: "6px" }}>
-                  <select
-                    className="mini"
-                    title="Input XY for this step"
-                    value={inputSelectValue(st)}
-                    onChange={(e) => {
-                      const v = String(e.target.value || "");
-                      const parsed = parseInputSelectValue(v);
-                      setSteps((prev) =>
-                        sanitizeStepInputs(
-                          prev.map((p) => (p.id === st.id ? { ...p, ...parsed } : p))
-                        )
-                      );
-                      setPipelineVersion((vv) => vv + 1);
-                    }}
-                  >
-                    <option value="previous">Previous</option>
-                    <option value="initial">Initial</option>
-                    {steps.slice(0, idx).map((prev, i) => (
-                      <option key={prev.id} value={`after:${prev.id}`}>
-                        After step {i + 1}: {prev.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="mini"
-                    onClick={() => {
-                      setSteps((prev) => {
-                        const i = prev.findIndex((p) => p.id === st.id);
-                        if (i <= 0) return prev;
-                        const next = prev.slice();
-                        const [it] = next.splice(i, 1);
-                        next.splice(i - 1, 0, it);
-                        return sanitizeStepInputs(next);
-                      });
-                      setPipelineVersion((v) => v + 1);
-                    }}
-                    disabled={idx === 0}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    className="mini"
-                    onClick={() => {
-                      setSteps((prev) => {
-                        const i = prev.findIndex((p) => p.id === st.id);
-                        if (i < 0 || i === prev.length - 1) return prev;
-                        const next = prev.slice();
-                        const [it] = next.splice(i, 1);
-                        next.splice(i + 1, 0, it);
-                        return sanitizeStepInputs(next);
-                      });
-                      setPipelineVersion((v) => v + 1);
-                    }}
-                    disabled={idx === steps.length - 1}
-                  >
-                    ↓
-                  </button>
-                  <button
-                    type="button"
-                    className="mini"
-                    onClick={() => {
-                      setSteps((prev) => prev.map((p) => (p.id === st.id ? { ...p, enabled: !p.enabled } : p)));
-                      setPipelineVersion((v) => v + 1);
-                    }}
-                  >
-                    {st.enabled ? "ON" : "OFF"}
-                  </button>
-                  <button
-                    type="button"
-                    className="mini danger"
-                    onClick={() => {
-                      setSteps((prev) => sanitizeStepInputs(prev.filter((p) => p.id !== st.id)));
-                      if (selectedStepId === st.id) setSelectedStepId(null);
-                      setPipelineVersion((v) => v + 1);
-                    }}
-                  >
-                    Del
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="section-title" style={{ marginTop: "12px" }}>
-          Parameters
-        </div>
-        {selectedStep ? (
+        <PipelineCard
+          stepList={
+            <PipelineStepList
+              steps={steps}
+              selectedStepId={selectedStepId}
+              onSelectStep={setSelectedStepId}
+              onStepsChange={setSteps}
+              onPipelineVersionBump={() => setPipelineVersion((v) => v + 1)}
+              onSelectedStepCleared={() => setSelectedStepId(null)}
+            />
+          }
+          paramsPanel={
+            selectedStep ? (
           <div className="card-inner" style={{ display: "grid", gap: "8px" }}>
             <div className="hint">Selected: {selectedStep.name}</div>
             {selectedStep.name === "fitting" ? (
@@ -1714,6 +1751,32 @@ export default function PreprocessingWorkspace() {
                   );
                 }
 
+                if (selectedStep.name === "low_signal_filter") {
+                  return (
+                    <LowSignalFilterEditor
+                      sessionId={sessionId ?? ""}
+                      stepId={selectedStep.id}
+                      params={selectedStep.params ?? {}}
+                      onChange={(next) => setSelectedStepParams(next)}
+                      ensurePipelineSaved={ensurePipelineSaved}
+                      datasetSpectra={datasetQ.data?.dataset?.spectra ?? []}
+                    />
+                  );
+                }
+
+                if (selectedStep.name === "outlier_detection") {
+                  return (
+                    <OutlierDetectionEditor
+                      sessionId={sessionId ?? ""}
+                      stepId={selectedStep.id}
+                      params={selectedStep.params ?? {}}
+                      onChange={(next) => setSelectedStepParams(next)}
+                      ensurePipelineSaved={ensurePipelineSaved}
+                      datasetSpectra={datasetQ.data?.dataset?.spectra ?? []}
+                    />
+                  );
+                }
+
                 if (selectedStep.name === "baseline") {
                   const rawMethod = String((selectedStep.params as any)?.method || "");
                   const p = normalizeBaselineParams(selectedStep.params, baselineCatalog);
@@ -1907,7 +1970,7 @@ export default function PreprocessingWorkspace() {
                 return (
                   <>
                     <label className="inline" style={{ justifyContent: "space-between" }}>
-                      method
+                      <ParamLabel label={spec.methodLabel || "method"} description={`Select the ${spec.methodLabel || "method"} variant for this step.`} />
                       <select
                         value={method}
                         onChange={(e) => {
@@ -2012,13 +2075,13 @@ export default function PreprocessingWorkspace() {
               })()}
             </div>
           </div>
-        ) : (
-          <div className="hint">Select a step to edit parameters.</div>
-        )}
-
-        <div className="section-title" style={{ marginTop: "12px" }}>
-          Run
-        </div>
+            ) : (
+              <div className="hint">Select a step on the left to edit parameters.</div>
+            )
+          }
+          footer={
+            <>
+        <div className="section-title">Run</div>
         <div className="row">
           <button
             type="button"
@@ -2064,6 +2127,12 @@ export default function PreprocessingWorkspace() {
             </div>
           )
         ) : null}
+            </>
+          }
+        />
+            </div>
+          }
+        />
       </div>
     </div>
   );

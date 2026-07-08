@@ -71,6 +71,29 @@ export async function plotlyDivToPngBytes(
   return dataUrlToBytes(dataUrl);
 }
 
+export async function plotlyDivToSvgText(
+  plotDiv: HTMLElement,
+  opts?: { width?: number; height?: number; scale?: number; background?: string }
+): Promise<string> {
+  // Plotly.toImage('svg') returns a `data:image/svg+xml` URL.
+  const dataUrl = (await Plotly.toImage(plotDiv as any, {
+    format: "svg",
+    width: opts?.width ?? 1200,
+    height: opts?.height,
+    // Plotly seems to ignore scale for SVG, but keep the option for parity.
+    scale: opts?.scale ?? 1,
+    setBackground: opts?.background ?? "white",
+  })) as string;
+  const idx = dataUrl.indexOf(",");
+  const body = idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl;
+  // For SVG, Plotly currently URI-encodes the payload (not base64).
+  try {
+    return decodeURIComponent(body);
+  } catch {
+    return body;
+  }
+}
+
 export type ZipInput = { path: string; bytes: Uint8Array | string };
 
 export function zipFiles(inputs: ZipInput[]): Blob {
