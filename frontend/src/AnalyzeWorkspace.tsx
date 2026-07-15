@@ -7,6 +7,7 @@ import {
   loadAnalyzeUiPrefs,
   saveAnalyzeUiPrefs,
 } from "./lib/uiPersistence";
+import { CommaSeparatedIntListInput } from "./lib/draftInputs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PlotlyWrapper, type PlotlyFigure } from "./legacy-wrappers/PlotlyWrapper";
 import { ResizableSplit } from "./components/ResizableSplit";
@@ -2227,18 +2228,7 @@ export default function AnalyzeWorkspace() {
                   </label>
                   <label className="inline" title="Comma-separated list, e.g. 2,3,4,5,6">
                     Pairplot PCs
-                    <input
-                      type="text"
-                      value={pairplotPcs.join(",")}
-                      onChange={(e) => {
-                        const pcs = e.target.value
-                          .split(",")
-                          .map((x) => Number(x.trim()))
-                          .filter((n) => Number.isFinite(n) && n >= 1)
-                          .map((n) => Math.floor(n));
-                        setPairplotPcs(pcs.length ? pcs : []);
-                      }}
-                    />
+                    <CommaSeparatedIntListInput value={pairplotPcs} onChange={setPairplotPcs} />
                   </label>
                   <label className="inline" title="Optional: color the scores scatter/pairplot by a numeric metadata column.">
                     Color by (metadata)
@@ -2263,17 +2253,9 @@ export default function AnalyzeWorkspace() {
                 <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "flex-end" }}>
                   <label className="inline" title="Comma-separated list of PCs. Each PC will produce one plot: PC vs metadata.">
                     PCs
-                    <input
-                      type="text"
-                      value={pcVsMetaPcs.join(",")}
-                      onChange={(e) => {
-                        const pcs = e.target.value
-                          .split(",")
-                          .map((x) => Number(x.trim()))
-                          .filter((n) => Number.isFinite(n) && n >= 1)
-                          .map((n) => Math.floor(n));
-                        setPcVsMetaPcs(pcs.length ? pcs : []);
-                      }}
+                    <CommaSeparatedIntListInput
+                      value={pcVsMetaPcs}
+                      onChange={setPcVsMetaPcs}
                       placeholder="e.g. 1,2,3"
                     />
                   </label>
@@ -3253,18 +3235,7 @@ export default function AnalyzeWorkspace() {
                   </label>
                   <label className="inline" title="Comma-separated list, e.g. 2,3,4,5,6">
                     Pairplot PCs
-                    <input
-                      type="text"
-                      value={pairplotPcs.join(",")}
-                      onChange={(e) => {
-                        const pcs = e.target.value
-                          .split(",")
-                          .map((x) => Number(x.trim()))
-                          .filter((n) => Number.isFinite(n) && n >= 1)
-                          .map((n) => Math.floor(n));
-                        setPairplotPcs(pcs.length ? pcs : []);
-                      }}
-                    />
+                    <CommaSeparatedIntListInput value={pairplotPcs} onChange={setPairplotPcs} />
                   </label>
                   <label className="inline">
                     Loadings topN

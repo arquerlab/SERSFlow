@@ -1,5 +1,6 @@
 import type { IntegrationMode, IntegrationWindowEditorRow } from "./spectralIntegrationsUtils";
 import { defaultIntegrationRow } from "./spectralIntegrationsUtils";
+import { DraftNumberInput } from "../lib/draftInputs";
 
 type Props = {
   windows: IntegrationWindowEditorRow[];
@@ -46,23 +47,19 @@ export function SpectralIntegrationsEditor({ windows, onChange }: Props) {
           </label>
           <label className="inline" style={{ flexDirection: "column", alignItems: "stretch", gap: "4px" }}>
             <span className="hint">min_cm⁻¹</span>
-            <input
-              type="number"
+            <DraftNumberInput
               value={row.min_cm1}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                patchRow(i, { min_cm1: Number.isFinite(n) ? n : row.min_cm1 });
+              onChange={(n) => {
+                if (n != null) patchRow(i, { min_cm1: n });
               }}
             />
           </label>
           <label className="inline" style={{ flexDirection: "column", alignItems: "stretch", gap: "4px" }}>
             <span className="hint">max_cm⁻¹</span>
-            <input
-              type="number"
+            <DraftNumberInput
               value={row.max_cm1}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                patchRow(i, { max_cm1: Number.isFinite(n) ? n : row.max_cm1 });
+              onChange={(n) => {
+                if (n != null) patchRow(i, { max_cm1: n });
               }}
             />
           </label>

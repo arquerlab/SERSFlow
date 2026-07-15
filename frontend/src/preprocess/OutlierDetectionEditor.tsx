@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DraftNumberInput } from "../lib/draftInputs";
 import { PlotlyWrapper, type PlotlyFigure } from "../legacy-wrappers/PlotlyWrapper";
 import { runPipeline, previewSessionQc, type SpectrumRef, type SessionQcPreviewResponse, type SpectrumSeries } from "./api";
 import { DEFAULT_GUARDRAILS } from "./runController";
@@ -310,12 +311,14 @@ export function OutlierDetectionEditor({
               label="n_components"
               description="Number of PCA components used for reconstruction / PCA-space scoring. More components model more variation; too many can hide outliers."
             />
-            <input
-              type="number"
+            <DraftNumberInput
+              integer
               min={1}
               max={200}
               value={n_components}
-              onChange={(e) => onChange({ ...params, n_components: Math.max(1, Math.floor(toNumber(e.target.value, 8))) })}
+              onChange={(n) => {
+                if (n != null) onChange({ ...params, n_components: n });
+              }}
             />
           </label>
         </>
@@ -330,11 +333,11 @@ export function OutlierDetectionEditor({
               : "Spectra with anomaly score above this value are flagged as outliers."
           }
         />
-        <input
-          type="number"
-          step="any"
+        <DraftNumberInput
           value={threshold}
-          onChange={(e) => onChange({ ...params, threshold: toNumber(e.target.value, threshold) })}
+          onChange={(n) => {
+            if (n != null) onChange({ ...params, threshold: n });
+          }}
         />
       </label>
 

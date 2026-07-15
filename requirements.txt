@@ -7,6 +7,7 @@ scipy
 scikit-learn
 matplotlib
 renishawWiRE
+pybaselines
 
 # Optional: pip install pyarrow
 # Optional: pip install scikit-fda

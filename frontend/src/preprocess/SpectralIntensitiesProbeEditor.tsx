@@ -1,6 +1,7 @@
 import type { EditorStep } from "./editorTypes";
 import type { SpectralProbeEditorRow } from "./spectralIntensitiesUtils";
 import { defaultProbeRow } from "./spectralIntensitiesUtils";
+import { DraftNumberInput } from "../lib/draftInputs";
 
 type Props = {
   probes: SpectralProbeEditorRow[];
@@ -97,12 +98,10 @@ export function SpectralIntensitiesProbeEditor({ probes, steps, selectedStepId, 
             ) : null}
             <label className="inline" style={{ flexDirection: "column", alignItems: "stretch", gap: "4px" }}>
               <span className="hint">target_cm⁻¹</span>
-              <input
-                type="number"
+              <DraftNumberInput
                 value={row.target_cm1}
-                onChange={(e) => {
-                  const n = Number(e.target.value);
-                  patchRow(i, { target_cm1: Number.isFinite(n) ? n : row.target_cm1 });
+                onChange={(n) => {
+                  if (n != null) patchRow(i, { target_cm1: n });
                 }}
               />
             </label>
@@ -122,18 +121,11 @@ export function SpectralIntensitiesProbeEditor({ probes, steps, selectedStepId, 
             {row.acquisition === "nearest_peak" ? (
               <label className="inline" style={{ flexDirection: "column", alignItems: "stretch", gap: "4px" }}>
                 <span className="hint">window_cm⁻¹</span>
-                <input
-                  type="number"
+                <DraftNumberInput
+                  nullable
                   placeholder="optional"
-                  value={row.window_cm1 === "" ? "" : row.window_cm1}
-                  onChange={(e) => {
-                    const raw = e.target.value.trim();
-                    if (raw === "") patchRow(i, { window_cm1: "" });
-                    else {
-                      const n = Number(raw);
-                      patchRow(i, { window_cm1: Number.isFinite(n) ? n : "" });
-                    }
-                  }}
+                  value={row.window_cm1 === "" ? null : row.window_cm1}
+                  onChange={(n) => patchRow(i, { window_cm1: n === null ? "" : n })}
                 />
               </label>
             ) : null}

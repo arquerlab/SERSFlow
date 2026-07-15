@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DraftNumberInput } from "../lib/draftInputs";
 import { PlotlyWrapper, type PlotlyFigure } from "../legacy-wrappers/PlotlyWrapper";
 import { runPipeline, previewSessionQc, type SpectrumRef, type SessionQcPreviewResponse, type SpectrumSeries } from "./api";
 import { DEFAULT_GUARDRAILS } from "./runController";
@@ -303,13 +304,13 @@ export function LowSignalFilterEditor({
             label="percentile"
             description="Only used when metric=percentile. Example: 10 means the 10th percentile intensity of the spectrum is used as the signal metric."
           />
-          <input
-            type="number"
+          <DraftNumberInput
             min={0}
             max={100}
-            step={0.5}
             value={percentile}
-            onChange={(e) => onChange({ ...params, percentile: toNumber(e.target.value, 10) })}
+            onChange={(n) => {
+              if (n != null) onChange({ ...params, percentile: n });
+            }}
           />
         </label>
       ) : null}
@@ -319,11 +320,11 @@ export function LowSignalFilterEditor({
           label="threshold"
           description="Spectra with metric below this value are considered low-signal (and will be flagged/excluded depending on action)."
         />
-        <input
-          type="number"
-          step="any"
+        <DraftNumberInput
           value={threshold}
-          onChange={(e) => onChange({ ...params, threshold: toNumber(e.target.value, 0) })}
+          onChange={(n) => {
+            if (n != null) onChange({ ...params, threshold: n });
+          }}
         />
       </label>
 

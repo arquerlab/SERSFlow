@@ -7,6 +7,7 @@ import {
   loadPrepareUiPrefs,
   savePrepareUiPrefs,
 } from "./lib/uiPersistence";
+import { DraftNumberInput } from "./lib/draftInputs";
 import { PlotlyWrapper } from "./legacy-wrappers/PlotlyWrapper";
 import { UploadDatasetPicker, type UploadDatasetPickerHandle } from "./legacy-wrappers/UploadDatasetPicker";
 import { ResizableSplit } from "./components/ResizableSplit";
@@ -144,17 +145,6 @@ function ParamLabel({ label, description }: { label: string; description?: strin
       ) : null}
     </span>
   );
-}
-
-function baselineParamInputValue(value: unknown): string {
-  return value == null ? "" : String(value);
-}
-
-function parseBaselineParamInput(param: BaselineParamSpecPublic, raw: string): unknown {
-  if (raw === "") return param.nullable ? null : undefined;
-  if (param.kind === "int") return Math.trunc(Number(raw));
-  if (param.kind === "number") return Number(raw);
-  return raw;
 }
 
 export default function PreprocessingWorkspace() {
@@ -1501,15 +1491,12 @@ export default function PreprocessingWorkspace() {
                       </label>
                       <label className="inline" style={{ justifyContent: "space-between" }}>
                         Gaussian fill opacity (area from peak down to y = 0)
-                        <input
-                          type="number"
+                        <DraftNumberInput
                           min={0}
                           max={1}
-                          step={0.05}
                           value={fp.fill_opacity}
-                          onChange={(e) => {
-                            const v = Number(e.target.value);
-                            updateSelectedFittingParams({ ...fp, fill_opacity: Number.isFinite(v) ? v : 0.15 });
+                          onChange={(n) => {
+                            if (n != null) updateSelectedFittingParams({ ...fp, fill_opacity: n });
                           }}
                         />
                       </label>
@@ -1582,13 +1569,14 @@ export default function PreprocessingWorkspace() {
                             {comp.component_type === "polynomial_background" ? (
                               <label className="inline" style={{ justifyContent: "space-between" }}>
                                 Degree
-                                <input
-                                  type="number"
+                                <DraftNumberInput
+                                  integer
                                   min={0}
                                   max={12}
                                   value={comp.degree}
-                                  onChange={(e) => {
-                                    const degree = Math.max(0, Math.min(12, Math.floor(Number(e.target.value || 0))));
+                                  onChange={(n) => {
+                                    if (n == null) return;
+                                    const degree = n;
                                     const rows = defaultRowsForComponent("polynomial_background", degree, fittingCatalog);
                                     const next = fp.components.slice();
                                     next[ci] = { ...comp, degree, rows };
@@ -1625,9 +1613,7 @@ export default function PreprocessingWorkspace() {
                                 }}
                               >
                                 <span>{row.label}</span>
-                                <input
-                                  type="number"
-                                  step="any"
+                                <DraftNumberInput
                                   disabled={
                                     fp.initial_guess_mode === "auto" &&
                                     comp.component_type === "gaussian" &&
@@ -1641,43 +1627,37 @@ export default function PreprocessingWorkspace() {
                                       : undefined
                                   }
                                   value={row.p0}
-                                  onChange={(e) => {
-                                    const v = Number(e.target.value);
+                                  onChange={(n) => {
+                                    if (n == null) return;
                                     const next = fp.components.slice();
                                     const rows = next[ci]!.rows.slice();
-                                    rows[ri] = { ...row, p0: Number.isFinite(v) ? v : 0 };
+                                    rows[ri] = { ...row, p0: n };
                                     next[ci] = { ...next[ci]!, rows };
                                     updateSelectedFittingParams({ ...fp, components: next });
                                   }}
                                 />
                                 <div className="row" style={{ gap: "6px", justifyContent: "flex-start" }}>
-                                  <input
-                                    type="number"
-                                    step="any"
+                                  <DraftNumberInput
+                                    nullable
                                     placeholder="lower"
-                                    value={row.lower === null ? "" : String(row.lower)}
-                                    onChange={(e) => {
-                                      const raw = e.target.value.trim();
-                                      const lower = raw === "" ? null : Number(raw);
+                                    value={row.lower}
+                                    onChange={(lower) => {
                                       const next = fp.components.slice();
                                       const rows = next[ci]!.rows.slice();
-                                      rows[ri] = { ...row, lower: lower !== null && Number.isFinite(lower) ? lower : null };
+                                      rows[ri] = { ...row, lower };
                                       next[ci] = { ...next[ci]!, rows };
                                       updateSelectedFittingParams({ ...fp, components: next });
                                     }}
                                     style={{ width: "78px" }}
                                   />
-                                  <input
-                                    type="number"
-                                    step="any"
+                                  <DraftNumberInput
+                                    nullable
                                     placeholder="upper"
-                                    value={row.upper === null ? "" : String(row.upper)}
-                                    onChange={(e) => {
-                                      const raw = e.target.value.trim();
-                                      const upper = raw === "" ? null : Number(raw);
+                                    value={row.upper}
+                                    onChange={(upper) => {
                                       const next = fp.components.slice();
                                       const rows = next[ci]!.rows.slice();
-                                      rows[ri] = { ...row, upper: upper !== null && Number.isFinite(upper) ? upper : null };
+                                      rows[ri] = { ...row, upper };
                                       next[ci] = { ...next[ci]!, rows };
                                       updateSelectedFittingParams({ ...fp, components: next });
                                     }}
@@ -1833,14 +1813,23 @@ export default function PreprocessingWorkspace() {
                           onChange={(e) => onParsedValue(e.target.checked)}
                         />
                       );
+                    } else if (param.kind === "number" || param.kind === "int") {
+                      control = (
+                        <DraftNumberInput
+                          value={value}
+                          integer={param.kind === "int"}
+                          nullable={param.nullable}
+                          placeholder={param.nullable ? "None" : undefined}
+                          onChange={(next) => onParsedValue(next === null ? null : next)}
+                        />
+                      );
                     } else {
-                      const isNumber = param.kind === "number" || param.kind === "int";
                       control = (
                         <input
-                          type={isNumber ? "number" : "text"}
-                          value={baselineParamInputValue(value)}
+                          type="text"
+                          value={value == null ? "" : String(value)}
                           placeholder={param.nullable ? "None" : undefined}
-                          onChange={(e) => onParsedValue(parseBaselineParamInput(param, e.target.value))}
+                          onChange={(e) => onParsedValue(e.target.value === "" && param.nullable ? null : String(e.target.value))}
                         />
                       );
                     }
@@ -1933,16 +1922,21 @@ export default function PreprocessingWorkspace() {
                     return (
                       <label key={k} className="inline" style={{ justifyContent: "space-between" }}>
                         {k}
-                        <input
-                          type={isNum ? "number" : "text"}
-                          value={String(v)}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            const next = isNum ? Number(raw) : raw;
-                            updateSelectedStepParam(k, next);
-                          }}
-                          style={isNum ? undefined : { width: "180px" }}
-                        />
+                        {isNum ? (
+                          <DraftNumberInput
+                            value={v}
+                            onChange={(n) => {
+                              if (n != null) updateSelectedStepParam(k, n);
+                            }}
+                          />
+                        ) : (
+                          <input
+                            type="text"
+                            value={String(v)}
+                            onChange={(e) => updateSelectedStepParam(k, e.target.value)}
+                            style={{ width: "180px" }}
+                          />
+                        )}
                       </label>
                     );
                   });
@@ -2058,13 +2052,11 @@ export default function PreprocessingWorkspace() {
                       return (
                         <label key={f.key} className="inline" style={{ justifyContent: "space-between" }}>
                           <ParamLabel label={f.label} description={f.description} />
-                          <input
-                            type="number"
-                            value={String(v ?? (isInt ? 0 : 0))}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              const n = raw === "" ? NaN : Number(raw);
-                              updateSelectedStepParam(f.key, isInt ? Math.trunc(n) : n);
+                          <DraftNumberInput
+                            value={v}
+                            integer={isInt}
+                            onChange={(n) => {
+                              if (n != null) updateSelectedStepParam(f.key, n);
                             }}
                           />
                         </label>

@@ -19,6 +19,7 @@ dependencies = [
   "matplotlib",
   "renishawWiRE",
   "bcrypt",
+  "pybaselines",
 ]
 
 [project.optional-dependencies]
