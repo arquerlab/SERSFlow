@@ -8,9 +8,26 @@ from pydantic import BaseModel, Field
 from sersflow.api.auth_session import COOKIE_NAME, cookie_secure, sign_session
 from sersflow.api.data_scope import ACT_AS_ALL, ACT_AS_COOKIE, get_data_scope, resolve_data_scope
 from sersflow.api.deps import current_user_id
-from sersflow.infra.auth_store import get_user_by_id, get_user_by_username, list_users, verify_user
+from sersflow.api.middleware.auth import DEV_USER_ID, auth_disabled
+from sersflow.infra.auth_store import (
+    UserRecord,
+    get_user_by_id,
+    get_user_by_username,
+    list_users,
+    verify_user,
+)
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+
+def _dev_user() -> UserRecord:
+    """Synthetic actor used when SERSFLOW_AUTH_DISABLED is set."""
+    return UserRecord(
+        user_id=DEV_USER_ID,
+        username="dev",
+        created_at="",
+        is_superuser=True,
+    )
 
 
 class LoginRequest(BaseModel):
@@ -67,6 +84,8 @@ def _user_payload(user) -> dict[str, Any]:
 
 
 def _require_superuser(request: Request):
+    if auth_disabled():
+        return _dev_user()
     actor_id = current_user_id(request)
     actor = get_user_by_id(actor_id)
     if actor is None or not actor.is_superuser:
@@ -76,6 +95,9 @@ def _require_superuser(request: Request):
 
 @router.post("/login")
 def login(payload: LoginRequest, response: Response) -> dict[str, Any]:
+    if auth_disabled():
+        # Open mode: no credentials required; UI/API treat the actor as synthetic dev.
+        return _user_payload(_dev_user())
     user = verify_user(username=payload.username, password=payload.password)
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid username or password")
@@ -112,6 +134,8 @@ def logout(response: Response, request: Request) -> dict[str, bool]:
 
 @router.get("/me")
 def me(request: Request) -> dict[str, Any]:
+    if auth_disabled():
+        return _user_payload(_dev_user())
     user_id = current_user_id(request)
     user = get_user_by_id(user_id)
     if user is None:

@@ -462,3 +462,19 @@ def test_assign_orphans_dry_run(auth_env: Path) -> None:
         con.execute("UPDATE datasets SET owner_user_id = NULL WHERE dataset_id = ?", (rec.dataset_id,))
     report = assign_orphans(owner_user_id=user.user_id, dry_run=True)
     assert report.datasets_updated >= 1
+
+
+def test_auth_disabled_me_does_not_require_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Open mode must satisfy the UI login gate without a real user/cookie."""
+    monkeypatch.setenv("SERSFLOW_AUTH_DISABLED", "1")
+    monkeypatch.setenv("SERSFLOW_DB_PATH", str(tmp_path / "open.db"))
+    client = TestClient(app)
+    r = client.get("/auth/me")
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["user"]["user_id"] == "dev"
+    assert data["user"]["username"] == "dev"
+    assert data["user"]["is_superuser"] is True
+    assert data.get("act_as", {}).get("scope") == "all"
