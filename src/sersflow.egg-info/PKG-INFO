@@ -14,8 +14,13 @@ Requires-Dist: scikit-learn
 Requires-Dist: matplotlib
 Requires-Dist: renishawWiRE
 Requires-Dist: bcrypt
+Requires-Dist: pybaselines
 Provides-Extra: client
 Requires-Dist: httpx>=0.27; extra == "client"
+Provides-Extra: mcp
+Requires-Dist: mcp<2,>=1.18.0; extra == "mcp"
+Requires-Dist: httpx>=0.27; extra == "mcp"
+Requires-Dist: tomli>=2; python_version < "3.11" and extra == "mcp"
 Provides-Extra: parquet
 Requires-Dist: pyarrow>=14; extra == "parquet"
 Provides-Extra: explore-fda
@@ -88,6 +93,16 @@ with SersflowClient("http://127.0.0.1:8000") as client:
 ```
 
 See `examples/python_client_quickstart.py` for upload → dataset → session → analysis.
+
+## MCP (Cursor)
+
+Optional stdio MCP for LLM agents (`sersflow-mcp`), bundled with the API package:
+
+```bash
+pip install -e ".[mcp]"
+```
+
+See [docs/MCP_SETUP.md](docs/MCP_SETUP.md) for Cursor `mcp.json`, env/TOML config, and confirmation rules. Design notes: [docs/MCP_AGENT_BRIEF.md](docs/MCP_AGENT_BRIEF.md).
 
 ## Debugging checklist (tabs + preprocess embed)
 

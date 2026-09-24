@@ -66,6 +66,16 @@ with SersflowClient("http://127.0.0.1:8000") as client:
 
 See `examples/python_client_quickstart.py` for upload → dataset → session → analysis.
 
+## MCP (Cursor)
+
+Optional stdio MCP for LLM agents (`sersflow-mcp`), bundled with the API package:
+
+```bash
+pip install -e ".[mcp]"
+```
+
+See [docs/MCP_SETUP.md](docs/MCP_SETUP.md) for Cursor `mcp.json`, env/TOML config, and confirmation rules. Design notes: [docs/MCP_AGENT_BRIEF.md](docs/MCP_AGENT_BRIEF.md).
+
 ## Debugging checklist (tabs + preprocess embed)
 
 - **Manifest reachable**: open `GET /static/preprocess-dist/.vite/manifest.json` (should be 200)

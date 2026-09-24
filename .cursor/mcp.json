@@ -1,0 +1,13 @@
+﻿{
+  "mcpServers": {
+    "sersflow": {
+      "command": "C:/Users/apinilla/.conda/envs/general_plotting/python.exe",
+      "args": ["-m", "sersflow.mcp"],
+      "env": {
+        "SERSFLOW_URL": "http://127.0.0.1:8000",
+        "SERSFLOW_AUTH_DISABLED": "1",
+        "SERSFLOW_MCP_CONFIG": "C:/Users/apinilla/Documents/SERSFlow/config/sersflow_mcp.example.toml"
+      }
+    }
+  }
+}

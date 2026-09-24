@@ -24,11 +24,17 @@ dependencies = [
 
 [project.optional-dependencies]
 client = ["httpx>=0.27"]
+mcp = [
+  "mcp>=1.18.0,<2",
+  "httpx>=0.27",
+  "tomli>=2; python_version < '3.11'",
+]
 parquet = ["pyarrow>=14"]
 explore-fda = ["scikit-fda>=0.9"]
 
 [project.scripts]
 sersflow-api = "sersflow.api.main:run"
+sersflow-mcp = "sersflow.mcp.__main__:main"
 sersflow-admin = "sersflow.cli.admin:main"
 
 [tool.setuptools]

@@ -1,0 +1,15 @@
+# Non-secret MCP settings. Copy to ./sersflow_mcp.toml or set SERSFLOW_MCP_CONFIG.
+# Secrets (URL, username, password) stay in environment variables only.
+
+export_dir = "./.sersflow_mcp_exports"
+http_timeout_s = 30.0
+job_wait_timeout_s = 3600.0
+job_poll_interval_s = 0.25
+api_start_enabled = true
+api_health_timeout_s = 60.0
+api_health_poll_s = 0.5
+upload_confirm_bytes = 104857600
+fitting_confirm_max_components = 6
+tabular_max_rows = 50
+tabular_max_cols = 30
+analysis_async_default = true

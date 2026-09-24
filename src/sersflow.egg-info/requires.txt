@@ -8,12 +8,20 @@ scikit-learn
 matplotlib
 renishawWiRE
 bcrypt
+pybaselines
 
 [client]
 httpx>=0.27
 
 [explore-fda]
 scikit-fda>=0.9
+
+[mcp]
+mcp<2,>=1.18.0
+httpx>=0.27
+
+[mcp:python_version < "3.11"]
+tomli>=2
 
 [parquet]
 pyarrow>=14

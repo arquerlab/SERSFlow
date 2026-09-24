@@ -7,9 +7,12 @@ fig*/
 .sersflow_data/
 .sersflow_artifacts/
 .sersflow_uploads/
+.sersflow_mcp_exports/
+.tmp_mcp_test_exports/
 sersflow.db
 sersflow.db-shm
 sersflow.db-wal
+sersflow_mcp.toml
 
 # Legacy local upload storage
 uploads/

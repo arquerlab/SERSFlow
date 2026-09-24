@@ -1,3 +1,4 @@
 [console_scripts]
 sersflow-admin = sersflow.cli.admin:main
 sersflow-api = sersflow.api.main:run
+sersflow-mcp = sersflow.mcp.__main__:main
