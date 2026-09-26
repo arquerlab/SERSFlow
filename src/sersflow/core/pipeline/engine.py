@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import atexit
 import logging
+import os
 import re
-from dataclasses import dataclass
+import threading
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Protocol, Sequence
 
@@ -22,6 +25,73 @@ from sersflow.core.spectrum import EMPTY_XY, XY, extract_xy
 from sersflow.infra.blob_store import resolve_blob_path
 
 logger = logging.getLogger(__name__)
+
+# Reused across analysis jobs in the API process so each SDL trial does not pay
+# ProcessPool spawn + worker import cost (especially painful on Windows spawn).
+_POOL: ProcessPoolExecutor | None = None
+_POOL_WORKERS: int | None = None
+_POOL_LOCK = threading.Lock()
+_POOL_ATEXIT_REGISTERED = False
+
+
+def _pool_max_workers(requested: int | None) -> int:
+    n = int(requested) if requested and requested > 0 else (os.cpu_count() or 1)
+    return max(1, n)
+
+
+def _shutdown_pipeline_pool() -> None:
+    global _POOL, _POOL_WORKERS
+    with _POOL_LOCK:
+        if _POOL is not None:
+            try:
+                _POOL.shutdown(wait=False, cancel_futures=True)
+            except Exception:  # noqa: BLE001 - best-effort teardown
+                pass
+            _POOL = None
+            _POOL_WORKERS = None
+
+
+def _get_pipeline_pool(max_workers: int | None) -> ProcessPoolExecutor:
+    """Return a process-wide ProcessPoolExecutor, creating it on first use."""
+    global _POOL, _POOL_WORKERS, _POOL_ATEXIT_REGISTERED
+    workers = _pool_max_workers(max_workers)
+    with _POOL_LOCK:
+        if _POOL is not None and _POOL_WORKERS == workers:
+            return _POOL
+        if _POOL is not None:
+            try:
+                _POOL.shutdown(wait=False, cancel_futures=True)
+            except Exception:  # noqa: BLE001
+                pass
+            _POOL = None
+            _POOL_WORKERS = None
+        _POOL = ProcessPoolExecutor(max_workers=workers)
+        _POOL_WORKERS = workers
+        if not _POOL_ATEXIT_REGISTERED:
+            atexit.register(_shutdown_pipeline_pool)
+            _POOL_ATEXIT_REGISTERED = True
+        return _POOL
+
+
+def _reset_pipeline_pool() -> None:
+    """Drop a broken pool so the next call recreates it."""
+    _shutdown_pipeline_pool()
+
+
+def warm_pipeline_pool(max_workers: int | None = None) -> None:
+    """Create the shared pool and run a no-op worker so imports are paid once."""
+    pool = _get_pipeline_pool(max_workers)
+    # Touch a worker: empty steps on EMPTY_XY path via a trivial callable.
+    fut = pool.submit(_warm_worker_ping)
+    fut.result(timeout=120)
+
+
+def _warm_worker_ping() -> bool:
+    """Import heavy worker modules inside a pool process."""
+    # Import side effects load numpy/scipy in the child (spawn on Windows).
+    from sersflow.core.pipeline import steps as _steps  # noqa: F401
+
+    return True
 
 
 def _parse_collect_token(token: str) -> tuple[str, int | None]:
@@ -473,7 +543,9 @@ def run_pipeline_parallel_no_cache(
 
     Notes:
     - Intended for Batch mode where we process many spectra once.
-    - Uses ProcessPoolExecutor to speed up CPU-bound transforms.
+    - Reuses a process-wide ProcessPoolExecutor across jobs to avoid per-job
+      spawn/import cost (especially on Windows).
+    - A single spectrum runs in-process (pool overhead dominates).
     """
     cfg = config or EngineConfig()
     if not inputs:
@@ -485,11 +557,28 @@ def run_pipeline_parallel_no_cache(
     nums = step_nums or [0] * len(steps)
     _validate_baseline_point_references(steps)
 
+    # One spectrum: avoid process-pool round-trip.
+    if len(inputs) == 1:
+        ref = dict(inputs[0])
+        sid = str(ref["spectrum_id"])
+        xy_res, pin = _run_one_no_cache(
+            ref,
+            steps,
+            nums,
+            namespace=cfg.cache_namespace,
+            up_to_step=up_to_step,
+            collect_step_inputs=collect_step_inputs,
+        )
+        if collect_step_inputs:
+            return {sid: xy_res}, {sid: pin}
+        return {sid: xy_res}
+
     out: dict[str, XY] = {}
     per_in: dict[str, dict[int, XY]] = {} if collect_step_inputs else {}
     pool_broken = False
 
-    with ProcessPoolExecutor(max_workers=max_workers) as ex:
+    def _submit_all(ex: ProcessPoolExecutor) -> None:
+        nonlocal out, per_in, pool_broken
         fut_to_sid = {}
         for ref in inputs:
             sid = str(ref["spectrum_id"])
@@ -520,8 +609,14 @@ def run_pipeline_parallel_no_cache(
                 if collect_step_inputs:
                     per_in[sid] = {}
 
+    try:
+        _submit_all(_get_pipeline_pool(max_workers))
+    except BrokenProcessPool:
+        pool_broken = True
+
     if pool_broken:
-        logger.warning("pipeline process pool broke; rerunning workload sequentially")
+        logger.warning("pipeline process pool broke; resetting pool and rerunning sequentially")
+        _reset_pipeline_pool()
         out = {}
         per_in = {} if collect_step_inputs else {}
         for ref in inputs:

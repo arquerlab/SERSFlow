@@ -54,6 +54,20 @@ from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
 
 
+@router.post("/warm")
+def warm_analysis_workers() -> dict[str, Any]:
+    """Create/reuse the shared pipeline ProcessPool and import heavy deps in a worker.
+
+    Call once at SDL (or UI) startup so the first multi-spectrum analysis job does not
+    pay Windows spawn + scipy import latency.
+    """
+    from sersflow.api.services.analysis_runner import ANALYSIS_MAX_WORKERS
+    from sersflow.core.pipeline.engine import warm_pipeline_pool
+
+    warm_pipeline_pool(ANALYSIS_MAX_WORKERS)
+    return {"ok": True, "max_workers": ANALYSIS_MAX_WORKERS}
+
+
 def _require_run(run_id: str, user_id: str) -> Any:
     rec = get_run_for_user(run_id, user_id)
     if rec is None:
