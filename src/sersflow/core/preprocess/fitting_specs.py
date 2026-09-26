@@ -10,6 +10,9 @@ from sersflow.core.preprocess import fitting_models
 
 BoundSide = float | None
 
+# Peak shapes that share position + height amplitude (auto initial-guess applies).
+PEAK_COMPONENT_TYPES = frozenset({"gaussian", "lorentzian", "pseudo_voigt", "voigt"})
+
 
 @dataclass(frozen=True)
 class ParamSpec:
@@ -56,38 +59,85 @@ class ComponentSpec:
         }
 
 
+def _peak_pos_amp_params() -> list[ParamSpec]:
+    return [
+        ParamSpec(
+            key="pos",
+            label="Center",
+            default=None,
+            lower_default=None,
+            upper_default=None,
+            unit="cm^-1",
+            ui={"step": 0.1},
+        ),
+        ParamSpec(
+            key="amp",
+            label="Amplitude",
+            default=None,
+            lower_default=0.0,
+            upper_default=None,
+            unit="a.u.",
+            ui={"step": 1.0},
+        ),
+    ]
+
+
+def _fwhm_param(*, key: str = "fwhm", label: str = "FWHM") -> ParamSpec:
+    return ParamSpec(
+        key=key,
+        label=label,
+        default=None,
+        lower_default=1e-6,
+        upper_default=None,
+        unit="cm^-1",
+        ui={"step": 0.1, "min": 0.0},
+    )
+
+
 def _gaussian_spec() -> ComponentSpec:
     return ComponentSpec(
         component_type="gaussian",
         display_name="Gaussian peak",
+        params=[*_peak_pos_amp_params(), _fwhm_param()],
+    )
+
+
+def _lorentzian_spec() -> ComponentSpec:
+    return ComponentSpec(
+        component_type="lorentzian",
+        display_name="Lorentzian peak",
+        params=[*_peak_pos_amp_params(), _fwhm_param()],
+    )
+
+
+def _pseudo_voigt_spec() -> ComponentSpec:
+    return ComponentSpec(
+        component_type="pseudo_voigt",
+        display_name="Pseudo-Voigt peak",
         params=[
+            *_peak_pos_amp_params(),
+            _fwhm_param(),
             ParamSpec(
-                key="pos",
-                label="Center",
-                default=None,
-                lower_default=None,
-                upper_default=None,
-                unit="cm^-1",
-                ui={"step": 0.1},
-            ),
-            ParamSpec(
-                key="amp",
-                label="Amplitude",
-                default=None,
+                key="eta",
+                label="Lorentzian fraction (η)",
+                default=0.5,
                 lower_default=0.0,
-                upper_default=None,
-                unit="a.u.",
-                ui={"step": 1.0},
+                upper_default=1.0,
+                unit=None,
+                ui={"step": 0.01, "min": 0.0, "max": 1.0},
             ),
-            ParamSpec(
-                key="fwhm",
-                label="FWHM",
-                default=None,
-                lower_default=1e-6,
-                upper_default=None,
-                unit="cm^-1",
-                ui={"step": 0.1, "min": 0.0},
-            ),
+        ],
+    )
+
+
+def _voigt_spec() -> ComponentSpec:
+    return ComponentSpec(
+        component_type="voigt",
+        display_name="Voigt peak",
+        params=[
+            *_peak_pos_amp_params(),
+            _fwhm_param(key="fwhm_g", label="Gaussian FWHM"),
+            _fwhm_param(key="fwhm_l", label="Lorentzian FWHM"),
         ],
     )
 
@@ -119,7 +169,12 @@ def polynomial_background_spec(degree: int) -> ComponentSpec:
 def list_component_types() -> list[ComponentSpec]:
     # Parameterized specs (like polynomial degree) are represented via templates.
     # For the UI catalog we include a few common degrees.
-    base = [_gaussian_spec()]
+    base = [
+        _gaussian_spec(),
+        _lorentzian_spec(),
+        _pseudo_voigt_spec(),
+        _voigt_spec(),
+    ]
     base.extend(polynomial_background_spec(d) for d in (0, 1, 2, 3, 4))
     return base
 
@@ -132,10 +187,18 @@ def build_component_function(component_type: str, degree: int | None = None) -> 
     if ct == "gaussian":
         spec = _gaussian_spec()
         return fitting_models.gaussian, spec.params
+    if ct == "lorentzian":
+        spec = _lorentzian_spec()
+        return fitting_models.lorentzian, spec.params
+    if ct == "pseudo_voigt":
+        spec = _pseudo_voigt_spec()
+        return fitting_models.pseudo_voigt, spec.params
+    if ct == "voigt":
+        spec = _voigt_spec()
+        return fitting_models.voigt, spec.params
     if ct == "polynomial_background":
         if degree is None:
             raise ValueError("degree is required for polynomial_background")
         spec = polynomial_background_spec(int(degree))
         return fitting_models.polynomial_background, spec.params
     raise ValueError(f"Unknown component_type: {component_type}")
-

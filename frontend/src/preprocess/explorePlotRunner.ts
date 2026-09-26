@@ -9,7 +9,7 @@ import {
   type SessionRunIntermediatesResponse,
   type SpectrumRef,
 } from "./api";
-import { flattenFittingForPipeline, migrateFittingParamsToEditor } from "./fittingUtils";
+import { flattenFittingForPipeline, isPeakComponentType, migrateFittingParamsToEditor } from "./fittingUtils";
 import { buildSafeRunRequest, capTraceCount, type Mode, type PlotView } from "./runController";
 import type { EditorStep } from "./editorTypes";
 
@@ -302,15 +302,15 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         });
         (fitResp.components ?? []).forEach((comp, j) => {
           if (!comp.y_hat?.length) return;
-          const isGaussian = comp.component_type === "gaussian";
+          const isPeak = isPeakComponentType(comp.component_type);
           traces.push({
             type: "scatter",
             mode: "lines",
             x: it.x,
             y: comp.y_hat,
             name: `${it.spectrum_id} ${comp.component_type} [${comp.component_id}]`,
-            line: { color: fitColors[j % fitColors.length], dash: isGaussian ? "solid" : "dot" },
-            ...(isGaussian
+            line: { color: fitColors[j % fitColors.length], dash: isPeak ? "solid" : "dot" },
+            ...(isPeak
               ? {
                   fill: "tozeroy",
                   fillcolor: hexToRgba(fitColors[j % fitColors.length] ?? "#888888", fillOpacity),

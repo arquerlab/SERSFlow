@@ -12,9 +12,14 @@ from sersflow.core.preprocess.fitting import (
 from sersflow.core.preprocess.fitting_specs import list_component_types
 
 
-def test_fitting_models_registry_has_gaussian() -> None:
+def test_fitting_models_registry_has_peak_shapes() -> None:
     specs = list_component_types()
-    assert any(s.component_type == "gaussian" for s in specs)
+    types = {s.component_type for s in specs}
+    assert "gaussian" in types
+    assert "lorentzian" in types
+    assert "pseudo_voigt" in types
+    assert "voigt" in types
+    assert "polynomial_background" in types
 
 
 def test_fit_component_curves_sum_to_total() -> None:
@@ -113,4 +118,71 @@ def test_fit_single_gaussian_with_bounds_smoke() -> None:
     assert 510.0 <= float(res.p_opt[0]) <= 530.0
     assert len(res.component_y_hat) == 1
     assert np.allclose(res.component_y_hat[0], res.y_hat, rtol=1e-9)
+
+
+def test_fit_single_lorentzian_smoke() -> None:
+    rng = np.random.default_rng(2)
+    x = np.linspace(480.0, 560.0, 400)
+    true = {"pos": 520.0, "amp": 800.0, "fwhm": 12.0}
+    y = true["amp"] / (1.0 + 4.0 * ((x - true["pos"]) / true["fwhm"]) ** 2)
+    y = y + rng.normal(0.0, 2.0, size=y.shape)
+
+    components = [FitComponent(component_type="lorentzian", component_id="p1")]
+    res = fit_curve(
+        FitProblem(
+            x=x,
+            y=y,
+            components=components,
+            p0=[518.0, 700.0, 14.0],
+            bounds_lower=[510.0, 0.0, 1e-6],
+            bounds_upper=[530.0, None, 50.0],
+        )
+    )
+    assert abs(float(res.p_opt[0]) - 520.0) < 1.0
+    assert abs(float(res.p_opt[1]) - 800.0) < 50.0
+
+
+def test_fit_single_pseudo_voigt_smoke() -> None:
+    rng = np.random.default_rng(3)
+    x = np.linspace(480.0, 560.0, 400)
+    from sersflow.core.preprocess.fitting_models import pseudo_voigt
+
+    y = pseudo_voigt(x, 520.0, 900.0, 14.0, 0.4)
+    y = y + rng.normal(0.0, 2.0, size=y.shape)
+
+    components = [FitComponent(component_type="pseudo_voigt", component_id="p1")]
+    res = fit_curve(
+        FitProblem(
+            x=x,
+            y=y,
+            components=components,
+            p0=[518.0, 800.0, 16.0, 0.5],
+            bounds_lower=[510.0, 0.0, 1e-6, 0.0],
+            bounds_upper=[530.0, None, 50.0, 1.0],
+        )
+    )
+    assert abs(float(res.p_opt[0]) - 520.0) < 1.5
+    assert 0.0 <= float(res.p_opt[3]) <= 1.0
+
+
+def test_fit_single_voigt_smoke() -> None:
+    rng = np.random.default_rng(4)
+    x = np.linspace(480.0, 560.0, 400)
+    from sersflow.core.preprocess.fitting_models import voigt
+
+    y = voigt(x, 520.0, 700.0, 8.0, 6.0)
+    y = y + rng.normal(0.0, 2.0, size=y.shape)
+
+    components = [FitComponent(component_type="voigt", component_id="p1")]
+    res = fit_curve(
+        FitProblem(
+            x=x,
+            y=y,
+            components=components,
+            p0=[518.0, 600.0, 10.0, 8.0],
+            bounds_lower=[510.0, 0.0, 1e-6, 1e-6],
+            bounds_upper=[530.0, None, 40.0, 40.0],
+        )
+    )
+    assert abs(float(res.p_opt[0]) - 520.0) < 2.0
 

@@ -72,7 +72,8 @@ class FitRequest(BaseModel):
     initial_guess_mode: Literal["default", "auto"] = "default"
     """
     default: use p0 from the client for all parameters.
-    auto: for each Gaussian, set initial amplitude to the spectrum y value at the initial center (pos).
+    auto: for each peak (gaussian / lorentzian / pseudo_voigt / voigt), set initial
+    amplitude to the spectrum y value at the initial center (pos).
     """
 
 

@@ -1,7 +1,11 @@
 """
-Export fitted Gaussian parameters as analysis feature columns (per spectrum).
+Export fitted peak parameters as analysis feature columns (per spectrum).
 
-Uses the same model as fitting_models.gaussian: integral = amp * fwhm * sqrt(pi / (4 ln 2)).
+Area formulas match fitting_models (amplitude = peak height):
+- gaussian: amp * fwhm * sqrt(pi / (4 ln 2))
+- lorentzian: amp * pi * fwhm / 2
+- pseudo_voigt: eta * lorentzian_area + (1 - eta) * gaussian_area
+- voigt: amp / voigt_profile(0, sigma, gamma)  (unit-area profile normalized to peak height)
 """
 
 from __future__ import annotations
@@ -10,30 +14,64 @@ import math
 import re
 from typing import Any
 
+from scipy.special import voigt_profile
+
 from sersflow.core.metrics.key_dedupe import dedupe_parallel
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
-from sersflow.core.preprocess.fitting_specs import build_component_function
+from sersflow.core.preprocess.fitting_specs import PEAK_COMPONENT_TYPES, build_component_function
 from sersflow.core.spectrum import XY
+
+_LN2 = math.log(2.0)
+_GAUSS_FWHM_TO_SIGMA = 1.0 / (2.0 * math.sqrt(2.0 * _LN2))
 
 
 def gaussian_peak_area(amp: float, fwhm: float) -> float:
     """Analytical area under the Gaussian peak used in fitting_models.gaussian (same x units as pos)."""
     if not math.isfinite(amp) or not math.isfinite(fwhm) or fwhm <= 0:
         return float("nan")
-    return float(amp * fwhm * math.sqrt(math.pi / (4.0 * math.log(2.0))))
+    return float(amp * fwhm * math.sqrt(math.pi / (4.0 * _LN2)))
+
+
+def lorentzian_peak_area(amp: float, fwhm: float) -> float:
+    """Analytical area under fitting_models.lorentzian (peak-height amplitude)."""
+    if not math.isfinite(amp) or not math.isfinite(fwhm) or fwhm <= 0:
+        return float("nan")
+    return float(amp * math.pi * fwhm / 2.0)
+
+
+def pseudo_voigt_peak_area(amp: float, fwhm: float, eta: float) -> float:
+    """Analytical area under fitting_models.pseudo_voigt."""
+    if not math.isfinite(eta):
+        return float("nan")
+    g = gaussian_peak_area(amp, fwhm)
+    lor = lorentzian_peak_area(amp, fwhm)
+    if not math.isfinite(g) or not math.isfinite(lor):
+        return float("nan")
+    return float(eta * lor + (1.0 - eta) * g)
+
+
+def voigt_peak_area(amp: float, fwhm_g: float, fwhm_l: float) -> float:
+    """
+    Analytical area under fitting_models.voigt (peak-height amplitude).
+
+    Area = amp / voigt_profile(0, sigma, gamma) because the SciPy profile integrates to 1.
+    """
+    if not math.isfinite(amp) or not math.isfinite(fwhm_g) or not math.isfinite(fwhm_l):
+        return float("nan")
+    if fwhm_g <= 0 and fwhm_l <= 0:
+        return float("nan")
+    sigma = max(float(fwhm_g), 1e-12) * _GAUSS_FWHM_TO_SIGMA
+    gamma = max(float(fwhm_l), 0.0) * 0.5
+    y0 = float(voigt_profile(0.0, sigma, gamma))
+    if not math.isfinite(y0) or y0 <= 0.0:
+        return float("nan")
+    return float(amp / y0)
 
 
 def _safe_id_fragment(s: str) -> str:
     t = re.sub(r"[^a-zA-Z0-9_]+", "_", s.strip())
     return t or "comp"
-
-
-def _gaussian_keys_for_component(step_index: int, multi_step: bool, component_id: str) -> tuple[str, str, str, str]:
-    cid = _safe_id_fragment(component_id)
-    prefix = f"s{step_index}_" if multi_step else ""
-    base = f"{prefix}fit_{cid}_"
-    return (base + "pos", base + "amp", base + "fwhm", base + "area")
 
 
 def _param_keys_for_component(row: dict[str, Any]) -> list[str]:
@@ -55,9 +93,36 @@ def _feature_keys_for_component(
     prefix = f"s{step_index}_" if multi_step else ""
     base = f"{prefix}fit_{cid}_"
     keys = [base + _safe_id_fragment(k) for k in param_keys]
-    if component_type.strip().lower() == "gaussian":
+    if component_type.strip().lower() in PEAK_COMPONENT_TYPES:
         keys.append(base + "area")
     return keys
+
+
+def _derived_peak_area(ctype: str, pk: dict[str, float]) -> float | None:
+    ct = ctype.strip().lower()
+    if ct == "gaussian":
+        amp, fwhm = pk.get("amp"), pk.get("fwhm")
+        if amp is None or fwhm is None:
+            return None
+        area = gaussian_peak_area(amp, fwhm)
+    elif ct == "lorentzian":
+        amp, fwhm = pk.get("amp"), pk.get("fwhm")
+        if amp is None or fwhm is None:
+            return None
+        area = lorentzian_peak_area(amp, fwhm)
+    elif ct == "pseudo_voigt":
+        amp, fwhm, eta = pk.get("amp"), pk.get("fwhm"), pk.get("eta")
+        if amp is None or fwhm is None or eta is None:
+            return None
+        area = pseudo_voigt_peak_area(amp, fwhm, eta)
+    elif ct == "voigt":
+        amp, fwhm_g, fwhm_l = pk.get("amp"), pk.get("fwhm_g"), pk.get("fwhm_l")
+        if amp is None or fwhm_g is None or fwhm_l is None:
+            return None
+        area = voigt_peak_area(amp, fwhm_g, fwhm_l)
+    else:
+        return None
+    return area if math.isfinite(area) else None
 
 
 def _raw_fitting_keys_and_nums(pipeline: Any) -> tuple[list[str], list[int]]:
@@ -89,7 +154,7 @@ def _raw_fitting_keys_and_nums(pipeline: Any) -> tuple[list[str], list[int]]:
 
 
 def preview_fitting_feature_keys_for_pipeline(pipeline: Any) -> list[str]:
-    """Column names for Gaussian fitting exports (no spectrum data required)."""
+    """Column names for fitting exports (no spectrum data required)."""
     raw, nums = _raw_fitting_keys_and_nums(pipeline)
     return dedupe_parallel(raw, nums)
 
@@ -134,7 +199,7 @@ def collect_fitting_features_for_pipeline(
 ) -> tuple[list[str], dict[str, float | None]]:
     """
     Re-fit using stored step params and export optimized parameters per component.
-    Gaussian components also export a derived area column.
+    Peak components also export a derived area column.
 
     On failure (non-convergence, too few points), returns None for that component's keys.
 
@@ -208,7 +273,6 @@ def collect_fitting_features_for_pipeline(
 
         out = dict(nulls)
         for m, final_group in zip(res.mapping, step_final_groups):
-            cid_raw = str(m.get("component_id", "")).strip() or "g"
             ctype = str(m.get("component_type", "")).strip().lower()
             keys_list = list(m.get("param_keys") or [])
             start, end = m.get("index_range", [0, 0])
@@ -222,14 +286,9 @@ def collect_fitting_features_for_pipeline(
                 if value is not None and math.isfinite(value):
                     out[final_key] = value
 
-            if ctype == "gaussian" and len(final_group) > len(keys_list):
-                amp = pk.get("amp")
-                fwhm = pk.get("fwhm")
+            if ctype in PEAK_COMPONENT_TYPES and len(final_group) > len(keys_list):
                 area_key = final_group[len(keys_list)]
-                if amp is not None and fwhm is not None and math.isfinite(amp) and math.isfinite(fwhm):
-                    out[area_key] = gaussian_peak_area(amp, fwhm)
-                else:
-                    out[area_key] = None
+                out[area_key] = _derived_peak_area(ctype, pk)
 
         merged.update(out)
 

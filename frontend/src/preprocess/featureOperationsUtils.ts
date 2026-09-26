@@ -73,7 +73,12 @@ function fittingFeatureKeys(params: Record<string, unknown> | null | undefined):
       for (let d = degree; d >= 0; d -= 1) {
         keys.push(`fit_${id}_c${d}`);
       }
+    } else if (type === "pseudo_voigt") {
+      keys.push(`fit_${id}_pos`, `fit_${id}_amp`, `fit_${id}_fwhm`, `fit_${id}_eta`, `fit_${id}_area`);
+    } else if (type === "voigt") {
+      keys.push(`fit_${id}_pos`, `fit_${id}_amp`, `fit_${id}_fwhm_g`, `fit_${id}_fwhm_l`, `fit_${id}_area`);
     } else {
+      // gaussian, lorentzian, and unknown peak-like shapes
       keys.push(`fit_${id}_pos`, `fit_${id}_amp`, `fit_${id}_fwhm`, `fit_${id}_area`);
     }
   });

@@ -58,9 +58,13 @@ import {
   primaryParams,
 } from "./preprocess/baselineMethodCatalog";
 import {
+  PEAK_COMPONENT_TYPES,
+  PEAK_TYPE_LABELS,
   defaultFittingEditorParams,
   defaultRowsForComponent,
+  isPeakComponentType,
   migrateFittingParamsToEditor,
+  parseFittingComponentType,
   type FittingEditorParams,
 } from "./preprocess/fittingUtils";
 import { DEFAULT_GUARDRAILS, type Mode, type PlotView } from "./preprocess/runController";
@@ -1475,7 +1479,7 @@ export default function PreprocessingWorkspace() {
                         </select>
                       </label>
                       <label className="inline" style={{ justifyContent: "space-between" }}>
-                        Gaussian amplitude (initial guess)
+                        Peak amplitude (initial guess)
                         <select
                           value={fp.initial_guess_mode}
                           onChange={(e) => {
@@ -1490,7 +1494,7 @@ export default function PreprocessingWorkspace() {
                         </select>
                       </label>
                       <label className="inline" style={{ justifyContent: "space-between" }}>
-                        Gaussian fill opacity (area from peak down to y = 0)
+                        Peak fill opacity (area from peak down to y = 0)
                         <DraftNumberInput
                           min={0}
                           max={1}
@@ -1553,7 +1557,7 @@ export default function PreprocessingWorkspace() {
                               <select
                                 value={comp.component_type}
                                 onChange={(e) => {
-                                  const component_type = e.target.value === "polynomial_background" ? "polynomial_background" : "gaussian";
+                                  const component_type = parseFittingComponentType(e.target.value);
                                   const degree = component_type === "polynomial_background" ? 2 : 0;
                                   const rows = defaultRowsForComponent(component_type, degree, fittingCatalog);
                                   const next = fp.components.slice();
@@ -1561,7 +1565,11 @@ export default function PreprocessingWorkspace() {
                                   updateSelectedFittingParams({ ...fp, components: next });
                                 }}
                               >
-                                <option value="gaussian">Gaussian</option>
+                                {PEAK_COMPONENT_TYPES.map((t) => (
+                                  <option key={t} value={t}>
+                                    {PEAK_TYPE_LABELS[t]}
+                                  </option>
+                                ))}
                                 <option value="polynomial_background">Polynomial</option>
                               </select>
                             </label>
@@ -1616,12 +1624,12 @@ export default function PreprocessingWorkspace() {
                                 <DraftNumberInput
                                   disabled={
                                     fp.initial_guess_mode === "auto" &&
-                                    comp.component_type === "gaussian" &&
+                                    isPeakComponentType(comp.component_type) &&
                                     row.key === "amp"
                                   }
                                   title={
                                     fp.initial_guess_mode === "auto" &&
-                                    comp.component_type === "gaussian" &&
+                                    isPeakComponentType(comp.component_type) &&
                                     row.key === "amp"
                                       ? "Auto mode: backend uses intensity at the center (pos) as initial amplitude."
                                       : undefined

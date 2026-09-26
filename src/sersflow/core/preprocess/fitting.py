@@ -7,7 +7,7 @@ import numpy as np
 from scipy.optimize import curve_fit
 import inspect
 
-from sersflow.core.preprocess.fitting_specs import build_component_function
+from sersflow.core.preprocess.fitting_specs import PEAK_COMPONENT_TYPES, build_component_function
 from sersflow.core.spectrum import XY
 
 
@@ -29,8 +29,9 @@ class FitProblem:
     initial_guess_mode: str = "default"
     """
     default: use client p0 as-is.
-    auto: for each Gaussian component, set initial amplitude to the spectrum intensity
-    linearly interpolated at the initial center position (p0 pos), per spectrum.
+    auto: for each peak component (gaussian / lorentzian / pseudo_voigt / voigt),
+    set initial amplitude to the spectrum intensity linearly interpolated at the
+    initial center position (p0 pos), per spectrum.
     """
 
 
@@ -59,7 +60,7 @@ def _interp_y_at_x(x: np.ndarray, y: np.ndarray, xq: float) -> float:
     )
 
 
-def _apply_auto_gaussian_amplitudes(
+def _apply_auto_peak_amplitudes(
     x: np.ndarray,
     y: np.ndarray,
     p0: list[float],
@@ -71,7 +72,7 @@ def _apply_auto_gaussian_amplitudes(
 ) -> list[float]:
     out = list(p0)
     for comp, (s, _e), keys in zip(components, slices, param_keys_per_comp):
-        if comp.component_type.strip().lower() != "gaussian":
+        if comp.component_type.strip().lower() not in PEAK_COMPONENT_TYPES:
             continue
         try:
             pos_i = keys.index("pos")
@@ -88,6 +89,10 @@ def _apply_auto_gaussian_amplitudes(
             amp = min(amp, float(bounds_upper[gamp]))
         out[gamp] = amp
     return out
+
+
+# Backwards-compatible alias for older imports/tests.
+_apply_auto_gaussian_amplitudes = _apply_auto_peak_amplitudes
 
 
 def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem | None:
@@ -187,7 +192,7 @@ def fit_curve(problem: FitProblem) -> FitResult:
     mode = str(problem.initial_guess_mode or "default").strip().lower()
     p0_list = [float(v) for v in problem.p0]
     if mode == "auto":
-        p0_list = _apply_auto_gaussian_amplitudes(
+        p0_list = _apply_auto_peak_amplitudes(
             problem.x,
             problem.y,
             p0_list,

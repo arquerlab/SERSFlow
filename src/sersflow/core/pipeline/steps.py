@@ -165,14 +165,16 @@ def _baseline(xy: XY, params: dict[str, Any]) -> XY:
 
 def _fitting(xy: XY, params: dict[str, Any]) -> XY:
     """
-    Nonlinear least-squares fit (sum of gaussian / polynomial_background components).
+    Nonlinear least-squares fit (sum of peak + polynomial_background components).
+
+    Peak types: gaussian, lorentzian, pseudo_voigt, voigt.
 
     Params (flattened for caching + API):
     - output_mode: "fit" (replace y with model sum) or "residual" (y - model sum)
     - components: list of {component_id, component_type, degree?}
     - p0: list[float]
     - bounds_lower, bounds_upper: list[float | null] (null = unbounded)
-    - initial_guess_mode: "default" | "auto" (Gaussian amp from y at pos in auto mode)
+    - initial_guess_mode: "default" | "auto" (peak amp from y at pos in auto mode)
     """
     output_mode = str(params.get("output_mode", "fit"))
     prob = fit_problem_from_step_params(xy, params)

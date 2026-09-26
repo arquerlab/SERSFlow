@@ -2,6 +2,28 @@ import type { FittingComponentSpecPublic, FittingParamSpecPublic } from "./api";
 
 export const MAX_POLY_DEGREE = 12;
 
+export const PEAK_COMPONENT_TYPES = ["gaussian", "lorentzian", "pseudo_voigt", "voigt"] as const;
+export type FittingPeakType = (typeof PEAK_COMPONENT_TYPES)[number];
+export type FittingComponentType = FittingPeakType | "polynomial_background";
+
+export const PEAK_TYPE_LABELS: Record<FittingPeakType, string> = {
+  gaussian: "Gaussian",
+  lorentzian: "Lorentzian",
+  pseudo_voigt: "Pseudo-Voigt",
+  voigt: "Voigt",
+};
+
+export function isPeakComponentType(ct: string): ct is FittingPeakType {
+  return (PEAK_COMPONENT_TYPES as readonly string[]).includes(ct.trim().toLowerCase());
+}
+
+export function parseFittingComponentType(raw: string | null | undefined): FittingComponentType {
+  const ct = String(raw ?? "gaussian").trim().toLowerCase();
+  if (ct === "polynomial_background") return "polynomial_background";
+  if (isPeakComponentType(ct)) return ct;
+  return "gaussian";
+}
+
 export type FittingParamRow = {
   key: string;
   label: string;
@@ -12,8 +34,8 @@ export type FittingParamRow = {
 
 export type FittingComponentEditor = {
   component_id: string;
-  component_type: "gaussian" | "polynomial_background";
-  /** Polynomial degree 0..MAX_POLY_DEGREE; ignored for gaussian. */
+  component_type: FittingComponentType;
+  /** Polynomial degree 0..MAX_POLY_DEGREE; ignored for peak shapes. */
   degree: number;
   rows: FittingParamRow[];
 };
@@ -24,7 +46,7 @@ export type FittingEditorParams = {
   fill_opacity: number;
   /**
    * default: use table p0 for all parameters.
-   * auto: backend sets Gaussian initial amplitude to spectrum intensity at the initial center (pos).
+   * auto: backend sets peak initial amplitude to spectrum intensity at the initial center (pos).
    */
   initial_guess_mode: "default" | "auto";
   components: FittingComponentEditor[];
@@ -37,15 +59,31 @@ export function polynomialParamKeys(degree: number): string[] {
   return keys;
 }
 
+const FALLBACK_PEAK_KEYS: Record<FittingPeakType, string[]> = {
+  gaussian: ["pos", "amp", "fwhm"],
+  lorentzian: ["pos", "amp", "fwhm"],
+  pseudo_voigt: ["pos", "amp", "fwhm", "eta"],
+  voigt: ["pos", "amp", "fwhm_g", "fwhm_l"],
+};
+
+const FALLBACK_PEAK_P0: Record<string, number> = {
+  pos: 1000,
+  amp: 1,
+  fwhm: 10,
+  fwhm_g: 10,
+  fwhm_l: 10,
+  eta: 0.5,
+};
+
 export function paramKeysForComponent(
   componentType: string,
   degree: number,
   catalog: FittingComponentSpecPublic[] | undefined
 ): { keys: string[]; labels: Map<string, string> } {
   const ct = componentType.trim().toLowerCase();
-  if (ct === "gaussian") {
-    const spec = catalog?.find((c) => c.component_type === "gaussian");
-    const keys = spec?.params?.map((p) => p.key) ?? ["pos", "amp", "fwhm"];
+  if (isPeakComponentType(ct)) {
+    const spec = catalog?.find((c) => c.component_type === ct);
+    const keys = spec?.params?.map((p) => p.key) ?? FALLBACK_PEAK_KEYS[ct];
     const labels = new Map<string, string>();
     for (const p of spec?.params ?? []) labels.set(p.key, p.label);
     for (const k of keys) if (!labels.has(k)) labels.set(k, k);
@@ -62,18 +100,17 @@ export function paramKeysForComponent(
 }
 
 export function defaultRowsForComponent(
-  componentType: "gaussian" | "polynomial_background",
+  componentType: FittingComponentType,
   degree: number,
   catalog: FittingComponentSpecPublic[] | undefined
 ): FittingParamRow[] {
   const { keys, labels } = paramKeysForComponent(componentType, degree, catalog);
-  const spec = catalog?.find(
-    (c) =>
-      c.component_type === (componentType === "polynomial_background" ? `polynomial_background` : "gaussian")
-  );
   const byKey = new Map<string, FittingParamSpecPublic>();
-  if (componentType === "gaussian" && spec) {
-    for (const p of spec.params) byKey.set(p.key, p);
+  if (isPeakComponentType(componentType)) {
+    const spec = catalog?.find((c) => c.component_type === componentType);
+    if (spec) {
+      for (const p of spec.params) byKey.set(p.key, p);
+    }
   }
   // For polynomial, match degree from catalog if present
   if (componentType === "polynomial_background" && catalog) {
@@ -93,10 +130,8 @@ export function defaultRowsForComponent(
     let p0 = 0;
     if (typeof def === "number" && Number.isFinite(def)) {
       p0 = def;
-    } else if (componentType === "gaussian") {
-      if (k === "pos") p0 = 1000;
-      else if (k === "amp") p0 = 1;
-      else if (k === "fwhm") p0 = 10;
+    } else if (isPeakComponentType(componentType)) {
+      p0 = FALLBACK_PEAK_P0[k] ?? 0;
     }
     return {
       key: k,
@@ -230,6 +265,7 @@ export function migrateFittingParamsToEditor(
       initial_guess_mode: r.initial_guess_mode === "auto" ? "auto" : "default",
       components: r.components.map((c) => ({
         ...c,
+        component_type: parseFittingComponentType(c.component_type),
         component_id: stripLegacyFittingComponentId(c.component_id),
       })),
     };
@@ -251,9 +287,7 @@ export function migrateFittingParamsToEditor(
     if (!row || typeof row !== "object") continue;
     const cr = row as Record<string, unknown>;
     const component_id = stripLegacyFittingComponentId(String(cr.component_id ?? ""));
-    const component_type = (String(cr.component_type || "gaussian") === "polynomial_background"
-      ? "polynomial_background"
-      : "gaussian") as FittingComponentEditor["component_type"];
+    const component_type = parseFittingComponentType(String(cr.component_type || "gaussian"));
     const degree =
       typeof cr.degree === "number" && Number.isFinite(cr.degree)
         ? Math.max(0, Math.min(MAX_POLY_DEGREE, Math.floor(cr.degree)))
