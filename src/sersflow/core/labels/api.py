@@ -1,3 +1,5 @@
+"""Extract Raman-style experimental labels from filepath or free-form search text."""
+
 from __future__ import annotations
 
 import logging
@@ -22,7 +24,7 @@ _NERNST_V_PER_PH = 0.05916
 
 
 def _apply_potential_as_rhe(
-    path: Path,
+    path_hint: str | Path | None,
     search_text: str,
     *,
     ph: float | None,
@@ -39,6 +41,7 @@ def _apply_potential_as_rhe(
     if pot is None:
         return
     v_raw, ref = pot
+    hint = path_hint if path_hint is not None else "<text>"
     if ref == "OCP":
         out["potential_V"] = float(v_raw)
         out["potential_ref"] = "OCP"
@@ -52,7 +55,7 @@ def _apply_potential_as_rhe(
             logger.warning(
                 "Labels %s: potential vs Ag/AgCl but no pH in path context — "
                 "cannot convert to RHE; omitting potential.",
-                path,
+                hint,
             )
             return
         out["potential_V"] = float(v_raw) + _AGCL_TO_SHE_V + _NERNST_V_PER_PH * float(ph)
@@ -62,6 +65,71 @@ def _apply_potential_as_rhe(
         out["potential_V"] = float(v_raw)
         out["potential_ref"] = "V"
         return
+
+
+def extract_labels_from_text(
+    search_text: str,
+    *,
+    previous_labels: dict[str, Any] | None = None,
+    path_hint: str | Path | None = None,
+) -> dict[str, Any]:
+    """
+    Extract a normalized label dict from already-built search text.
+
+    Same keys/semantics as :func:`extract_labels`. Keys are omitted when not detected.
+    """
+    text = str(search_text or "")
+    out: dict[str, Any] = {}
+    hint = path_hint if path_hint is not None else "<text>"
+
+    sample = extract_sample(text)
+    if sample:
+        out["sample"] = sample
+
+    gas = extract_gas(text)
+    if gas:
+        out["gas"] = gas
+
+    ph = extract_ph(text)
+    if ph is not None:
+        out["ph"] = ph
+
+    current_a, parsed_is_density = extract_current(text)
+    if current_a is not None:
+        if not parsed_is_density:
+            logger.warning(
+                "Labels %s: current token looks like bulk current (A), not mA/cm²; "
+                "stored as current_density_A_cm2 anyway — verify the value.",
+                hint,
+            )
+        if previous_labels is not None and previous_labels.get("current_is_density") is False and parsed_is_density:
+            logger.warning(
+                "Labels %s: stored labels had current_is_density=False and the path now parses as "
+                "current density (True) — interpretation changed.",
+                hint,
+            )
+        out["current_density_A_cm2"] = current_a
+
+    _apply_potential_as_rhe(hint, text, ph=ph, out=out)
+
+    laser_nm = extract_laser_wavelength_nm(text)
+    if laser_nm is not None:
+        out["laser_nm"] = laser_nm
+
+    laser_pct = extract_laser_power_percent(text)
+    if laser_pct is not None:
+        out["laser_power_pct"] = laser_pct
+
+    conc = extract_compound_and_concentration(text)
+    if conc:
+        out["electrolyte"] = conc["compound"]
+        out["concentration_M"] = conc["value_M"]
+    else:
+        elec = extract_electrolyte(text)
+        if elec:
+            out["electrolyte"] = elec
+
+    return out
 
 
 def extract_labels(
@@ -86,55 +154,8 @@ def extract_labels(
     Keys are omitted when not detected (except empty dict when nothing found).
     """
     search_text = build_search_text(path, parent_levels=parent_levels)
-    out: dict[str, Any] = {"search_text": search_text}
-
-    sample = extract_sample(search_text)
-    if sample:
-        out["sample"] = sample
-
-    gas = extract_gas(search_text)
-    if gas:
-        out["gas"] = gas
-
-    ph = extract_ph(search_text)
-    if ph is not None:
-        out["ph"] = ph
-
-    current_a, parsed_is_density = extract_current(search_text)
-    if current_a is not None:
-        if not parsed_is_density:
-            logger.warning(
-                "Labels %s: current token looks like bulk current (A), not mA/cm²; "
-                "stored as current_density_A_cm2 anyway — verify the value.",
-                path,
-            )
-        if previous_labels is not None and previous_labels.get("current_is_density") is False and parsed_is_density:
-            logger.warning(
-                "Labels %s: stored labels had current_is_density=False and the path now parses as "
-                "current density (True) — interpretation changed.",
-                path,
-            )
-        out["current_density_A_cm2"] = current_a
-
-    _apply_potential_as_rhe(path, search_text, ph=ph, out=out)
-
-    laser_nm = extract_laser_wavelength_nm(search_text)
-    if laser_nm is not None:
-        out["laser_nm"] = laser_nm
-
-    laser_pct = extract_laser_power_percent(search_text)
-    if laser_pct is not None:
-        out["laser_power_pct"] = laser_pct
-
-    conc = extract_compound_and_concentration(search_text)
-    if conc:
-        out["electrolyte"] = conc["compound"]
-        out["concentration_M"] = conc["value_M"]
-    else:
-        elec = extract_electrolyte(search_text)
-        if elec:
-            out["electrolyte"] = elec
-
-    # Trim internal helper from default API consumers / persistence
-    out.pop("search_text", None)
-    return out
+    return extract_labels_from_text(
+        search_text,
+        previous_labels=previous_labels,
+        path_hint=path,
+    )

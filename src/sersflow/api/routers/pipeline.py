@@ -6,6 +6,9 @@ from fastapi import APIRouter, HTTPException, Request
 
 from sersflow.api.deps import current_user_id
 from sersflow.api.services.ownership import OwnershipError, assert_paths_owner, paths_from_pipeline_inputs
+from sersflow.api.services.technique_guard import prepare_pipeline_for_run
+from sersflow.core.io.technique import assert_homogeneous_technique_families
+from sersflow.core.io.upload_registry import upload_root
 
 from sersflow.api.schemas.pipeline import (
     PipelineRunFinalResponse,
@@ -27,6 +30,22 @@ router = APIRouter(prefix="/pipeline", tags=["Pipeline"])
 _cache = InProcessLRUCache(max_items=4096)
 
 
+def _infer_input_technique_family(relative_paths: list[str]) -> str | None:
+    """Infer technique from upload-root-resolved paths when possible."""
+    root = upload_root()
+    abs_paths = []
+    for rel in relative_paths:
+        p = root / str(rel)
+        if p.is_file():
+            abs_paths.append(p)
+    if not abs_paths:
+        return None
+    try:
+        return assert_homogeneous_technique_families(abs_paths)
+    except ValueError:
+        return None
+
+
 @router.get("/baseline-methods")
 def baseline_methods_endpoint() -> dict[str, Any]:
     return baseline_method_metadata()
@@ -36,11 +55,19 @@ def baseline_methods_endpoint() -> dict[str, Any]:
 def run_pipeline_endpoint(payload: PipelineRunRequest, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
     try:
-        assert_paths_owner(user_id, paths_from_pipeline_inputs(payload.inputs))
+        paths = paths_from_pipeline_inputs(payload.inputs)
+        assert_paths_owner(user_id, paths)
+        input_family = _infer_input_technique_family(paths)
+        pipeline = prepare_pipeline_for_run(
+            payload.pipeline,
+            input_family if input_family is not None else getattr(payload.pipeline, "technique_family", None),
+            context="pipeline run",
+            allow_empty_align=input_family is None,
+        )
         cfg = EngineConfig(cache_namespace=payload.cache_namespace or "default")
         final = run_pipeline(
             inputs=payload.inputs,
-            pipeline=payload.pipeline,
+            pipeline=pipeline,
             cache=_cache,
             config=cfg,
             up_to_step=payload.up_to_step,
@@ -83,6 +110,8 @@ def sweep_pipeline_endpoint(payload: PipelineSweepRequest, request: Request) -> 
     user_id = current_user_id(request)
     try:
         assert_paths_owner(user_id, paths_from_pipeline_inputs(payload.inputs))
+        paths = paths_from_pipeline_inputs(payload.inputs)
+        input_family = _infer_input_technique_family(paths)
         step_name = payload.sweep.step
         grid = payload.sweep.grid
         if not grid:
@@ -132,6 +161,12 @@ def sweep_pipeline_endpoint(payload: PipelineSweepRequest, request: Request) -> 
             steps[idx].params.update(params)
             sweep_pipeline = payload.base_pipeline.model_copy()
             sweep_pipeline.steps = steps
+            sweep_pipeline = prepare_pipeline_for_run(
+                sweep_pipeline,
+                input_family if input_family is not None else getattr(sweep_pipeline, "technique_family", None),
+                context="pipeline sweep",
+                allow_empty_align=input_family is None,
+            )
 
             cfg = EngineConfig(cache_namespace=payload.cache_namespace or "sweep")
             finals = run_pipeline(inputs=payload.inputs, pipeline=sweep_pipeline, cache=_cache, config=cfg, strict=True)

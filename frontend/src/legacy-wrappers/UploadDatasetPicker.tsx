@@ -1,9 +1,20 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { UPLOADS_LIST_QUERY_KEY, fetchUploadsList, useUploadsList, type UploadListItem } from "../preprocess/hooks/useUploadsList";
 import { buildRangeGroupOptions } from "../preprocess/uploadRangeGroups";
+import { useFormatsCatalog } from "../preprocess/hooks/useFormatsCatalog";
+import {
+  buildXpsRegionGroupOptions,
+  isTechniqueFamilyTie,
+  majorityTechniqueFamily,
+  selectionMixesTechniques,
+} from "../preprocess/uploadXpsRegionGroups";
 import {
   FILTER_KEYS,
   distinctLabelValues,
+  labelsMatchSelections,
   matchesLabelSelections,
+  visibleFilterKeys,
   type LabelSelections,
 } from "../preprocess/uploadLabelFilters";
 import {
@@ -14,16 +25,17 @@ import {
   type UploadFolderNode,
 } from "../preprocess/uploadsTree";
 import { formatFileSizeMb, summarizeUploadLabels } from "../preprocess/uploadsUtils.ts";
+import {
+  blockDisplayName,
+  blockSelectionKey,
+  mergePathAndBlockLabels,
+  parentPathsFromSelectionKeys,
+  parseSelectionKey,
+  recordIndicesByPathFromSelectionKeys,
+  sortedBlockEntries,
+} from "../preprocess/uploadBlockSpectra";
 
-type UploadItem = {
-  relative_path: string;
-  filename: string;
-  size_bytes: number;
-  labels?: Record<string, unknown>;
-  wn_min?: number | null;
-  wn_max?: number | null;
-  spectrum_count?: number | null;
-};
+type UploadItem = UploadListItem;
 
 export type UploadDatasetPickerHandle = {
   refresh: () => Promise<void>;
@@ -33,12 +45,31 @@ function setCheckboxIndeterminate(el: HTMLInputElement | null, value: boolean) {
   if (el) el.indeterminate = value;
 }
 
+function pruneSelectionKeys(keys: Set<string>, existingPaths: Set<string>, itemsByPath: Map<string, UploadItem>): Set<string> {
+  const next = new Set<string>();
+  for (const key of keys) {
+    const { relativePath, recordIndex } = parseSelectionKey(key);
+    if (!existingPaths.has(relativePath)) continue;
+    if (recordIndex == null) {
+      next.add(relativePath);
+      continue;
+    }
+    const blocks = sortedBlockEntries(itemsByPath.get(relativePath)?.labels);
+    if (blocks.some((b) => b.index === recordIndex)) next.add(key);
+  }
+  return next;
+}
+
 export const UploadDatasetPicker = forwardRef<
   UploadDatasetPickerHandle,
-  { onSelectionChange?: (relativePaths: string[]) => void }
+  {
+    onSelectionChange?: (relativePaths: string[], recordIndices?: Record<string, number[]>) => void;
+  }
 >(function UploadDatasetPicker({ onSelectionChange }, ref) {
+  const queryClient = useQueryClient();
+  const uploadsQ = useUploadsList({ limit: 5000 });
   const [items, setItems] = useState<UploadItem[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set()); // path or path#idx
   const [totalCount, setTotalCount] = useState(0);
   const [rangeMenuValue, setRangeMenuValue] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -51,6 +82,9 @@ export const UploadDatasetPicker = forwardRef<
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pendingScrollTopRef = useRef<number | null>(null);
 
+  const selectedParentPaths = useMemo(() => parentPathsFromSelectionKeys(selected), [selected]);
+  const selectedParentSet = useMemo(() => new Set(selectedParentPaths), [selectedParentPaths]);
+
   const visibleItems = useMemo(() => {
     return items.filter((item) => matchesLabelSelections(item.labels, labelSelections));
   }, [items, labelSelections]);
@@ -58,27 +92,63 @@ export const UploadDatasetPicker = forwardRef<
   const visiblePaths = useMemo(() => new Set(visibleItems.map((x) => x.relative_path)), [visibleItems]);
   const visibleCount = visibleItems.length;
   const rangeOptions = useMemo(() => buildRangeGroupOptions(visibleItems), [visibleItems]);
+  const regionOptions = useMemo(() => buildXpsRegionGroupOptions(visibleItems), [visibleItems]);
+  const formatsQ = useFormatsCatalog();
+  const formatsCatalog = formatsQ.data?.items;
+  const majorityFamily = useMemo(
+    () => majorityTechniqueFamily(visibleItems, formatsCatalog),
+    [visibleItems, formatsCatalog]
+  );
+  const majorityTie = useMemo(
+    () => isTechniqueFamilyTie(visibleItems, formatsCatalog),
+    [visibleItems, formatsCatalog]
+  );
+  const selectionMixed = useMemo(
+    () => selectionMixesTechniques(selectedParentPaths, items),
+    [selectedParentPaths, items]
+  );
   const tree = useMemo(() => buildUploadsTree(visibleItems), [visibleItems]);
   const distinctByKey = useMemo(() => {
     const out: Record<string, string[]> = {};
     for (const k of FILTER_KEYS) out[k] = distinctLabelValues(items, k);
     return out;
   }, [items]);
+  const majorityFamilyAll = useMemo(
+    () => majorityTechniqueFamily(items, formatsCatalog),
+    [items, formatsCatalog]
+  );
+  const filterKeysShown = useMemo(
+    () => visibleFilterKeys(items, majorityFamilyAll),
+    [items, majorityFamilyAll]
+  );
+
+  function emitSelection(next: Set<string>) {
+    selectedRef.current = next;
+    setSelected(next);
+    const paths = parentPathsFromSelectionKeys(next);
+    const idxs = recordIndicesByPathFromSelectionKeys(next);
+    onSelectionChangeRef.current?.(paths, Object.keys(idxs).length ? idxs : undefined);
+  }
 
   async function fetchItems() {
     try {
-      const res = await fetch("/io/uploads?limit=5000", { cache: "no-store", credentials: "include" });
-      if (!res.ok) return;
-      const data = await res.json();
+      await queryClient.invalidateQueries({ queryKey: UPLOADS_LIST_QUERY_KEY });
+      const data = await queryClient.fetchQuery({
+        queryKey: [...UPLOADS_LIST_QUERY_KEY, 5000],
+        queryFn: () => fetchUploadsList(5000),
+      });
       const fetched: UploadItem[] = data.items ?? [];
       const total = Number.isFinite(Number(data.count)) ? Number(data.count) : fetched.length;
       const existing = new Set(fetched.map((x) => x.relative_path));
-      const pruned = new Set([...selectedRef.current].filter((p) => existing.has(p)));
+      const byPath = new Map(fetched.map((x) => [x.relative_path, x]));
+      const pruned = pruneSelectionKeys(selectedRef.current, existing, byPath);
       selectedRef.current = pruned;
       setItems(fetched);
       setSelected(pruned);
       setTotalCount(total);
-      onSelectionChangeRef.current?.([...pruned]);
+      const paths = parentPathsFromSelectionKeys(pruned);
+      const idxs = recordIndicesByPathFromSelectionKeys(pruned);
+      onSelectionChangeRef.current?.(paths, Object.keys(idxs).length ? idxs : undefined);
     } catch {
       // ignore
     }
@@ -87,7 +157,23 @@ export const UploadDatasetPicker = forwardRef<
   useImperativeHandle(ref, () => ({ refresh: fetchItems }));
 
   useEffect(() => {
-    fetchItems();
+    const data = uploadsQ.data;
+    if (!data) return;
+    const fetched: UploadItem[] = (data.items as UploadItem[]) ?? [];
+    const total = Number.isFinite(Number(data.count)) ? Number(data.count) : fetched.length;
+    const existing = new Set(fetched.map((x) => x.relative_path));
+    const byPath = new Map(fetched.map((x) => [x.relative_path, x]));
+    const pruned = pruneSelectionKeys(selectedRef.current, existing, byPath);
+    selectedRef.current = pruned;
+    setItems(fetched);
+    setSelected(pruned);
+    setTotalCount(total);
+    const paths = parentPathsFromSelectionKeys(pruned);
+    const idxs = recordIndicesByPathFromSelectionKeys(pruned);
+    onSelectionChangeRef.current?.(paths, Object.keys(idxs).length ? idxs : undefined);
+  }, [uploadsQ.data]);
+
+  useEffect(() => {
     const channel = new BroadcastChannel("sersflow:uploads-changed");
     channel.addEventListener("message", () => fetchItems());
     return () => channel.close();
@@ -102,18 +188,41 @@ export const UploadDatasetPicker = forwardRef<
     el.scrollTop = top;
   }, [visibleCount, selected.size, Object.keys(labelSelections).length]);
 
-  function emitSelection(next: Set<string>) {
-    selectedRef.current = next;
-    setSelected(next);
-    onSelectionChangeRef.current?.([...next]);
+  function clearKeysForPath(next: Set<string>, rel: string) {
+    for (const key of [...next]) {
+      const { relativePath } = parseSelectionKey(key);
+      if (relativePath === rel) next.delete(key);
+    }
   }
 
   function togglePath(rel: string) {
     const el = scrollRef.current;
     pendingScrollTopRef.current = el ? el.scrollTop : null;
     const next = new Set(selectedRef.current);
-    if (next.has(rel)) next.delete(rel);
-    else next.add(rel);
+    const hasAny = [...next].some((k) => parseSelectionKey(k).relativePath === rel);
+    clearKeysForPath(next, rel);
+    if (!hasAny) next.add(rel);
+    emitSelection(next);
+  }
+
+  function toggleBlock(rel: string, index: number) {
+    const el = scrollRef.current;
+    pendingScrollTopRef.current = el ? el.scrollTop : null;
+    const next = new Set(selectedRef.current);
+    const item = items.find((x) => x.relative_path === rel);
+    const blocks = sortedBlockEntries(item?.labels);
+    const bkey = blockSelectionKey(rel, index);
+    if (next.has(rel)) {
+      // Whole file was selected: expand to all blocks except the one being unchecked.
+      next.delete(rel);
+      for (const b of blocks) {
+        if (b.index !== index) next.add(blockSelectionKey(rel, b.index));
+      }
+    } else if (next.has(bkey)) {
+      next.delete(bkey);
+    } else {
+      next.add(bkey);
+    }
     emitSelection(next);
   }
 
@@ -122,14 +231,33 @@ export const UploadDatasetPicker = forwardRef<
     pendingScrollTopRef.current = el ? el.scrollTop : null;
     const next = new Set(selectedRef.current);
     for (const rel of paths) {
+      clearKeysForPath(next, rel);
       if (checked) next.add(rel);
-      else next.delete(rel);
     }
     emitSelection(next);
   }
 
   function selectAllVisible() {
-    emitSelection(new Set(visibleItems.map((x) => x.relative_path)));
+    const next = new Set<string>();
+    const filterActive = Object.values(labelSelections).some((a) => Array.isArray(a) && a.length > 0);
+    for (const item of visibleItems) {
+      const blocks = sortedBlockEntries(item.labels);
+      if (!blocks.length) {
+        next.add(item.relative_path);
+        continue;
+      }
+      if (!filterActive) {
+        next.add(item.relative_path);
+        continue;
+      }
+      for (const b of blocks) {
+        const merged = mergePathAndBlockLabels(item.labels, b.meta);
+        if (labelsMatchSelections(merged, labelSelections)) {
+          next.add(blockSelectionKey(item.relative_path, b.index));
+        }
+      }
+    }
+    emitSelection(next);
   }
 
   function clearSelection() {
@@ -141,6 +269,36 @@ export const UploadDatasetPicker = forwardRef<
     if (!g) return;
     emitSelection(new Set(g.paths.filter((p) => visiblePaths.has(p))));
     setRangeMenuValue("");
+  }
+
+  function selectByRegionGroup(key: string) {
+    const g = regionOptions.find((x) => x.key === key);
+    if (!g) return;
+    const keys = (g.selectionKeys?.length ? g.selectionKeys : g.paths).filter((sel) => {
+      const { relativePath } = parseSelectionKey(sel);
+      return visiblePaths.has(relativePath);
+    });
+    emitSelection(new Set(keys));
+    setRangeMenuValue("");
+  }
+
+  function pathSelected(rel: string): boolean {
+    return [...selected].some((k) => parseSelectionKey(k).relativePath === rel);
+  }
+
+  function pathIndeterminate(rel: string, blockCount: number): boolean {
+    if (selected.has(rel) || blockCount <= 0) return false;
+    let n = 0;
+    for (const key of selected) {
+      const p = parseSelectionKey(key);
+      if (p.relativePath === rel && p.recordIndex != null) n += 1;
+    }
+    return n > 0 && n < blockCount;
+  }
+
+  function blockSelected(rel: string, index: number): boolean {
+    if (selected.has(rel)) return true; // whole file → all blocks shown selected
+    return selected.has(blockSelectionKey(rel, index));
   }
 
   function toggleSelectionValue(key: string, value: string) {
@@ -177,7 +335,7 @@ export const UploadDatasetPicker = forwardRef<
     const visibleDescendants = descendants.filter((rel) => visiblePaths.has(rel));
     if (!visibleDescendants.length) return null;
 
-    const checkedCount = visibleDescendants.filter((rel) => selected.has(rel)).length;
+    const checkedCount = visibleDescendants.filter((rel) => pathSelected(rel)).length;
     const isOpen = openFolderKeys.has(key) || depth <= 1;
 
     return (
@@ -210,22 +368,55 @@ export const UploadDatasetPicker = forwardRef<
             const rel = String(file.item.relative_path || "");
             if (!visiblePaths.has(rel)) return null;
             const sizeStr = formatFileSizeMb(Number(file.item.size_bytes) || 0);
-            const { short: labelsShort, full: labelsFull } = summarizeUploadLabels(
-              file.item.labels as Record<string, unknown> | undefined
-            );
+            const labels = file.item.labels as Record<string, unknown> | undefined;
+            const { short: labelsShort, full: labelsFull } = summarizeUploadLabels(labels);
             const displayText = labelsShort ? `${file.name} — ${labelsShort}` : file.name;
             const titleText = labelsFull ? `${file.name} — ${sizeStr}\n${labelsFull}` : `${file.name} — ${sizeStr}`;
+            const blocks = sortedBlockEntries(labels);
+            const fileOn = pathSelected(rel);
             return (
-              <div
-                key={rel}
-                className="uploads-item"
-                style={{ paddingLeft: `${depth * 16}px`, cursor: "pointer" }}
-                onClick={() => togglePath(rel)}
-              >
-                <input type="checkbox" className="uploads-select-cb" checked={selected.has(rel)} readOnly />
-                <span className="uploads-item-label" title={titleText}>
-                  {displayText} ({sizeStr})
-                </span>
+              <div key={rel}>
+                <div
+                  className="uploads-item"
+                  style={{ paddingLeft: `${depth * 16}px`, cursor: "pointer" }}
+                  onClick={() => togglePath(rel)}
+                >
+                  <input
+                    type="checkbox"
+                    className="uploads-select-cb"
+                    checked={fileOn}
+                    readOnly
+                    ref={(el) => setCheckboxIndeterminate(el, pathIndeterminate(rel, blocks.length))}
+                  />
+                  <span className="uploads-item-label" title={titleText}>
+                    {displayText} ({sizeStr})
+                    {blocks.length ? ` · ${blocks.length} spectra` : ""}
+                  </span>
+                </div>
+                {blocks.map((b) => {
+                  const merged = mergePathAndBlockLabels(labels, b.meta);
+                  if (!labelsMatchSelections(merged, labelSelections)) return null;
+                  const { short: bshort, full: bfull } = summarizeUploadLabels(merged);
+                  const bname = blockDisplayName(b.meta);
+                  const on = blockSelected(rel, b.index);
+                  return (
+                    <div
+                      key={`${rel}#${b.index}`}
+                      className="uploads-item"
+                      style={{ paddingLeft: `${depth * 16 + 18}px`, cursor: "pointer", opacity: 0.95 }}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        toggleBlock(rel, b.index);
+                      }}
+                      title={bfull || `Toggle spectrum block #${b.index}`}
+                    >
+                      <input type="checkbox" className="uploads-select-cb" checked={on} readOnly />
+                      <span className="uploads-item-label">
+                        {bshort ? `↳ ${bname} — ${bshort}` : `↳ ${bname}`}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
@@ -240,35 +431,60 @@ export const UploadDatasetPicker = forwardRef<
     <div className="upload-dataset-picker">
       <div className="uploads-meta uploads-picker-toolbar">
         <span>
-          {visibleCount} shown • {totalCount || items.length} total • {selected.size} selected
+          {visibleCount} shown • {totalCount || items.length} total • {selectedParentSet.size} selected
         </span>
         <span className="row" style={{ gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
-          <label className="inline" style={{ margin: 0 }} title="Groups use 100 cm⁻¹ steps">
-            <span className="hint" style={{ marginRight: "6px" }}>
-              Range
-            </span>
-            <select
-              className="mini"
-              value={rangeMenuValue}
-              disabled={visibleCount === 0}
-              onChange={(e) => {
-                const v = String(e.target.value || "");
-                setRangeMenuValue(v);
-                if (v) selectByRangeGroup(v);
-              }}
-            >
-              <option value="">Select by wavenumber range…</option>
-              {rangeOptions.map((g) => (
-                <option key={g.key} value={g.key}>
-                  {g.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {majorityFamily === "xps" ? (
+            <label className="inline" style={{ margin: 0 }} title="Select spectra blocks for an XPS region (not whole multi-region files)">
+              <span className="hint" style={{ marginRight: "6px" }}>
+                XPS region
+              </span>
+              <select
+                className="mini"
+                value={rangeMenuValue}
+                disabled={visibleCount === 0}
+                onChange={(e) => {
+                  const v = String(e.target.value || "");
+                  setRangeMenuValue(v);
+                  if (v) selectByRegionGroup(v);
+                }}
+              >
+                <option value="">Select by XPS region…</option>
+                {regionOptions.map((g) => (
+                  <option key={g.key} value={g.key}>
+                    {g.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <label className="inline" style={{ margin: 0 }} title="Groups use 100 cm⁻¹ steps">
+              <span className="hint" style={{ marginRight: "6px" }}>
+                Range
+              </span>
+              <select
+                className="mini"
+                value={rangeMenuValue}
+                disabled={visibleCount === 0}
+                onChange={(e) => {
+                  const v = String(e.target.value || "");
+                  setRangeMenuValue(v);
+                  if (v) selectByRangeGroup(v);
+                }}
+              >
+                <option value="">Select by wavenumber range…</option>
+                {rangeOptions.map((g) => (
+                  <option key={g.key} value={g.key}>
+                    {g.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button type="button" className="mini" onClick={selectAllVisible} disabled={visibleCount === 0}>
             Select all visible
           </button>
-          <button type="button" className="mini" onClick={clearSelection} disabled={selected.size === 0}>
+          <button type="button" className="mini" onClick={clearSelection} disabled={selectedParentSet.size === 0}>
             Clear
           </button>
           <button type="button" className="mini" onClick={() => setFiltersOpen((x) => !x)}>
@@ -276,6 +492,16 @@ export const UploadDatasetPicker = forwardRef<
           </button>
         </span>
       </div>
+      {majorityTie ? (
+        <div className="hint" style={{ marginTop: "6px" }}>
+          Equal XPS and vibrational file counts — showing wavenumber range groups (vibrational default).
+        </div>
+      ) : null}
+      {selectionMixed ? (
+        <div className="hint" style={{ color: "var(--danger, #b00020)", marginTop: "6px" }}>
+          Selection mixes XPS and vibrational files. A dataset cannot combine both; deselect one technique before Create.
+        </div>
+      ) : null}
 
       {filtersOpen ? (
         <div className="upload-picker-filters card-inner">
@@ -283,7 +509,7 @@ export const UploadDatasetPicker = forwardRef<
             Click a label key to select one or more values (AND across keys, OR within a key).
           </div>
           <div style={{ display: "grid", gap: "6px" }}>
-            {FILTER_KEYS.map((key) => {
+            {filterKeysShown.map((key) => {
               const values = distinctByKey[key] ?? [];
               const selectedVals = labelSelections[key] ?? [];
               const selectedCount = selectedVals.length;

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 
 import numpy as np
 
@@ -15,6 +15,9 @@ from sersflow.infra.datasets_store import DatasetRecord
 
 
 QcStepName = Literal["low_signal_filter", "outlier_detection"]
+
+# Session cohort QC only. metadata_filter is an engine XY mask (branch-local), not cohort QC.
+_QC_NAMES = ("low_signal_filter", "outlier_detection")
 
 
 @dataclass(frozen=True)
@@ -31,22 +34,27 @@ _cache = InProcessLRUCache(max_items=4096)
 
 
 def is_qc_step(step: PipelineStep) -> bool:
-    return bool(step.enabled) and step.name in ("low_signal_filter", "outlier_detection")
+    return bool(step.enabled) and step.name in _QC_NAMES
+
+
+def _with_steps(pipeline: Pipeline, steps: list) -> Pipeline:
+    """Rebuild pipeline steps while preserving technique_family and other top-level fields."""
+    return pipeline.model_copy(update={"steps": steps})
 
 
 def pipeline_without_qc_steps(pipeline: Pipeline) -> Pipeline:
-    steps = [s for s in pipeline.steps if not (s.enabled and s.name in ("low_signal_filter", "outlier_detection"))]
-    return Pipeline(steps=[s.model_copy(deep=True) for s in steps])
+    steps = [s for s in pipeline.steps if not (s.enabled and s.name in _QC_NAMES)]
+    return _with_steps(pipeline, [s.model_copy(deep=True) for s in steps])
 
 
 def _prefix_pipeline_before_index(pipeline: Pipeline, idx: int) -> Pipeline:
     """All steps < idx, excluding QC steps (they don't transform XY)."""
     steps = []
     for s in pipeline.steps[:idx]:
-        if s.enabled and s.name in ("low_signal_filter", "outlier_detection"):
+        if s.enabled and s.name in _QC_NAMES:
             continue
         steps.append(s.model_copy(deep=True))
-    return Pipeline(steps=steps)
+    return _with_steps(pipeline, steps)
 
 
 def _finite_score(v: float) -> bool:
@@ -62,22 +70,14 @@ def apply_pipeline_qc_filters(
     strict: bool = True,
 ) -> tuple[list[Any], list[QcResult]]:
     """
-    Apply QC/filter steps in pipeline order and return the filtered refs.
+    Apply session cohort QC steps (low_signal / outlier) in pipeline order.
 
-    Semantics:
-    - Steps are treated as cohort filters (session-only): excluded spectra are removed from downstream steps.
-    - QC steps do not transform XY; they only compute scores and filter the cohort.
+    metadata_filter is not applied here: it runs in the XY engine as a branch-local mask
+    (respects input_from), emptying non-matching spectra on that branch.
     """
     cfg = EngineConfig(cache_namespace=cache_namespace)
     active_refs = list(refs)
     reports: list[QcResult] = []
-
-    # Map spectrum_id -> ref for stable filtering.
-    by_id: dict[str, Any] = {}
-    for r in active_refs:
-        sid = str(getattr(r, "spectrum_id", None) or (r.get("spectrum_id") if isinstance(r, dict) else ""))
-        if sid:
-            by_id[sid] = r
 
     for idx, step in enumerate(pipeline.steps):
         if not is_qc_step(step):
@@ -201,7 +201,10 @@ def apply_pipeline_qc_filters_before_step(
     """
     Apply QC/filter steps for indices < stop_before_step_index, then return remaining refs.
     """
-    clipped = Pipeline(steps=[s.model_copy(deep=True) for s in pipeline.steps[: max(0, int(stop_before_step_index))]])
+    clipped = _with_steps(
+        pipeline,
+        [s.model_copy(deep=True) for s in pipeline.steps[: max(0, int(stop_before_step_index))]],
+    )
     return apply_pipeline_qc_filters(
         dataset=dataset,
         pipeline=clipped,
@@ -223,4 +226,3 @@ def qc_step_xy_inputs(
     cfg = EngineConfig(cache_namespace=cache_namespace)
     prefix = _prefix_pipeline_before_index(pipeline, step_index)
     return run_pipeline(inputs=refs, pipeline=prefix, cache=_cache, config=cfg, strict=strict)
-

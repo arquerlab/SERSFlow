@@ -2,7 +2,8 @@ import type { BaselineMethodsResponse, FittingComponentSpecPublic, NormalizePara
 import type { EditorStep } from "./editorTypes";
 import { fallbackBaselineCatalog, normalizeBaselineParams } from "./baselineMethodCatalog";
 import { flattenFittingForPipeline, migrateFittingParamsToEditor } from "./fittingUtils";
-import { pipelineStepSpecs } from "./pipelineStepSpecs";
+import type { StepSpecsMap } from "./hooks/usePipelineStepsCatalog";
+import { normalizeXAxisCalibrationParams } from "./xAxisCalibrationUtils";
 
 const DEFAULT_POINT_X = 1000;
 
@@ -43,7 +44,8 @@ export function normalizeMethodParams(
   stepName: string,
   params: Record<string, unknown> | null | undefined,
   fittingCatalog: FittingComponentSpecPublic[] | undefined,
-  baselineCatalog: BaselineMethodsResponse = fallbackBaselineCatalog
+  baselineCatalog: BaselineMethodsResponse = fallbackBaselineCatalog,
+  stepSpecs: StepSpecsMap = {}
 ): Record<string, unknown> {
   if (stepName === "fitting") {
     return migrateFittingParamsToEditor((params ?? {}) as Record<string, unknown>, fittingCatalog) as unknown as Record<
@@ -57,7 +59,10 @@ export function normalizeMethodParams(
   if (stepName === "baseline") {
     return normalizeBaselineParams(params, baselineCatalog);
   }
-  const spec = pipelineStepSpecs[stepName];
+  if (stepName === "x_axis_calibration") {
+    return normalizeXAxisCalibrationParams(params) as unknown as Record<string, unknown>;
+  }
+  const spec = stepSpecs[stepName];
   if (!spec) return params ?? {};
   const p = { ...(params ?? {}) };
   const method = String(p.method || spec.methods[0]?.id || "");
@@ -69,7 +74,8 @@ export function normalizeMethodParams(
 export function editorStepsToApiSteps(
   slist: EditorStep[],
   fittingCatalog: FittingComponentSpecPublic[] | undefined,
-  baselineCatalog: BaselineMethodsResponse = fallbackBaselineCatalog
+  baselineCatalog: BaselineMethodsResponse = fallbackBaselineCatalog,
+  stepSpecs: StepSpecsMap = {}
 ): Pipeline["steps"] {
   return slist.map((s) => {
     const input_from = s.input_from ?? "previous";
@@ -78,7 +84,7 @@ export function editorStepsToApiSteps(
       const fp = migrateFittingParamsToEditor(s.params ?? {}, fittingCatalog);
       paramsOut = flattenFittingForPipeline(fp);
     } else {
-      paramsOut = normalizeMethodParams(s.name, s.params, fittingCatalog, baselineCatalog);
+      paramsOut = normalizeMethodParams(s.name, s.params, fittingCatalog, baselineCatalog, stepSpecs);
     }
     const row: Record<string, unknown> = {
       name: s.name,
@@ -97,7 +103,12 @@ export function editorStepsToApiSteps(
 export function buildPipelineFromEditor(
   steps: EditorStep[],
   fittingCatalog: FittingComponentSpecPublic[] | undefined,
-  baselineCatalog: BaselineMethodsResponse = fallbackBaselineCatalog
+  baselineCatalog: BaselineMethodsResponse = fallbackBaselineCatalog,
+  techniqueFamily: "vibrational" | "xps" = "vibrational",
+  stepSpecs: StepSpecsMap = {}
 ): Pipeline {
-  return { steps: editorStepsToApiSteps(steps, fittingCatalog, baselineCatalog) };
+  return {
+    steps: editorStepsToApiSteps(steps, fittingCatalog, baselineCatalog, stepSpecs),
+    technique_family: techniqueFamily,
+  };
 }

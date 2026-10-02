@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sersflow.api.schemas.datasets import SpectrumRef
 
 InputFrom = Literal["previous", "initial", "after_step"]
+TechniqueFamily = Literal["vibrational", "xps"]
 
 
 class PipelineStep(BaseModel):
@@ -39,6 +40,8 @@ class PipelineStep(BaseModel):
 
 class Pipeline(BaseModel):
     steps: list[PipelineStep] = Field(default_factory=list)
+    # Catalog/runtime technique: selects fit engine and XPS-only UI affordances.
+    technique_family: TechniqueFamily = "vibrational"
 
 
 class ReturnMetricsOnly(BaseModel):

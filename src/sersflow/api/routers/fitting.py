@@ -19,7 +19,7 @@ from sersflow.api.schemas.fitting import (
 from sersflow.api.services.uploads import resolve_existing_upload
 from sersflow.core.io.load_file import load_dataset
 from sersflow.core.preprocess.fitting import FitComponent, FitProblem, fit_curve
-from sersflow.core.preprocess.fitting_specs import build_component_function, list_component_types
+from sersflow.core.preprocess.fitting_specs import component_param_specs, list_component_types
 
 
 router = APIRouter(prefix="/fitting", tags=["Fitting"])
@@ -56,6 +56,12 @@ def _resolve_target(target: FitInlineSeries | FitSpectrumRef, *, owner_user_id: 
                 raise ValueError(f"record_index out of range: {idx} (max {spectra.shape[0]-1})")
             y = spectra[idx, :]
             return x, y
+        if kind == "multi":
+            xs = getattr(ds, "xs", ())
+            ys = getattr(ds, "ys", ())
+            if idx < 0 or idx >= len(xs):
+                raise ValueError(f"record_index out of range: {idx} (max {len(xs)-1})")
+            return np.asarray(xs[idx], dtype=float), np.asarray(ys[idx], dtype=float)
         raise ValueError(f"Unsupported dataset kind for fitting: {kind}")
     except HTTPException:
         raise
@@ -75,10 +81,11 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
         ]
 
         # Determine expected parameter count from component specs
+        # (use component_param_specs — build_component_function rejects XPS backgrounds)
         total = 0
         per_comp_param_keys: list[list[str]] = []
         for c in payload.components:
-            _f, params = build_component_function(c.component_type, degree=c.degree)
+            params = component_param_specs(c.component_type, degree=c.degree)
             total += len(params)
             per_comp_param_keys.append([p.key for p in params])
 
@@ -95,6 +102,10 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
             bounds_lower=list(payload.bounds.lower),
             bounds_upper=list(payload.bounds.upper),
             initial_guess_mode=str(payload.initial_guess_mode),
+            technique_family=str(payload.technique_family or "vibrational"),
+            vary=list(payload.vary) if payload.vary is not None else None,
+            param_links=list(payload.param_links) if payload.param_links else None,
+            xps_region=(str(payload.xps_region).strip() or None) if payload.xps_region else None,
         )
         res = fit_curve(prob)
 

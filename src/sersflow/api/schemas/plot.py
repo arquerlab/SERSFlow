@@ -45,6 +45,52 @@ class MapPointsPlotRequest(BaseModel):
     title: str | None = None
 
 
+class MultiBlockMeta(BaseModel):
+    index: int = Field(ge=0)
+    xps_region: str | None = None
+    spectrum_role: str | None = None
+    xps_species: str | None = None
+    xps_transition: str | None = None
+    block_name: str | None = None
+    replicate_index: int | None = None
+    excitation_energy_eV: float | None = None
+    technique: str | None = None
+    acquired_at: str | None = None
+    # Experimental / electrochemical labels (from upload_labels.vms_spectra merge)
+    sample: str | None = None
+    gas: str | None = None
+    ph: float | None = None
+    current_density_A_cm2: float | None = None
+    potential_V: float | None = None
+    potential_ref: str | None = None
+    electrolyte: str | None = None
+    concentration_M: float | None = None
+    laser_nm: float | None = None
+    laser_power_pct: float | None = None
+
+
+class MultiFilterField(BaseModel):
+    id: str
+    label: str
+    kind: Literal["categorical", "numeric"]
+    values: list[str] | None = None
+    min: float | None = None
+    max: float | None = None
+
+
+class MultiInfoResponse(BaseModel):
+    is_multi: bool
+    count: int = Field(ge=0)
+    blocks: list[MultiBlockMeta] = Field(default_factory=list)
+    fields: list[MultiFilterField] = Field(default_factory=list)
+
+
+class MultiPointsPlotRequest(BaseModel):
+    relative_path: str = Field(min_length=1)
+    indices: list[int] = Field(min_length=1)
+    title: str | None = None
+
+
 class PlotKindsResponse(BaseModel):
     kinds: list[Literal["spectrum", "series_heatmap"]]
 

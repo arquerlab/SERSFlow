@@ -13,18 +13,77 @@ from typing import Any, Iterable, Protocol, Sequence
 
 from sersflow.core.io.load_file import load_dataset
 from sersflow.core.io.upload_registry import resolve_uploaded_path, upload_root
+from sersflow.core.models.datasets import MultiSpectrumDataset, SpectrumDataset
 from sersflow.core.pipeline.cache import CacheInterface
 from sersflow.core.pipeline.hashing import sha256_hex
 from sersflow.core.pipeline.steps import (
-    DEFAULT_STEPS,
     normalize_by_reference_point,
     normalization_point_x,
     params_fingerprint,
+)
+from sersflow.core.preprocess.x_axis_calibration import (
+    fitting_pos_keys_for_step,
+    measured_pos_from_fitting_xy,
 )
 from sersflow.core.spectrum import EMPTY_XY, XY, extract_xy
 from sersflow.infra.blob_store import resolve_blob_path
 
 logger = logging.getLogger(__name__)
+
+
+def spectrum_xps_region_from_dataset(ds: Any, record_index: int | None) -> str | None:
+    """Return per-block ``xps_region`` from a loaded dataset, if present."""
+    labels = spectrum_labels_from_dataset(ds, record_index)
+    raw = labels.get("xps_region")
+    if raw is not None and str(raw).strip():
+        return str(raw).strip()
+    return None
+
+
+def spectrum_labels_from_dataset(ds: Any, record_index: int | None) -> dict[str, Any]:
+    """Return per-block / spectrum metadata dict for metadata_filter evaluation."""
+    if isinstance(ds, MultiSpectrumDataset):
+        idx = int(record_index) if record_index is not None else 0
+        meta_list = list(ds.meta or [])
+        if 0 <= idx < len(meta_list):
+            m = meta_list[idx] or {}
+            if isinstance(m, dict):
+                return dict(m)
+        return {}
+    if isinstance(ds, SpectrumDataset):
+        m = getattr(ds, "meta", None)
+        if isinstance(m, dict):
+            return dict(m)
+    return {}
+
+
+def _merged_spectrum_labels(ref: Any, ds: Any) -> dict[str, Any]:
+    """Dataset block meta, optionally overlaid by ``spectrum_labels`` on the ref."""
+    labels = spectrum_labels_from_dataset(ds, _ref_value(ref, "record_index"))
+    extra = _ref_value(ref, "spectrum_labels")
+    if isinstance(extra, dict) and extra:
+        return {**labels, **extra}
+    return labels
+
+
+def fitting_region_applies(*, step_params: dict[str, Any], spectrum_xps_region: str | None) -> bool:
+    """
+    Whether a fitting step should transform this spectrum.
+
+    When the step declares ``xps_region`` and the spectrum has a known region, they must match
+    (case-insensitive). Missing step region or missing spectrum region → apply (compat).
+    """
+    wanted = step_params.get("xps_region")
+    if wanted is None or not str(wanted).strip():
+        return True
+    if spectrum_xps_region is None or not str(spectrum_xps_region).strip():
+        return True
+    return str(wanted).strip().lower() == str(spectrum_xps_region).strip().lower()
+
+# Cohort QC filters (session-only). They do not transform XY; treat as passthrough so
+# raw /pipeline/run and metric-subset paths never fail with "Unknown pipeline step".
+# metadata_filter is an engine transform (branch-local mask), not session cohort QC.
+_QC_PASSTHROUGH_STEPS = frozenset({"low_signal_filter", "outlier_detection"})
 
 # Reused across analysis jobs in the API process so each SDL trial does not pay
 # ProcessPool spawn + worker import cost (especially painful on Windows spawn).
@@ -246,7 +305,7 @@ def _validate_baseline_point_references(steps_list: Sequence[Any]) -> None:
             continue
         if _step_name_raw(step) != "normalize":
             continue
-        params = _step_params_raw(step)
+        params = dict(_step_params_raw(step))
         if str(params.get("method", "max")) != "baseline_point":
             continue
         baseline_step_id = str(params.get("baseline_step_id") or "").strip()
@@ -287,6 +346,9 @@ def _run_indexed_steps_for_spectrum(
     collect_steps: set[str] | None,
     step_nums: list[int] | None = None,
     collect_step_inputs: bool = False,
+    technique_family: str | None = None,
+    spectrum_xps_region: str | None = None,
+    spectrum_labels: dict[str, Any] | None = None,
 ) -> tuple[XY, dict[str, XY], dict[int, XY]]:
     """
     Execute pipeline steps in list order with per-step input resolution (previous / initial / after_step).
@@ -308,6 +370,7 @@ def _run_indexed_steps_for_spectrum(
     per_step_input: dict[int, XY] = {}
 
     final_xy: XY = xy_initial
+    labels_row = dict(spectrum_labels or {})
 
     id_to_index: dict[str, int] = {}
     for i, s in enumerate(steps_list):
@@ -342,17 +405,47 @@ def _run_indexed_steps_for_spectrum(
             continue
 
         name = _step_name_raw(step)
-        impl = DEFAULT_STEPS.get(name)
-        if impl is None:
+        # Session cohort QC (low_signal / outlier) is applied outside the XY engine.
+        if name in _QC_PASSTHROUGH_STEPS:
+            if j == 0:
+                outputs[0] = xy_initial
+                lineage_after[0] = input_hash
+            else:
+                outputs[j] = outputs[j - 1]
+                lineage_after[j] = lineage_after[j - 1]
+            final_xy = outputs[j]  # type: ignore[assignment]
+            if collect_steps is not None:
+                nums = want_by_name.get(name)
+                if nums is not None:
+                    step_num = (step_nums[j] if step_nums is not None else None) or (j + 1)
+                    if None in nums or step_num in nums:
+                        key = name if None in nums and len(nums) == 1 else f"{name}:{step_num}"
+                        if outputs[j] is not None:
+                            per_spec[key] = outputs[j]  # type: ignore[assignment]
+            continue
+
+        from sersflow.core.pipeline.library import get_step
+
+        spec = get_step(name)
+        if spec is None:
             raise ValueError(f"Unknown pipeline step: {name}")
+        if spec.impl is None:
+            raise ValueError(f"Pipeline step {name!r} is QC-only and has no engine transform")
+        impl = spec.impl
         impl_version = str(getattr(step, "impl_version", None) or (step.get("impl_version") if isinstance(step, dict) else None) or impl.impl_version)
-        params = _step_params_raw(step)
+        params = dict(_step_params_raw(step))
+        if name == "fitting" and technique_family:
+            params.setdefault("technique_family", technique_family)
+        if name == "metadata_filter":
+            params["_spectrum_labels"] = labels_row
 
         input_from = _step_input_from_raw(step)
         after_id = _step_after_step_id_raw(step)
         itag_decl = _input_tag(input_from, after_id if input_from == "after_step" else None)
 
-        base_fp = params_fingerprint(name, params, impl_version)
+        # Fingerprint without injected runtime labels (spectrum_id already scopes the cache).
+        fp_params = {k: v for k, v in params.items() if k != "_spectrum_labels"}
+        base_fp = params_fingerprint(name, fp_params, impl_version)
 
         lineage_in_for_transform = input_hash
         inp_xy: XY
@@ -416,7 +509,58 @@ def _run_indexed_steps_for_spectrum(
             )
             baseline_ref_tag = lineage_after[k] or ""
 
-        params_hash = sha256_hex(f"{base_fp}|in={itag_decl}|baseline_ref={baseline_ref_tag}")
+        fit_ref_tag = ""
+        cal_fitting_k: int | None = None
+        cal_fitting_input: XY | None = None
+        cal_fit_params: dict[str, Any] | None = None
+        cal_multi_fitting = False
+        if name == "x_axis_calibration" and str(params.get("method", "fixed_offset")).strip().lower() == "reference_peak":
+            fitting_step_id = str(params.get("fitting_step_id") or "").strip()
+            if not fitting_step_id:
+                raise ValueError("fitting_step_id must be provided for x_axis_calibration method='reference_peak'")
+            k = id_to_index.get(fitting_step_id)
+            if k is None:
+                raise ValueError(f"fitting_step_id {fitting_step_id!r} does not match any pipeline step")
+            if k >= j:
+                raise ValueError("fitting_step_id must refer to an earlier pipeline step")
+            fitting_step = steps_list[k]
+            if not _step_enabled_raw(fitting_step):
+                raise ValueError("fitting_step_id must refer to an enabled fitting step")
+            if _step_name_raw(fitting_step) != "fitting":
+                raise ValueError("fitting_step_id must refer to a fitting step")
+            fitting_input = inputs_for_step[k]
+            if fitting_input is None:
+                raise ValueError("selected fitting step has no available input")
+            pos_key = str(params.get("pos_key") or "").strip()
+            if not pos_key:
+                raise ValueError("pos_key must be provided for x_axis_calibration method='reference_peak'")
+            if "target_x" not in params:
+                raise ValueError("target_x must be provided for x_axis_calibration method='reference_peak'")
+            fit_indices = [
+                i
+                for i, s in enumerate(steps_list)
+                if _step_enabled_raw(s) and _step_name_raw(s) == "fitting"
+            ]
+            cal_multi_fitting = len(fit_indices) > 1
+            fit_params = dict(_step_params_raw(fitting_step))
+            if technique_family:
+                fit_params.setdefault("technique_family", technique_family)
+            expected_pos = fitting_pos_keys_for_step(
+                fit_params, step_index=k, multi_fitting=cal_multi_fitting
+            )
+            if pos_key not in expected_pos:
+                raise ValueError(
+                    f"pos_key {pos_key!r} is not a position feature of the selected fitting step "
+                    f"(expected one of {expected_pos})"
+                )
+            cal_fitting_k = k
+            cal_fitting_input = fitting_input
+            cal_fit_params = fit_params
+            fit_ref_tag = lineage_after[k] or lineage_in_for_transform
+
+        params_hash = sha256_hex(
+            f"{base_fp}|in={itag_decl}|baseline_ref={baseline_ref_tag}|fit_ref={fit_ref_tag}"
+        )
 
         step_key = f"{j}::{name}"
         key = _cache_key(
@@ -426,23 +570,45 @@ def _run_indexed_steps_for_spectrum(
             params_hash=params_hash,
             lineage_hash=lineage_in_for_transform,
         )
-        cached = cache.get(key) if cache is not None else None
-        if cached is not None:
-            xy_out = cached
+        # Region gate must run before cache: older cache entries may hold wrong-region fits.
+        if name == "fitting" and not fitting_region_applies(
+            step_params=params, spectrum_xps_region=spectrum_xps_region
+        ):
+            # Multi-region XPS pipelines (fit C1s then fit O1s): skip wrong-region recipes
+            # so an O1s model cannot flatten/destroy a C1s spectrum (and vice versa).
+            xy_out = inp_xy
         else:
-            if baseline_reference is not None:
-                point_x = normalization_point_x(params, method="baseline_point")
-                xy_out = normalize_by_reference_point(
-                    inp_xy,
-                    reference_x=baseline_reference.x,
-                    reference_y=baseline_reference.y,
-                    point_x=point_x,
-                    reference_label="baseline",
-                )
+            cached = cache.get(key) if cache is not None else None
+            if cached is not None:
+                xy_out = cached
             else:
-                xy_out = impl.transform(inp_xy, params)
-            if cache is not None:
-                cache.set(key, xy_out)
+                if baseline_reference is not None:
+                    point_x = normalization_point_x(params, method="baseline_point")
+                    xy_out = normalize_by_reference_point(
+                        inp_xy,
+                        reference_x=baseline_reference.x,
+                        reference_y=baseline_reference.y,
+                        point_x=point_x,
+                        reference_label="baseline",
+                    )
+                else:
+                    if (
+                        name == "x_axis_calibration"
+                        and cal_fitting_k is not None
+                        and cal_fitting_input is not None
+                        and cal_fit_params is not None
+                    ):
+                        params["_measured_pos"] = measured_pos_from_fitting_xy(
+                            cal_fitting_input,
+                            cal_fit_params,
+                            step_index=cal_fitting_k,
+                            multi_fitting=cal_multi_fitting,
+                            pos_key=str(params.get("pos_key") or ""),
+                            technique_family=technique_family,
+                        )
+                    xy_out = impl.transform(inp_xy, params)
+                if cache is not None:
+                    cache.set(key, xy_out)
 
         outputs[j] = xy_out
         lineage_after[j] = _lineage_after_indexed_step(
@@ -494,6 +660,7 @@ def _run_one_no_cache(
     namespace: str,
     up_to_step: str | None,
     collect_step_inputs: bool = False,
+    technique_family: str | None = None,
 ) -> tuple[XY, dict[int, XY]]:
     """
     Worker-safe implementation for ProcessPoolExecutor.
@@ -509,6 +676,8 @@ def _run_one_no_cache(
         ds = load_dataset(Path(p))
         xy_initial = extract_xy(ds, record_index=ref.get("record_index"))
         input_hash = _file_input_hash(Path(p))
+        labels = _merged_spectrum_labels(ref, ds)
+        region = str(labels.get("xps_region") or "").strip() or None
 
         xy, _, per_in = _run_indexed_steps_for_spectrum(
             xy_initial=xy_initial,
@@ -521,6 +690,9 @@ def _run_one_no_cache(
             collect_steps=None,
             step_nums=step_nums,
             collect_step_inputs=collect_step_inputs,
+            technique_family=technique_family,
+            spectrum_xps_region=region,
+            spectrum_labels=labels,
         )
         return xy, per_in
     except (FileNotFoundError, OSError, ValueError, IndexError) as e:
@@ -537,6 +709,7 @@ def run_pipeline_parallel_no_cache(
     max_workers: int | None = None,
     step_nums: list[int] | None = None,
     collect_step_inputs: bool = False,
+    technique_family: str | None = None,
 ) -> dict[str, XY] | tuple[dict[str, XY], dict[str, dict[int, XY]]]:
     """
     Parallel pipeline execution for large batches (no shared cache).
@@ -568,6 +741,7 @@ def run_pipeline_parallel_no_cache(
             namespace=cfg.cache_namespace,
             up_to_step=up_to_step,
             collect_step_inputs=collect_step_inputs,
+            technique_family=technique_family,
         )
         if collect_step_inputs:
             return {sid: xy_res}, {sid: pin}
@@ -591,6 +765,7 @@ def run_pipeline_parallel_no_cache(
                 namespace=cfg.cache_namespace,
                 up_to_step=up_to_step,
                 collect_step_inputs=collect_step_inputs,
+                technique_family=technique_family,
             )
             fut_to_sid[fut] = sid
 
@@ -628,6 +803,7 @@ def run_pipeline_parallel_no_cache(
                 namespace=cfg.cache_namespace,
                 up_to_step=up_to_step,
                 collect_step_inputs=collect_step_inputs,
+                technique_family=technique_family,
             )
             sid = str(ref["spectrum_id"])
             out[sid] = xy_res
@@ -670,6 +846,8 @@ def run_pipeline(
             ds = load_dataset(Path(p))
             xy_initial = extract_xy(ds, record_index=ref.record_index)
             input_hash = _file_input_hash(Path(p))
+            labels = _merged_spectrum_labels(ref, ds)
+            region = str(labels.get("xps_region") or "").strip() or None
 
             xy, _, _ = _run_indexed_steps_for_spectrum(
                 xy_initial=xy_initial,
@@ -680,6 +858,9 @@ def run_pipeline(
                 namespace=cfg.cache_namespace,
                 up_to_step=up_to_step,
                 collect_steps=None,
+                technique_family=getattr(pipeline, "technique_family", None),
+                spectrum_xps_region=region,
+                spectrum_labels=labels,
             )
             out[sid] = xy
         except (FileNotFoundError, OSError, ValueError, IndexError) as e:
@@ -727,6 +908,8 @@ def run_pipeline_with_intermediates(
             ds = load_dataset(Path(p))
             xy_initial = extract_xy(ds, record_index=ref.record_index)
             input_hash = _file_input_hash(Path(p))
+            labels = _merged_spectrum_labels(ref, ds)
+            region = str(labels.get("xps_region") or "").strip() or None
 
             xy, per_spec, _ = _run_indexed_steps_for_spectrum(
                 xy_initial=xy_initial,
@@ -738,6 +921,9 @@ def run_pipeline_with_intermediates(
                 up_to_step=up_to_step,
                 collect_steps=collect_steps,
                 step_nums=step_nums,
+                technique_family=getattr(pipeline, "technique_family", None),
+                spectrum_xps_region=region,
+                spectrum_labels=labels,
             )
             finals[sid] = xy
             inter[sid] = per_spec

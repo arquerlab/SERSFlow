@@ -87,5 +87,40 @@ class MapDataset:
         object.__setattr__(self, "ypos", ypos1)
 
 
-Dataset = Union[SpectrumDataset, SeriesDataset, MapDataset]
+@dataclass(frozen=True)
+class MultiSpectrumDataset:
+    """
+    Multiple spectra with independent abscissae (e.g. XPS VAMAS multi-region files).
+
+    ``xs[i]`` / ``ys[i]`` / ``meta[i]`` describe spectrum ``record_index=i``.
+    """
+
+    kind: Literal["multi"]
+    xs: tuple[np.ndarray, ...]
+    ys: tuple[np.ndarray, ...]
+    meta: tuple[dict, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.xs or not self.ys:
+            raise ValueError("MultiSpectrumDataset requires at least one spectrum")
+        if len(self.xs) != len(self.ys):
+            raise ValueError(f"xs/ys length mismatch: {len(self.xs)} vs {len(self.ys)}")
+        if self.meta and len(self.meta) != len(self.xs):
+            raise ValueError(f"meta length must match xs: {len(self.meta)} vs {len(self.xs)}")
+        xs_out: list[np.ndarray] = []
+        ys_out: list[np.ndarray] = []
+        for i, (x, y) in enumerate(zip(self.xs, self.ys)):
+            x1 = _as_1d(x, name=f"xs[{i}]")
+            y1 = _as_1d(y, name=f"ys[{i}]")
+            if x1.shape != y1.shape:
+                raise ValueError(f"xs[{i}]/ys[{i}] shape mismatch: {x1.shape} vs {y1.shape}")
+            xs_out.append(x1)
+            ys_out.append(y1)
+        object.__setattr__(self, "xs", tuple(xs_out))
+        object.__setattr__(self, "ys", tuple(ys_out))
+        if not self.meta:
+            object.__setattr__(self, "meta", tuple({} for _ in xs_out))
+
+
+Dataset = Union[SpectrumDataset, SeriesDataset, MapDataset, MultiSpectrumDataset]
 

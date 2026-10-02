@@ -7,7 +7,11 @@ export function buildFileOptionsHtml(uploadedItems, selectedValue) {
   for (const item of uploadedItems) {
     const val = item.relative_path;
     const sizeStr = formatFileSizeMb(item.size_bytes);
-    const label = `${item.filename} (${sizeStr})`;
+    const blocks = item.labels && item.labels.vms_spectra && typeof item.labels.vms_spectra === "object"
+      ? Object.keys(item.labels.vms_spectra).length
+      : 0;
+    const multiTag = blocks > 0 ? ` · ${blocks} blocks` : "";
+    const label = `${item.filename} (${sizeStr})${multiTag}`;
     const sel = val === selectedValue ? " selected" : "";
     opts.push(
       `<option value="${escapeHtml(val)}"${sel} title="${escapeHtml(val)}">${escapeHtml(label)}</option>`
@@ -462,3 +466,382 @@ export function createMapUi({ selectorId, mapStateByFile, schedulePlotUpdate }) 
   return { wrap, setFile, getState };
 }
 
+
+/**
+ * Multi-block (VAMAS) filter UI  mode + metadata filters, like series/map attachment.
+ * Filter ops mirror Python evaluate_filters (AND across rows).
+ */
+export function createMultiUi({ selectorId, schedulePlotUpdate }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'series-bar selector-attachment';
+  wrap.style.display = 'none';
+
+  const head = document.createElement('div');
+  head.className = 'row series-head';
+  const title = document.createElement('div');
+  title.className = 'section-title';
+  title.style.margin = '0';
+  title.textContent = 'Multi-spectrum blocks';
+
+  const modeLabel = document.createElement('label');
+  modeLabel.className = 'inline';
+  modeLabel.style.margin = '0';
+  modeLabel.innerHTML = 'Mode <select class=\"mini multi-mode\"><option value=\"averages\">Averaged</option><option value=\"individuals\">Individual</option><option value=\"all\">All</option></select>';
+
+  head.appendChild(title);
+  head.appendChild(modeLabel);
+
+  const blocksHost = document.createElement('details');
+  blocksHost.className = 'multi-blocks-list';
+  blocksHost.style.marginTop = '8px';
+  blocksHost.open = false;
+  const blocksSummary = document.createElement('summary');
+  blocksSummary.className = 'hint';
+  blocksSummary.textContent = 'Blocks';
+  const blocksList = document.createElement('div');
+  blocksList.style.display = 'grid';
+  blocksList.style.gap = '2px';
+  blocksList.style.maxHeight = '160px';
+  blocksList.style.overflow = 'auto';
+  blocksList.style.marginTop = '4px';
+  blocksHost.appendChild(blocksSummary);
+  blocksHost.appendChild(blocksList);
+
+  const filtersHost = document.createElement('div');
+  filtersHost.style.display = 'grid';
+  filtersHost.style.gap = '6px';
+  filtersHost.style.marginTop = '8px';
+
+  const addFilterBtn = document.createElement('button');
+  addFilterBtn.type = 'button';
+  addFilterBtn.className = 'mini';
+  addFilterBtn.textContent = 'Add filter';
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'mini danger';
+  clearBtn.textContent = 'Clear filters';
+  const btnRow = document.createElement('div');
+  btnRow.className = 'row';
+  btnRow.style.gap = '8px';
+  btnRow.style.marginTop = '6px';
+  btnRow.appendChild(addFilterBtn);
+  btnRow.appendChild(clearBtn);
+
+  const summary = document.createElement('div');
+  summary.className = 'hint';
+  summary.style.marginTop = '8px';
+
+  wrap.appendChild(head);
+  wrap.appendChild(blocksHost);
+  wrap.appendChild(filtersHost);
+  wrap.appendChild(btnRow);
+  wrap.appendChild(summary);
+
+  const state = {
+    selectorId,
+    relativePath: '',
+    isMulti: false,
+    blocks: [],
+    fields: [],
+    mode: 'averages',
+    filters: [],
+    matchedIndices: [],
+    explicitIndices: new Set(),
+  };
+  const modeSelect = modeLabel.querySelector('select');
+
+  function evaluateMetaFilters(row, filters) {
+    if (!filters || !filters.length) return true;
+    for (const clause of filters) {
+      const field = String(clause.field || '');
+      if (!field) continue;
+      const op = String(clause.op || 'in');
+      const raw = row[field];
+      if (op === 'in') {
+        const values = Array.isArray(clause.values) ? clause.values.map(String) : [];
+        if (!values.length) return false;
+        if (raw == null || !values.includes(String(raw))) return false;
+        continue;
+      }
+      const num = Number(raw);
+      const target = Number(clause.value);
+      if (!Number.isFinite(num) || !Number.isFinite(target)) return false;
+      if ((op === '=' || op === 'eq' || op === '==') && !(num === target)) return false;
+      else if ((op === '!=' || op === 'ne') && !(num !== target)) return false;
+      else if ((op === '>' || op === 'gt') && !(num > target)) return false;
+      else if ((op === '>=' || op === 'gte') && !(num >= target)) return false;
+      else if ((op === '<' || op === 'lt') && !(num < target)) return false;
+      else if ((op === '<=' || op === 'lte') && !(num <= target)) return false;
+    }
+    return true;
+  }
+
+  function indicesForMode(blocks, mode) {
+    const avgs = blocks.filter((b) => String(b.spectrum_role || 'average') === 'average').map((b) => b.index);
+    const inds = blocks.filter((b) => String(b.spectrum_role || '') === 'individual').map((b) => b.index);
+    if (mode === 'all') return blocks.map((b) => b.index);
+    if (mode === 'averages') return avgs.length ? avgs : inds;
+    return inds.length ? inds : avgs;
+  }
+
+  function blockLabel(b) {
+    let name = '';
+    if (b.block_name) name = String(b.block_name);
+    else {
+      const region = b.xps_region || 'block';
+      const role = b.spectrum_role || 'spectrum';
+      name = region + ' · ' + role;
+    }
+    const bits = [];
+    if (b.sample) bits.push(String(b.sample));
+    if (b.potential_ref === 'OCP') bits.push('OCP');
+    else if (b.potential_V != null && b.potential_ref) bits.push(String(b.potential_V) + String(b.potential_ref));
+    if (b.current_density_A_cm2 != null && Number.isFinite(Number(b.current_density_A_cm2))) {
+      bits.push(String(Number(b.current_density_A_cm2) * 1000) + 'mA·cm⁻²');
+    }
+    if (b.gas) bits.push(String(b.gas));
+    return bits.length ? name + ' — ' + bits.join(' · ') : name;
+  }
+
+  function selectedIndices() {
+    if (state.explicitIndices.size > 0) {
+      return Array.from(state.explicitIndices).sort((a, b) => a - b);
+    }
+    return state.matchedIndices.slice();
+  }
+
+  function recompute() {
+    const modeKeep = new Set(indicesForMode(state.blocks, state.mode));
+    const matched = [];
+    for (const b of state.blocks) {
+      if (!modeKeep.has(b.index)) continue;
+      if (!evaluateMetaFilters(b, state.filters)) continue;
+      matched.push(b.index);
+    }
+    state.matchedIndices = matched;
+    const useExplicit = state.explicitIndices.size > 0;
+    const active = selectedIndices();
+    const cap = 30;
+    const plotted = active.length > cap ? cap : active.length;
+    if (useExplicit) {
+      summary.textContent = active.length === 0
+        ? 'No blocks selected.'
+        : active.length > cap
+          ? active.length + ' blocks selected (plotting first ' + plotted + ').'
+          : active.length + ' block(s) selected (overrides mode/filters).';
+    } else {
+      summary.textContent = matched.length === 0
+        ? 'No blocks match the current mode/filters.'
+        : matched.length > cap
+          ? matched.length + ' of ' + state.blocks.length + ' blocks match (plotting first ' + plotted + ').'
+          : matched.length + ' of ' + state.blocks.length + ' blocks match.';
+    }
+    schedulePlotUpdate();
+  }
+
+  function renderBlocksList() {
+    blocksList.innerHTML = '';
+    blocksSummary.textContent = 'Blocks (' + state.blocks.length + ') — tick to plot specific ones';
+    for (const b of state.blocks) {
+      const row = document.createElement('label');
+      row.className = 'inline';
+      row.style.margin = '0';
+      row.style.display = 'flex';
+      row.style.gap = '6px';
+      row.style.alignItems = 'center';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = state.explicitIndices.has(b.index);
+      cb.addEventListener('change', () => {
+        if (cb.checked) state.explicitIndices.add(b.index);
+        else state.explicitIndices.delete(b.index);
+        recompute();
+      });
+      const lab = document.createElement('span');
+      lab.textContent = '#' + b.index + ' ' + blockLabel(b);
+      lab.style.fontSize = '12px';
+      row.appendChild(cb);
+      row.appendChild(lab);
+      blocksList.appendChild(row);
+    }
+  }
+
+  function fieldDef(id) { return (state.fields || []).find((f) => f.id === id) || null; }
+
+  function renderFilters() {
+    filtersHost.innerHTML = '';
+    state.filters.forEach((clause, fi) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.style.gap = '8px';
+      row.style.flexWrap = 'wrap';
+      row.style.alignItems = 'flex-start';
+      const fieldSel = document.createElement('select');
+      fieldSel.className = 'mini';
+      for (const f of state.fields) {
+        const opt = document.createElement('option');
+        opt.value = f.id;
+        opt.textContent = f.label || f.id;
+        if (f.id === clause.field) opt.selected = true;
+        fieldSel.appendChild(opt);
+      }
+      if (!clause.field && state.fields[0]) clause.field = state.fields[0].id;
+      const right = document.createElement('div');
+      right.style.display = 'flex';
+      right.style.gap = '6px';
+      right.style.flexWrap = 'wrap';
+      right.style.alignItems = 'center';
+      function paintRight() {
+        right.innerHTML = '';
+        const def = fieldDef(clause.field);
+        if (!def) return;
+        if (def.kind === 'categorical') {
+          clause.op = 'in';
+          if (!Array.isArray(clause.values)) clause.values = [];
+          const selected = new Set(clause.values.map(String));
+          for (const v of def.values || []) {
+            const lab = document.createElement('label');
+            lab.className = 'inline';
+            lab.style.margin = '0';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = selected.has(String(v));
+            cb.addEventListener('change', () => {
+              if (cb.checked) clause.values = [...new Set([...(clause.values || []), String(v)])];
+              else clause.values = (clause.values || []).filter((x) => String(x) !== String(v));
+              recompute();
+            });
+            lab.appendChild(cb);
+            lab.appendChild(document.createTextNode(' ' + v));
+            right.appendChild(lab);
+          }
+        } else {
+          if (!clause.op || clause.op === 'in') clause.op = '>=';
+          const opSel = document.createElement('select');
+          opSel.className = 'mini';
+          for (const op of ['=', '!=', '>', '>=', '<', '<=']) {
+            const o = document.createElement('option');
+            o.value = op; o.textContent = op;
+            if (op === clause.op) o.selected = true;
+            opSel.appendChild(o);
+          }
+          opSel.addEventListener('change', () => { clause.op = opSel.value; recompute(); });
+          const num = document.createElement('input');
+          num.type = 'number';
+          num.className = 'mini';
+          num.style.width = '100px';
+          num.value = clause.value != null && Number.isFinite(Number(clause.value)) ? String(clause.value) : '';
+          num.placeholder = def.min != null && def.max != null ? (def.min + '' + def.max) : 'value';
+          num.addEventListener('change', () => { clause.value = Number(num.value); recompute(); });
+          const hint = document.createElement('span');
+          hint.className = 'hint';
+          if (def.min != null && def.max != null) hint.textContent = 'range ' + def.min + '' + def.max;
+          right.appendChild(opSel); right.appendChild(num); right.appendChild(hint);
+        }
+      }
+      fieldSel.addEventListener('change', () => {
+        clause.field = fieldSel.value; clause.values = []; clause.value = undefined; paintRight(); recompute();
+      });
+      const rm = document.createElement('button');
+      rm.type = 'button'; rm.className = 'mini danger'; rm.textContent = '×';
+      rm.addEventListener('click', () => { state.filters.splice(fi, 1); renderFilters(); recompute(); });
+      row.appendChild(fieldSel); row.appendChild(right); row.appendChild(rm);
+      filtersHost.appendChild(row);
+      paintRight();
+    });
+  }
+
+  modeSelect.addEventListener('change', () => {
+    state.mode = modeSelect.value === 'individuals' ? 'individuals' : modeSelect.value === 'all' ? 'all' : 'averages';
+    recompute();
+  });
+  addFilterBtn.addEventListener('click', () => {
+    const unused = (state.fields || []).find((f) => !state.filters.some((c) => c.field === f.id));
+    const next = unused || state.fields[0];
+    if (!next) return;
+    const values = next.kind === 'categorical' ? [...(next.values || [])].map(String) : [];
+    state.filters.push({
+      field: next.id,
+      op: next.kind === 'numeric' ? '>=' : 'in',
+      values,
+      value: next.min,
+    });
+    renderFilters(); recompute();
+  });
+  clearBtn.addEventListener('click', () => {
+    // Keep the default XPS region row (first region in file order) when clearing extras.
+    const first = firstXpsRegion();
+    if (first) {
+      state.filters = [{ field: 'xps_region', op: 'in', values: [first] }];
+    } else {
+      state.filters = [];
+    }
+    renderFilters();
+    recompute();
+  });
+
+  function firstXpsRegion() {
+    for (const b of state.blocks || []) {
+      const r = String(b.xps_region || '').trim();
+      if (r) return r;
+    }
+    const regionField = (state.fields || []).find((f) => f.id === 'xps_region');
+    const v = regionField && Array.isArray(regionField.values) ? regionField.values[0] : null;
+    return v != null ? String(v) : '';
+  }
+
+  let loadGen = 0;
+  async function setFile(rel) {
+    const gen = ++loadGen;
+    state.relativePath = rel;
+    state.isMulti = false;
+    state.blocks = [];
+    state.fields = [];
+    state.filters = [];
+    state.matchedIndices = [];
+    state.explicitIndices = new Set();
+    if (!rel) {
+      wrap.style.display = 'none';
+      return;
+    }
+    const res = await fetch('/plot/multi-info?relative_path=' + encodeURIComponent(rel), { credentials: 'include' });
+    const text = await res.text();
+    if (gen !== loadGen) return;
+    if (!res.ok) {
+      wrap.style.display = 'none';
+      return;
+    }
+    const info = JSON.parse(text);
+    if (!info || !info.is_multi) {
+      wrap.style.display = 'none';
+      return;
+    }
+    state.isMulti = true;
+    state.blocks = Array.isArray(info.blocks) ? info.blocks : [];
+    state.fields = Array.isArray(info.fields) ? info.fields : [];
+    state.mode = 'averages';
+    modeSelect.value = 'averages';
+    state.explicitIndices = new Set();
+    // Default: XPS region filter with only the first region in the file selected.
+    const firstRegion = firstXpsRegion();
+    if (firstRegion) {
+      state.filters = [{ field: 'xps_region', op: 'in', values: [firstRegion] }];
+    } else {
+      state.filters = [];
+    }
+    renderBlocksList();
+    renderFilters();
+    wrap.style.display = 'block';
+    recompute();
+  }
+
+  function getState() {
+    return {
+      relativePath: state.relativePath,
+      isMulti: state.isMulti,
+      selectedIndices: selectedIndices(),
+      hasExplicitSelection: state.explicitIndices.size > 0,
+    };
+  }
+  return { wrap, setFile, getState };
+}

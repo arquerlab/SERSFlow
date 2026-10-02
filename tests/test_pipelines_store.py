@@ -127,3 +127,30 @@ def test_pipelines_store_roundtrips_baseline_point_reference(
     assert got is not None
     assert got.pipeline.steps[1].params["baseline_step_id"] == "base-step"
     assert got.pipeline.steps[1].params["point_x"] == 1000.0
+
+
+def test_pipelines_store_technique_family_and_filter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SERSFLOW_DB_PATH", str(tmp_path / "test.db"))
+
+    vib = create_pipeline(
+        owner_user_id="dev",
+        name="vib pipe",
+        pipeline=Pipeline(steps=[], technique_family="vibrational"),
+        technique_family="vibrational",
+    )
+    xps = create_pipeline(
+        owner_user_id="dev",
+        name="xps pipe",
+        pipeline=Pipeline(steps=[], technique_family="xps"),
+        technique_family="xps",
+    )
+    assert vib.technique_family == "vibrational"
+    assert xps.technique_family == "xps"
+
+    only_xps = list_pipelines(owner_user_id="dev", limit=50, offset=0, technique_family="xps")
+    assert any(r.pipeline_id == xps.pipeline_id for r in only_xps)
+    assert all(r.technique_family == "xps" for r in only_xps)
+
+    only_vib = list_pipelines(owner_user_id="dev", limit=50, offset=0, technique_family="vibrational")
+    assert any(r.pipeline_id == vib.pipeline_id for r in only_vib)
+    assert all(r.technique_family == "vibrational" for r in only_vib)

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sersflow"
 version = "0.1.0"
-description = "SERSFlow: loaders and API for SERS/Raman datasets"
+description = "SERSFlow: loaders and API for vibrational (SERS/Raman/FTIR) and XPS datasets"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -20,6 +20,8 @@ dependencies = [
   "renishawWiRE",
   "bcrypt",
   "pybaselines",
+  "lmfitxps>=4.2.0",
+  "h5py>=3.8",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +45,9 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["sersflow*"]
+
+[tool.setuptools.package-data]
+sersflow = ["core/xps/data/*.json"]
 
 [tool.ruff]
 line-length = 110

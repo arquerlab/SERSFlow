@@ -1,7 +1,7 @@
 import { $ } from "./ui/dom.js";
-import { createUploadsController, createUploadedLabelsEditorController, formatFileSizeMb } from "./ui/uploads.js";
-import { fetchFigure, getSelectedPaths, plotFromEndpoint } from "./ui/plot.js";
-import { buildFileOptionsHtml, createMapUi, createSeriesUi } from "./ui/plot_selectors.js";
+import { createUploadsController, createUploadedLabelsEditorController, formatFileSizeMb } from "./ui/uploads.js?v=multi-nest-2";
+import { fetchFigure, getSelectedPaths, plotFromEndpoint } from "./ui/plot.js?v=multi-nest-2";
+import { buildFileOptionsHtml, createMapUi, createMultiUi, createSeriesUi } from "./ui/plot_selectors.js?v=multi-nest-2";
 import { wireColumnSplitter } from "./ui/column_splitter.js";
 
 const drop = $("drop");
@@ -126,8 +126,11 @@ let uploadedLabelsEditor = null;
 const uploads = createUploadsController({
   uploadedListEl: uploadedList,
   uploadsMetaEl: uploadsMeta,
-  onSelectedPathsChange: (paths, items, total) => {
-    uploadedLabelsEditor?.setContext({ items, selectedPaths: paths, total });
+  onSelectedPathsChange: () => {
+    // File unload/plot selection; label editor is driven by onLabelSelectionChange.
+  },
+  onLabelSelectionChange: (keys, items, total) => {
+    uploadedLabelsEditor?.setContext({ items, selectedPaths: keys, total });
   },
   onUploadedItemsChange: () => syncUploadsAfterListChange(),
 });
@@ -139,6 +142,7 @@ uploadedLabelsEditor = createUploadedLabelsEditorController({
 let selectorIds = [crypto.randomUUID()];
 let seriesUiBySelectorId = new Map(); // selectorId -> { wrap, setFile, getState }
 let mapUiBySelectorId = new Map(); // selectorId -> { wrap, setFile, getState }
+let multiUiBySelectorId = new Map(); // selectorId -> { wrap, setFile, getState }
 let mapStateByFile = new Map(); // relative_path -> { selectedIndices: number[] }
 
 let _plotUpdateTimer = null;
@@ -165,6 +169,7 @@ function renderPlotSelectors() {
   plotFileSelectors.innerHTML = "";
   seriesUiBySelectorId = new Map();
   mapUiBySelectorId = new Map();
+  multiUiBySelectorId = new Map();
 
   for (const id of selectorIds) {
     const row = document.createElement("div");
@@ -201,9 +206,16 @@ function renderPlotSelectors() {
     plotFileSelectors.appendChild(mapUi.wrap);
     mapUi.setFile((selectedValue || "").trim());
 
+    const multiUi = createMultiUi({ selectorId: id, schedulePlotUpdate });
+    multiUiBySelectorId.set(id, multiUi);
+    plotFileSelectors.appendChild(multiUi.wrap);
+    multiUi.setFile((selectedValue || "").trim());
+
     select.addEventListener("change", () => {
       seriesUi.setFile((select.value || "").trim());
       mapUi.setFile((select.value || "").trim());
+      multiUi.setFile((select.value || "").trim());
+      schedulePlotUpdate();
     });
   }
 }
@@ -216,9 +228,14 @@ async function refreshUploadedList() {
 }
 
 function syncUploadsAfterListChange() {
+  const items = uploads.getUploadedItems();
+  const labelKeys =
+    typeof uploads.getLabelEditKeys === "function"
+      ? Array.from(uploads.getLabelEditKeys())
+      : Array.from(uploads.getSelectedSet());
   uploadedLabelsEditor?.setContext({
-    items: uploads.getUploadedItems(),
-    selectedPaths: Array.from(uploads.getSelectedSet()),
+    items,
+    selectedPaths: labelKeys.length ? labelKeys : Array.from(uploads.getSelectedSet()),
     total: uploads.getTotalCount(),
   });
   renderPlotSelectors();
@@ -431,6 +448,19 @@ async function plotCombinedSelection() {
       }
       if (usedMap) continue;
 
+      let usedMulti = false;
+      for (const ui of multiUiBySelectorId.values()) {
+        const st = ui.getState();
+        if (st.relativePath === rel && st.isMulti) {
+          const indices = (st.selectedIndices || []).slice(0, 30);
+          if (!indices.length) throw new Error(`No multi-spectrum blocks match filters for: ${rel}`);
+          figs.push(await fetchFigure("/plot/multi-points", { relative_path: rel, indices }));
+          usedMulti = true;
+          break;
+        }
+      }
+      if (usedMulti) continue;
+
       figs.push(
         await fetchFigure("/plot/spectrum", {
           relative_path: rel,
@@ -640,6 +670,35 @@ addPlotFileBtn.addEventListener("click", () => {
 
 initTabs();
 refreshUploadedList();
+
+// Drive file accept + extension filter defaults from the format registry.
+(async () => {
+  try {
+    const { fetchJson } = await import("./ui/api.js");
+    const data = await fetchJson("/meta/formats");
+    const suffixes = [];
+    for (const it of data.items || []) {
+      for (const s of it.suffixes || []) {
+        const low = String(s).toLowerCase();
+        if (low && !suffixes.includes(low)) suffixes.push(low);
+      }
+    }
+    if (suffixes.length && fileInput) {
+      fileInput.accept = suffixes.join(",");
+    }
+    if (suffixes.length && excludeExtsInput && !String(excludeExtsInput.value || "").trim()) {
+      excludeExtsInput.value = suffixes.map((s) => s.replace(/^\./, "")).join(",");
+    } else if (suffixes.length && excludeExtsInput) {
+      // Keep user edits; only upgrade empty/default known stub.
+      const cur = String(excludeExtsInput.value || "").trim().toLowerCase();
+      if (cur === "txt,wdf,vms") {
+        excludeExtsInput.value = suffixes.map((s) => s.replace(/^\./, "")).join(",");
+      }
+    }
+  } catch {
+    // keep HTML defaults
+  }
+})();
 
 wireColumnSplitter({
   layoutEl: $("rawLayout"),

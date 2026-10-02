@@ -13,7 +13,7 @@ from sersflow.infra.user_access import has_global_access, resolve_owner_user_id
 from sersflow.api.schemas.datasets import Dataset, DatasetListItem, DatasetMetadata, SpectrumRef
 from sersflow.core.io.load_file import load_dataset
 from sersflow.core.io.upload_registry import resolve_uploaded_path, upload_root
-from sersflow.core.models.datasets import MapDataset, SeriesDataset, SpectrumDataset
+from sersflow.core.models.datasets import MapDataset, MultiSpectrumDataset, SeriesDataset, SpectrumDataset
 from sersflow.infra.blob_store import delete_blob_if_unreferenced, resolve_blob_path, store_blob_from_file
 from sersflow.infra.sqlite_db import connect
 
@@ -232,6 +232,24 @@ def _populate_axes_for_dataset(dataset_id: str, spectra: list[SpectrumRef]) -> N
                         """,
                         (float(ds.xpos[idx]), float(ds.ypos[idx]), dataset_id, ref.spectrum_id),
                     )
+            elif isinstance(ds, MultiSpectrumDataset):
+                n = len(ds.xs)
+                con.execute(
+                    """
+                    INSERT OR REPLACE INTO dataset_file_meta(dataset_id, relative_path, grid_nx, grid_ny, kind)
+                    VALUES (?,?,?,?,?)
+                    """,
+                    (dataset_id, rel, n, 1, "multi"),
+                )
+                for ref in refs:
+                    con.execute(
+                        """
+                        UPDATE dataset_spectra
+                        SET axis_time_s=NULL, axis_map_x=NULL, axis_map_y=NULL
+                        WHERE dataset_id=? AND spectrum_id=?
+                        """,
+                        (dataset_id, ref.spectrum_id),
+                    )
 
 
 def spectrum_export_lookup(dataset_id: str) -> dict[str, dict[str, Any]]:
@@ -242,7 +260,7 @@ def spectrum_export_lookup(dataset_id: str) -> dict[str, dict[str, Any]]:
     with connect() as con:
         rows = con.execute(
             """
-            SELECT ds.spectrum_id, ds.relative_path, ds.blob_id, ds.blob_relative_path, ds.original_relative_path,
+            SELECT ds.spectrum_id, ds.relative_path, ds.record_index, ds.blob_id, ds.blob_relative_path, ds.original_relative_path,
                    ds.axis_time_s, ds.axis_map_x, ds.axis_map_y,
                    fm.grid_nx, fm.grid_ny, fm.kind AS file_kind
             FROM dataset_spectra ds
@@ -256,6 +274,7 @@ def spectrum_export_lookup(dataset_id: str) -> dict[str, dict[str, Any]]:
     for r in rows:
         out[str(r["spectrum_id"])] = {
             "relative_path": r["relative_path"],
+            "record_index": r["record_index"],
             "blob_id": r["blob_id"],
             "blob_relative_path": r["blob_relative_path"],
             "original_relative_path": r["original_relative_path"],

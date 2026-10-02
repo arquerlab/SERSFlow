@@ -54,7 +54,7 @@ def hydrate_reference_transforms(
     transform params used by the execution engine.
     """
     steps = [step.model_copy(deep=True) for step in pipeline.steps]
-    runtime = Pipeline(steps=steps)
+    runtime = pipeline.model_copy(update={"steps": steps})
     for i, step in enumerate(runtime.steps):
         if not step.enabled or step.name != "reference_transform":
             continue
@@ -65,13 +65,15 @@ def hydrate_reference_transforms(
         ref = _find_spectrum(dataset, ref_sid)
         stage = str(params.get("reference_stage", "raw")).strip().lower()
         if stage in ("raw", "initial"):
-            prefix = Pipeline(steps=[])
+            prefix = pipeline.model_copy(update={"steps": []})
         elif stage == "after_step":
             ref_step_id = str(params.get("reference_step_id") or "").strip()
             if not ref_step_id:
                 raise ValueError("reference_transform requires reference_step_id when reference_stage='after_step'")
             target_index = _find_step_index_by_id(runtime, ref_step_id, before_index=i)
-            prefix = Pipeline(steps=[s.model_copy(deep=True) for s in runtime.steps[: target_index + 1]])
+            prefix = pipeline.model_copy(
+                update={"steps": [s.model_copy(deep=True) for s in runtime.steps[: target_index + 1]]}
+            )
         else:
             raise ValueError("reference_transform reference_stage must be raw or after_step")
 

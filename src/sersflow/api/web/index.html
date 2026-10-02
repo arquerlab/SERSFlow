@@ -50,7 +50,8 @@
           <div class="section-title">Upload files</div>
           <div id="drop" class="drop">
             <div class="row">
-              <input id="files" type="file" accept=".txt,.wdf" multiple />
+              <input id="files" type="file" accept=".txt,.wdf,.vms,.nxs,.nx5" multiple />
+              <!-- accept refreshed from GET /meta/formats on load (uploads.js) -->
               <input id="folders" type="file" webkitdirectory directory multiple />
               <label class="inline" title="Choose whether to skip extensions or only allow them">
                 Filter mode
@@ -61,14 +62,14 @@
               </label>
               <label class="inline" title="Comma-separated file extensions (without dots)">
                 Extensions
-                <input id="excludeExts" type="text" value="wdf" style="width: 220px" />
+                <input id="excludeExts" type="text" value="txt,wdf,vms,nxs,nx5" style="width: 220px" />
               </label>
               <button id="uploadBtn" type="button">Upload</button>
               <button id="clearSelectionBtn" type="button">Clear selection</button>
               <button id="refreshBtn" type="button">Refresh list</button>
             </div>
             <div class="hint">
-              Drag & drop <b>multiple</b> <b>.txt</b> / <b>.wdf</b> files here, or use file/folder pickers. Folder uploads preserve nested subfolders. Files are stored on the server; no parsing is performed.
+              Drag & drop <b>multiple</b> spectra files here (see accept list from the format registry), or use file/folder pickers. Folder uploads preserve nested subfolders. Files are stored on the server; no parsing is performed.
             </div>
             <div class="status" id="status"></div>
             <ul class="files" id="fileList"></ul>
@@ -173,7 +174,7 @@
         .then(() => wireActAsSelector())
         .catch((e) => console.error(e));
     </script>
-    <script type="module" src="/static/app.js"></script>
+    <script type="module" src="/static/app.js?v=multi-nest-2"></script>
     <script type="module">
       // Load the Vite-built preprocess bundle (hashed filenames) into the legacy tabbed UI.
       // Uses the Vite manifest produced at build time.

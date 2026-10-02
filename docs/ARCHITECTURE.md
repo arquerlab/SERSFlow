@@ -2,21 +2,23 @@
 
 ## Overview: what SERSFlow is
 
-SERSFlow is a local-first software stack for Surface-Enhanced Raman Spectroscopy (SERS) workflows. It combines:
+SERSFlow is a local-first software stack for vibrational spectroscopy (SERS / Raman / FTIR) and XPS workflows. It combines:
 
-- Dataset ingest from uploaded vendor/measurement files, including single spectra, time series, and spatial maps.
+- Dataset ingest from uploaded vendor/measurement files, including single spectra, time series, spatial maps, and multi-block XPS files (VAMAS `.vms`, NeXus `.nxs`).
 - Durable dataset storage through upload registries, content-addressed blobs, SQLite metadata, and reproducible dataset exports.
-- A deterministic preprocessing pipeline for spectra: crop, grid alignment, smoothing, cosmic-ray removal, baseline handling, normalization, reference transforms, derivatives, fitting, spectral probes, integrations, and derived feature operations.
+- A deterministic preprocessing pipeline for spectra: crop, grid alignment, smoothing, cosmic-ray removal, baseline handling (including lmfitxps Shirley/Tougaard for XPS), normalization, reference transforms, derivatives, fitting, spectral probes, integrations, and derived feature operations.
 - Batch feature extraction over the full dataset to create stable feature and observation tables.
 - An exploration/modeling layer for correlation, VIF, PCA, sparse PCA, clustering, spectrum matrices, and FPCA.
 - A web UI, Python HTTP client, and publication-oriented examples that drive the same FastAPI backend.
+
+Technique identity is first-class via `technique_family` (`vibrational` | `xps`) on datasets and pipelines: mixed-technique datasets are rejected at create time; XPS pipelines always use the lmfit engine (with optional active Shirley/Tougaard backgrounds and param links); vibrational pipelines use SciPy `curve_fit`. Packaged XPS catalogs (chemical states, fitting recipes) are served under `/xps/*`.
 
 The project prioritizes:
 
 - Reproducibility through explicit pipeline definitions, stable hashes, persisted run/job records, durable blobs, and export manifests.
 - A clear split between interactive preview and full-dataset computation.
 - Interoperability through CSV/Parquet exports, observation-table contracts, and a programmatic Python client.
-- Python-owned scientific behavior: TypeScript step specs are UI metadata only. See `docs/PIPELINE_UI_AUTHORITY.md`.
+- Python-owned scientific behavior: step palette/defaults come from `GET /meta/pipeline-steps` (no frontend step matrix). See `docs/PIPELINE_UI_AUTHORITY.md`.
 
 ---
 
@@ -53,10 +55,11 @@ SERSFlow is organized around one local FastAPI service that:
   - `services/`: higher-level operations used by routers, including analysis execution, dataset/observation exports, reference runtime, plotting, matrix export jobs, and explore stats/plots.
   - `web/`: legacy HTML shell and built frontend assets.
 - `src/sersflow/core/`
-  - `io/`: TXT/WDF loading, upload registry, file-to-dataset expansion, and wavenumber-range helpers.
-  - `models/`: typed dataset representations for single spectra, series, and maps.
-  - `pipeline/`: pipeline engine, step registry, hashing, cache keys, and step numbering.
-  - `preprocess/`: baseline, crop, cosmic-ray removal, fitting, fitting specs/models, normalization, noise, and related step helpers.
+  - `io/`: TXT/WDF/VMS/NXS loading, technique inference, upload registry, file-to-dataset expansion, and wavenumber-range helpers.
+  - `models/`: typed dataset representations for single spectra, series, maps, and XPS multi-block (`MultiSpectrumDataset`).
+  - `xps/`: packaged chemical-state and fitting-recipe catalogs plus recipe→fitting apply.
+  - `pipeline/`: pipeline engine, step registry, hashing, cache keys, step numbering, and XPS dual-background guards.
+  - `preprocess/`: baseline (pybaselines + lmfitxps), crop, cosmic-ray removal, fitting (SciPy + lmfit), fitting specs/models, peak area helpers, normalization, noise, and related step helpers.
   - `metrics/`: feature extraction utilities for fitting features, intensities, integrations, peaks, operations, and metric computation.
   - `labels/`: automatic label extraction and normalization from upload paths/filenames.
   - `plot/`: backend plot serialization and raw-spectrum plotting service.
@@ -78,6 +81,7 @@ SERSFlow is organized around one local FastAPI service that:
 The frontend is a Vite/React app whose production build is served by the Python backend.
 
 - `frontend/src/main.tsx`: mounts React into `#preprocess-root`.
+- Preferred publish path: build in CI and copy into `src/sersflow/api/web/preprocess-dist/` at release time (avoid committing hashed Vite bundles on every feature commit when possible).
 - `frontend/src/AppShell.tsx`: routes between "Pipeline & preview" and "Features & statistics".
 - `frontend/src/PreprocessingWorkspace.tsx`: upload/dataset/session setup, subset previews, pipeline editing, pipeline library, reference transforms, fitting, spectral probes, integrations, and feature operations.
 - `frontend/src/AnalyzeWorkspace.tsx`: analysis jobs, exports, observation columns, heatmaps, parameter scatter, correlation/VIF, PCA/SPCA, clustering, spectrum matrices, FPCA, and spectrum overlays.
@@ -337,12 +341,19 @@ This maps to the publication narrative: validate preprocessing interactively, ex
 
 ## Extension points
 
+### Add a file format
+
+1. Add a module under `src/sersflow/core/io/formats/` with a `FormatSpec` (suffixes, technique, packs, loader, optional `enrich`).
+2. Call `register_format()` so `GET /meta/formats` and path resolution pick it up.
+3. Prefer capability packs / `FilterFieldDef` over suffix string branches in IO and UI.
+4. Multi-block block maps persist under the historical label key `vms_spectra` (access only via `multi_block_labels` helpers).
+
 ### Add a preprocessing or feature step
 
-- Implement/register the Python step in `src/sersflow/core/pipeline/steps.py` and supporting modules under `core/preprocess/` or `core/metrics/`.
+- Implement/register the Python step in `src/sersflow/core/pipeline/library/` (`StepSpec` + transform in `steps.py`).
 - Extend Pydantic schemas in `src/sersflow/api/schemas/` when the API contract changes.
-- Add UI presentation metadata in `frontend/src/preprocess/pipelineStepSpecs.ts`.
-- Keep Python as the source of truth for validation and execution.
+- UI palette and defaults come from `GET /meta/pipeline-steps` (Python `StepUiSchema`); the frontend must not own a parallel step-defaults matrix.
+- Keep Python as the source of truth for validation and execution; the engine resolves transforms only from `STEP_LIBRARY`.
 
 ### Add an exploration/statistics routine
 

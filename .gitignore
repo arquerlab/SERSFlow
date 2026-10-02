@@ -31,6 +31,11 @@ __pycache__/
 logs/
 debug-*.log
 
+# XPS source PDFs / extracts (runtime catalogs are JSON under src/sersflow/core/xps/data/)
+handbook.pdf
+handbook.txt
+XPS_PhD_Beighner.pdf
+
 # Deploy / SSH keys (never commit)
 sersflow_deploy
 sersflow_deploy.pub

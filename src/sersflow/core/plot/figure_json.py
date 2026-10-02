@@ -118,6 +118,49 @@ def overlay_figure_json(
     }
 
 
+def independent_overlay_figure_json(
+    *,
+    traces: Iterable[tuple[Any, Any, str]],
+    x_title: str = RAMAN_SHIFT_AXIS_TITLE,
+    y_title: str = "Intensity (counts)",
+) -> dict[str, Any]:
+    """Overlay spectra that may each have an independent x-axis (e.g. VAMAS blocks)."""
+    data = []
+    for x, y, label in traces:
+        x1 = _as_1d(x).astype(float, copy=False)
+        y1 = _as_1d(y).astype(float, copy=False)
+        if x1.shape != y1.shape:
+            raise ValueError(f"x and y must have the same shape, got {x1.shape} vs {y1.shape}")
+        data.append({"type": "scatter", "mode": "lines", "x": x1.tolist(), "y": y1.tolist(), "name": label})
+    if not data:
+        raise ValueError("No traces provided")
+    return {
+        "data": data,
+        "layout": {
+            "xaxis": {
+                "title": {"text": x_title},
+                "showline": True,
+                "mirror": True,
+                "showgrid": False,
+                "ticks": "outside",
+                "ticklen": 6,
+                "tickwidth": 1,
+            },
+            "yaxis": {
+                "title": {"text": y_title},
+                "showline": True,
+                "mirror": True,
+                "showgrid": False,
+                "ticks": "outside",
+                "ticklen": 6,
+                "tickwidth": 1,
+            },
+            "legend": {"orientation": "h", "yanchor": "top", "y": -0.25, "xanchor": "center", "x": 0.5},
+            "margin": {"l": 60, "r": 20, "t": 20, "b": 95},
+        },
+    }
+
+
 def series_heatmap_figure_json(
     *,
     x: Any,

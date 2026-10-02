@@ -69,18 +69,20 @@ def test_pipeline_baseline_step_forwards_ria_options(monkeypatch) -> None:
     )
 
     np.testing.assert_allclose(out.y, np.asarray([9.0, 19.0, 29.0]))
-    assert captured == {
-        "method": "ria",
-        "kwargs": {
-            "half_window": 6,
-            "max_iter": 500,
-            "tol": 0.01,
-            "side": "both",
-            "width_scale": 1.0,
-            "height_scale": 2.0,
-            "sigma_scale": 1.0 / 12.0,
-            "pad_kwargs": None,
-        },
+    assert captured["method"] == "ria"
+    kwargs = dict(captured["kwargs"])
+    x_fwd = kwargs.pop("x", None)
+    assert x_fwd is not None
+    np.testing.assert_allclose(x_fwd, xy.x)
+    assert kwargs == {
+        "half_window": 6,
+        "max_iter": 500,
+        "tol": 0.01,
+        "side": "both",
+        "width_scale": 1.0,
+        "height_scale": 2.0,
+        "sigma_scale": 1.0 / 12.0,
+        "pad_kwargs": None,
     }
 
 
@@ -98,18 +100,19 @@ def test_all_catalog_methods_dispatch_through_generic_path(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "pybaselines", types.SimpleNamespace(Baseline=FakeBaseline))
 
     intensity = np.asarray([1.0, 2.0, 3.0], dtype=float)
-    for method in BASELINE_METHODS:
+    pybaselines_methods = [m for m, spec in BASELINE_METHODS.items() if spec.category != "lmfitxps"]
+    for method in pybaselines_methods:
         corrected, params = correct_baseline(intensity, method=method)
         np.testing.assert_allclose(corrected, intensity)
         assert params["method"] == method
 
-    assert [name for name, _ in calls] == list(BASELINE_METHODS)
+    assert [name for name, _ in calls] == pybaselines_methods
 
 
 def test_baseline_metadata_contains_categories_descriptions_and_null_defaults() -> None:
     meta = baseline_method_metadata()
     categories = {c["id"] for c in meta["categories"]}
-    assert {"whittaker", "smoothing", "splines", "polynomial", "morphological", "miscellaneous"} <= categories
+    assert {"whittaker", "smoothing", "splines", "polynomial", "morphological", "miscellaneous", "lmfitxps"} <= categories
 
     methods = {m["id"]: m for m in meta["methods"]}
     assert methods["mormol"]["category"] == "morphological"
@@ -118,6 +121,54 @@ def test_baseline_metadata_contains_categories_descriptions_and_null_defaults() 
     assert half_window["default"] is None
     assert "window" in half_window["description"].lower()
 
+    assert methods["shirley"]["category"] == "lmfitxps"
+    assert methods["tougaard"]["category"] == "lmfitxps"
+    shirley_keys = {p["key"] for p in methods["shirley"]["params"] if p["ui_role"] == "primary"}
+    assert {"tol", "maxit"} <= shirley_keys
+    tougaard_keys = {p["key"] for p in methods["tougaard"]["params"] if p["ui_role"] == "primary"}
+    assert {"tb", "tc"} <= tougaard_keys
+
 
 def test_baseline_signature_catalog_matches_installed_pybaselines() -> None:
     assert baseline_signature_drift() == []
+
+
+def test_lmfitxps_shirley_requires_x() -> None:
+    y = np.asarray([1.0, 2.0, 3.0], dtype=float)
+    try:
+        correct_baseline(y, method="shirley")
+        raise AssertionError("expected ValueError when x is missing")
+    except ValueError as e:
+        assert "x" in str(e).lower() or "lmfitxps" in str(e).lower()
+
+
+def test_pipeline_baseline_step_forwards_x_to_correct_baseline(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_correct_baseline(intensity, method="derpsalsa", **kwargs):
+        captured["method"] = method
+        captured["x"] = kwargs.get("x")
+        baseline = np.asarray([0.0, 0.0, 0.0], dtype=float)
+        return np.asarray(intensity, dtype=float) - baseline, {"baseline": baseline}
+
+    monkeypatch.setattr(pipeline_steps, "correct_baseline", fake_correct_baseline)
+    xy = XY(x=np.asarray([10.0, 20.0, 30.0]), y=np.asarray([1.0, 2.0, 3.0]))
+    pipeline_steps.DEFAULT_STEPS["baseline"].transform(xy, {"method": "shirley", "tol": 1e-5, "maxit": 10})
+    assert captured["method"] == "shirley"
+    np.testing.assert_allclose(captured["x"], xy.x)
+
+
+def test_lmfitxps_shirley_dispatch_smoke() -> None:
+    pytest = __import__("pytest")
+    try:
+        import lmfitxps  # noqa: F401
+    except ImportError:
+        pytest.skip("lmfitxps not installed")
+
+    x = np.linspace(0.0, 10.0, 50)
+    y = np.ones_like(x) * 5.0
+    y[20:30] += 20.0
+    corrected, info = correct_baseline(y, method="shirley", x=x, tol=1e-4, maxit=20)
+    assert corrected.shape == y.shape
+    assert info["method"] == "shirley"
+    assert "baseline" in info

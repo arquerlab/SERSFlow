@@ -8,6 +8,8 @@ scikit-learn
 matplotlib
 renishawWiRE
 pybaselines
+lmfitxps>=4.2.0
+h5py>=3.8
 
 # Optional: pip install pyarrow
 # Optional: pip install scikit-fda

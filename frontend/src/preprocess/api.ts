@@ -1,9 +1,14 @@
+export type TechniqueFamily = "vibrational" | "xps";
+
 export type DatasetMetadata = {
   name?: string | null;
   description?: string | null;
   tags?: string[];
   created_by?: string | null;
   created_at?: string | null;
+  technique_family?: TechniqueFamily;
+  /** Union of format capability tokens (e.g. multi_block, xps_regions). */
+  capabilities?: string[];
 };
 
 export type DatasetListItem = { dataset_id: string; count: number; metadata?: DatasetMetadata };
@@ -67,7 +72,7 @@ export type PipelineStep = {
   input_from?: PipelineInputFrom;
   after_step_id?: string | null;
 };
-export type Pipeline = { steps: PipelineStep[] };
+export type Pipeline = { steps: PipelineStep[]; technique_family?: TechniqueFamily };
 
 export type SessionCreateResponse = { session: { session_id: string } };
 export type SessionPipelineUpdateResponse = { pipeline: Pipeline; pipeline_hash: string };
@@ -116,6 +121,7 @@ export type PipelineLibraryItem = {
   pipeline: Pipeline;
   created_at: string;
   updated_at: string;
+  technique_family?: TechniqueFamily;
 };
 
 export type PipelineListResponse = { items: PipelineLibraryItem[]; count: number };
@@ -147,6 +153,7 @@ export type PipelineExportPackage = {
   exported_at?: string;
   name: string;
   pipeline: Pipeline;
+  technique_family?: TechniqueFamily;
   source_pipeline_id?: string | null;
 };
 export type PipelineImportResponse = { item: PipelineLibraryItem };
@@ -182,16 +189,56 @@ export function importDatasetPackage(file: File) {
   });
 }
 
-export function createDatasetFromUploads(relativePaths: string[], metadata?: DatasetMetadata) {
+export function createDatasetFromUploads(
+  relativePaths: string[],
+  metadata?: DatasetMetadata,
+  options?: {
+    vms_spectrum_mode?: "averages" | "individuals" | "all";
+    xps_regions?: string[];
+    record_indices?: Record<string, number[]>;
+  }
+) {
   const md: Record<string, unknown> = {};
   if (metadata?.name != null && String(metadata.name).trim() !== "") md.name = String(metadata.name).trim();
   if (metadata?.description != null && String(metadata.description).trim() !== "") md.description = String(metadata.description).trim();
   if (metadata?.tags?.length) md.tags = metadata.tags;
+  const body: Record<string, unknown> = { relative_paths: relativePaths, metadata: md };
+  if (
+    options?.vms_spectrum_mode === "averages" ||
+    options?.vms_spectrum_mode === "individuals" ||
+    options?.vms_spectrum_mode === "all"
+  ) {
+    body.vms_spectrum_mode = options.vms_spectrum_mode;
+  }
+  if (Array.isArray(options?.xps_regions) && options.xps_regions.length) {
+    body.xps_regions = options.xps_regions;
+  }
+  if (options?.record_indices && Object.keys(options.record_indices).length) {
+    body.record_indices = options.record_indices;
+  }
   return fetchJson<DatasetCreateResponse>(`/datasets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ relative_paths: relativePaths, metadata: md }),
+    body: JSON.stringify(body),
   });
+}
+
+export type XpsRegionCount = { region: string; count: number };
+export type FilterFieldCatalogItem = {
+  id: string;
+  label: string;
+  kind: "categorical" | "numeric";
+  values?: string[];
+  min?: number;
+  max?: number;
+};
+
+export function fetchDatasetXpsRegions(datasetId: string) {
+  return fetchJson<{ regions: XpsRegionCount[] }>(`/datasets/${encodeURIComponent(datasetId)}/xps-regions`);
+}
+
+export function fetchDatasetFilterFields(datasetId: string) {
+  return fetchJson<{ fields: FilterFieldCatalogItem[] }>(`/datasets/${encodeURIComponent(datasetId)}/filter-fields`);
 }
 
 export function createSession(datasetId: string, subset: SubsetStrategy, pipeline: Pipeline) {
@@ -298,12 +345,20 @@ export function listBaselineMethods() {
   return fetchJson<BaselineMethodsResponse>(`/pipeline/baseline-methods`);
 }
 
-export function listPipelines(limit = 100, offset = 0, q?: string | null) {
+export function listPipelines(
+  limit = 100,
+  offset = 0,
+  q?: string | null,
+  technique_family?: TechniqueFamily | null
+) {
   const params = new URLSearchParams({
     limit: String(limit),
     offset: String(offset),
   });
   if (q != null && String(q).trim() !== "") params.set("q", String(q).trim());
+  if (technique_family === "vibrational" || technique_family === "xps") {
+    params.set("technique_family", technique_family);
+  }
   return fetchJson<PipelineListResponse>(`/pipelines?${params.toString()}`);
 }
 
@@ -312,10 +367,11 @@ export function createPipelineLibraryEntry(name: string, pipeline: Pipeline, opt
   if (options?.overwrite) params.set("overwrite", "true");
   const qs = params.toString();
   const url = qs ? `/pipelines?${qs}` : `/pipelines`;
+  const technique_family = pipeline.technique_family ?? "vibrational";
   return fetchJson<PipelineCreateResponse>(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, pipeline }),
+    body: JSON.stringify({ name, pipeline, technique_family }),
   });
 }
 
@@ -325,12 +381,14 @@ export function getPipelineLibraryEntry(pipelineId: string) {
 
 export function updatePipelineLibraryEntry(
   pipelineId: string,
-  body: { name?: string; pipeline?: Pipeline }
+  body: { name?: string; pipeline?: Pipeline; technique_family?: TechniqueFamily }
 ) {
+  const technique_family =
+    body.technique_family ?? body.pipeline?.technique_family ?? undefined;
   return fetchJson<PipelineUpdateResponse>(`/pipelines/${encodeURIComponent(pipelineId)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, technique_family }),
   });
 }
 
@@ -345,10 +403,24 @@ export function exportPipelineLibraryEntry(pipelineId: string) {
 }
 
 export function importPipelineLibraryEntry(payload: PipelineExportPackage | { name?: string | null; pipeline: Pipeline }) {
+  const technique_family =
+    ("technique_family" in payload ? payload.technique_family : undefined) ??
+    payload.pipeline.technique_family ??
+    "vibrational";
   const body =
     "schema_version" in payload
-      ? { schema_version: payload.schema_version, name: payload.name, pipeline: payload.pipeline }
-      : { schema_version: "sersflow.pipeline.v1", name: payload.name ?? null, pipeline: payload.pipeline };
+      ? {
+          schema_version: payload.schema_version,
+          name: payload.name,
+          pipeline: payload.pipeline,
+          technique_family,
+        }
+      : {
+          schema_version: "sersflow.pipeline.v1",
+          name: payload.name ?? null,
+          pipeline: payload.pipeline,
+          technique_family,
+        };
   return fetchJson<PipelineImportResponse>(`/pipelines/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -397,6 +469,18 @@ export type FitRequest = {
   return_curve?: boolean;
   /** default: use p0; auto: Gaussian amp = intensity at initial pos (backend). */
   initial_guess_mode?: "default" | "auto";
+  technique_family?: TechniqueFamily;
+  vary?: boolean[];
+  param_links?: Array<{
+    source_component_id: string;
+    source_key: string;
+    target_component_id: string;
+    target_key: string;
+    mode: "equal" | "scale" | "offset";
+    scale?: number;
+    offset?: number;
+  }>;
+  xps_region?: string | null;
 };
 
 export type FitComponentResult = {
@@ -421,5 +505,103 @@ export function postFittingFit(payload: FitRequest, init?: RequestInit) {
     body: JSON.stringify(payload),
     ...init,
   });
+}
+
+export type FittingRecipeIndexItem = {
+  id: string;
+  element: string;
+  region: string;
+  compound: string;
+  source_table?: string | null;
+  pass_energies: number[];
+  label: string;
+  aliases?: string[];
+};
+
+export type FittingRecipesIndexResponse = {
+  items: FittingRecipeIndexItem[];
+  count: number;
+};
+
+export type FittingRecipeApplyResponse = {
+  recipe_id: string;
+  recipe_pass_energy: number;
+  xps_region: string;
+  components: Array<{ component_id: string; component_type: string; degree?: number | null }>;
+  p0: number[];
+  bounds_lower: (number | null)[];
+  bounds_upper: (number | null)[];
+  vary: boolean[];
+  param_links: Array<{
+    source_component_id: string;
+    source_key: string;
+    target_component_id: string;
+    target_key: string;
+    mode: "equal" | "scale" | "offset";
+    scale?: number;
+    offset?: number;
+  }>;
+  warnings: string[];
+};
+
+export function listFittingRecipeIndex(opts?: {
+  q?: string;
+  element?: string;
+  region?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.element) params.set("element", opts.element);
+  if (opts?.region) params.set("region", opts.region);
+  params.set("limit", String(opts?.limit ?? 50));
+  return fetchJson<FittingRecipesIndexResponse>(`/xps/fitting-recipes/index?${params.toString()}`);
+}
+
+export function applyFittingRecipe(
+  recipeId: string,
+  opts?: {
+    pass_energy?: number;
+    include_background?: boolean;
+    preferred_pass_energy?: number;
+  }
+) {
+  const params = new URLSearchParams();
+  if (opts?.pass_energy != null) params.set("pass_energy", String(opts.pass_energy));
+  if (opts?.include_background === false) params.set("include_background", "false");
+  if (opts?.preferred_pass_energy != null) {
+    params.set("preferred_pass_energy", String(opts.preferred_pass_energy));
+  }
+  const qs = params.toString();
+  const path = `/xps/fitting-recipes/${encodeURIComponent(recipeId)}/apply${qs ? `?${qs}` : ""}`;
+  return fetchJson<FittingRecipeApplyResponse>(path);
+}
+
+export type MethodDefaultPublic = {
+  id: string;
+  chapter: number;
+  instrument?: string | null;
+  software?: string | null;
+  background?: string | null;
+  charge_ref?: Record<string, unknown>;
+  default_lineshape?: Record<string, unknown>;
+  metal_lineshape?: Record<string, unknown>;
+  procedure_markdown?: string | null;
+};
+
+export type FittingRecipesCatalogResponse = {
+  source: Record<string, unknown>;
+  method_defaults: MethodDefaultPublic[];
+  compound_fits: unknown[];
+  method_count: number;
+  compound_fit_count: number;
+};
+
+export function listFittingRecipesCatalog(opts?: { include_methods?: boolean; chapter?: number }) {
+  const params = new URLSearchParams();
+  if (opts?.include_methods === false) params.set("include_methods", "false");
+  if (opts?.chapter != null) params.set("chapter", String(opts.chapter));
+  const qs = params.toString();
+  return fetchJson<FittingRecipesCatalogResponse>(`/xps/fitting-recipes${qs ? `?${qs}` : ""}`);
 }
 

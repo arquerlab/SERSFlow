@@ -1,4 +1,9 @@
 import type { EditorStep } from "./editorTypes";
+import {
+  FALLBACK_PEAK_KEYS,
+  INFINITE_AREA_PEAK_TYPES,
+  isPeakComponentType,
+} from "./fittingUtils";
 import { integrationFeatureKeys } from "./spectralIntegrationsUtils";
 import { probesFromParams } from "./spectralIntensitiesUtils";
 
@@ -73,12 +78,14 @@ function fittingFeatureKeys(params: Record<string, unknown> | null | undefined):
       for (let d = degree; d >= 0; d -= 1) {
         keys.push(`fit_${id}_c${d}`);
       }
-    } else if (type === "pseudo_voigt") {
-      keys.push(`fit_${id}_pos`, `fit_${id}_amp`, `fit_${id}_fwhm`, `fit_${id}_eta`, `fit_${id}_area`);
-    } else if (type === "voigt") {
-      keys.push(`fit_${id}_pos`, `fit_${id}_amp`, `fit_${id}_fwhm_g`, `fit_${id}_fwhm_l`, `fit_${id}_area`);
+    } else if (isPeakComponentType(type)) {
+      for (const k of FALLBACK_PEAK_KEYS[type]) {
+        keys.push(`fit_${id}_${k}`);
+      }
+      if (!INFINITE_AREA_PEAK_TYPES.has(type)) {
+        keys.push(`fit_${id}_area`);
+      }
     } else {
-      // gaussian, lorentzian, and unknown peak-like shapes
       keys.push(`fit_${id}_pos`, `fit_${id}_amp`, `fit_${id}_fwhm`, `fit_${id}_area`);
     }
   });

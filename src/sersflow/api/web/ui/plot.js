@@ -3,10 +3,16 @@ import { fetchJson } from "./api.js";
 export function getSelectedPaths(plotFileSelectorsEl) {
   const paths = [];
   const seen = new Set();
-  const selects = plotFileSelectorsEl ? plotFileSelectorsEl.querySelectorAll("select") : [];
+  // Only file row selectors — ignore nested selects (VAMAS mode/filters, etc.).
+  const selects = plotFileSelectorsEl
+    ? plotFileSelectorsEl.querySelectorAll("select[data-sel-id]")
+    : [];
   for (const s of selects) {
     const v = (s.value || "").trim();
     if (!v) continue;
+    // Upload relative_paths are always "<batch_id>/...". Skip accidental UI tokens
+    // like mode="averages" if a nested select ever gains data-sel-id.
+    if (!v.includes("/")) continue;
     if (seen.has(v)) continue;
     seen.add(v);
     paths.push(v);

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+from typing import Any
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse, HTMLResponse
+
+from sersflow.core.io.formats import list_formats
+from sersflow.core.pipeline.library import get_step, list_steps
 
 
 router = APIRouter(tags=["Meta"])
@@ -30,7 +34,7 @@ def root() -> HTMLResponse:
     """
     index_path = _web_root() / "index.html"
     html = index_path.read_text(encoding="utf-8")
-    return HTMLResponse(html)
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
 @router.get("/preprocess")
@@ -97,7 +101,11 @@ def static_assets(asset_path: str) -> FileResponse:
         return FileResponse(web_root / "index.html", status_code=404)
     if not candidate.exists() or not candidate.is_file():
         return FileResponse(web_root / "index.html", status_code=404)
-    return FileResponse(candidate)
+    resp = FileResponse(candidate)
+    # Legacy JS modules change often; avoid sticky browser caches of outdated plot helpers.
+    if candidate.suffix.lower() in {".js", ".mjs", ".css", ".html", ".map"}:
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
 
 
 @router.get("/favicon.ico")
@@ -106,4 +114,43 @@ def favicon() -> Response:
     Serve the favicon.ico icon image.
     """
     return Response(status_code=204)
+
+
+@router.get("/meta/formats")
+def meta_formats() -> dict[str, Any]:
+    """Public catalog of registered file formats (loaders + UI treatments)."""
+    return {"items": [f.to_public() for f in list_formats()]}
+
+
+@router.get("/meta/formats/{format_id}")
+def meta_format_by_id(format_id: str) -> dict[str, Any]:
+    for f in list_formats():
+        if f.id == format_id:
+            return f.to_public()
+    raise HTTPException(status_code=404, detail=f"Unknown format: {format_id}")
+
+
+@router.get("/meta/pipeline-steps")
+def meta_pipeline_steps(
+    technique_family: str | None = Query(None),
+    capability: list[str] | None = Query(None),
+) -> dict[str, Any]:
+    """
+    Processing step palette filtered by dataset technique + capabilities.
+
+    Pass ``capability`` multiple times for a union of capability tokens.
+    """
+    caps: list[str] = []
+    if capability:
+        caps = [str(c) for c in capability if c is not None]
+    specs = list_steps(technique_family=technique_family, capabilities=caps)
+    return {"items": [s.to_public() for s in specs]}
+
+
+@router.get("/meta/pipeline-steps/{step_id}")
+def meta_pipeline_step_by_id(step_id: str) -> dict[str, Any]:
+    spec = get_step(step_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Unknown step: {step_id}")
+    return spec.to_public()
 

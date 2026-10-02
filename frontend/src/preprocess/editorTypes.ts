@@ -25,6 +25,23 @@ export function sanitizeStepInputs(steps: EditorStep[]): EditorStep[] {
   });
 }
 
+/**
+ * Legacy metadata_filter cleanup when loading a saved pipeline:
+ * - Old UI always wrote action="exclude" while intending keep-matching.
+ * Steps stay separate; each is a branch-local mask in the engine (respects input_from).
+ * Multiple values in one step remain OR within that clause.
+ */
+export function migrateMetadataFilterStepsOnLoad(steps: EditorStep[]): EditorStep[] {
+  return steps.map((s) => {
+    if (s.name !== "metadata_filter") return s;
+    const action = String(s.params?.action || "").trim().toLowerCase();
+    if (action === "exclude" || !action) {
+      return { ...s, params: { ...s.params, action: "keep" } };
+    }
+    return s;
+  });
+}
+
 export function inputSelectValue(s: EditorStep): string {
   if (s.input_from === "initial") return "initial";
   if (s.input_from === "after_step" && (s.after_step_id || "").trim()) return `after:${s.after_step_id!.trim()}`;

@@ -20,11 +20,13 @@ from sersflow.api.routers.sessions import router as sessions_router
 from sersflow.api.routers.fitting import router as fitting_router
 from sersflow.api.routers.analysis import router as analysis_router
 from sersflow.api.routers.explore import router as explore_router
+from sersflow.api.routers.xps import router as xps_router
 
 
 app = FastAPI(title="SERSFlow API", version="0.1.0")
 app.add_middleware(DataScopeMiddleware)
 app.add_middleware(AuthMiddleware)
+
 
 app.include_router(meta_router)
 app.include_router(auth_router)
@@ -38,6 +40,7 @@ app.include_router(sessions_router)
 app.include_router(fitting_router)
 app.include_router(analysis_router)
 app.include_router(explore_router)
+app.include_router(xps_router)
 
 logger = logging.getLogger(__name__)
 

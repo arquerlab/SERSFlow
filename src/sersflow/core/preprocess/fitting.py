@@ -27,11 +27,15 @@ class FitProblem:
     bounds_lower: list[float | None]
     bounds_upper: list[float | None]
     initial_guess_mode: str = "default"
+    technique_family: str = "vibrational"
+    vary: list[bool] | None = None
+    param_links: list[dict[str, Any]] | None = None
+    xps_region: str | None = None
     """
     default: use client p0 as-is.
-    auto: for each peak component (gaussian / lorentzian / pseudo_voigt / voigt),
-    set initial amplitude to the spectrum intensity linearly interpolated at the
-    initial center position (p0 pos), per spectrum.
+    auto: for each peak component (gaussian / lorentzian / pseudo_voigt / gl / voigt /
+    ds / gds / la / lf / apv / asymmetric_voigt), set initial amplitude to the spectrum
+    intensity linearly interpolated at the initial center position (p0 pos), per spectrum.
     """
 
 
@@ -129,6 +133,29 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
         degree = int(deg) if deg is not None else None
         components.append(FitComponent(component_type=ctype, component_id=cid, degree=degree))
 
+    vary_raw = params.get("vary")
+    vary: list[bool] | None = None
+    if isinstance(vary_raw, list) and vary_raw:
+        vary = [bool(v) for v in vary_raw]
+
+    links_raw = params.get("param_links")
+    param_links: list[dict[str, Any]] | None = None
+    if isinstance(links_raw, list) and links_raw:
+        param_links = [dict(x) for x in links_raw if isinstance(x, dict)]
+
+    region = params.get("xps_region")
+    xps_region = str(region).strip() if region is not None and str(region).strip() else None
+
+    tech_raw = params.get("technique_family")
+    if tech_raw is None or str(tech_raw).strip() == "":
+        tech = "vibrational"
+    else:
+        tech = str(tech_raw).strip().lower()
+        if tech not in ("vibrational", "xps"):
+            raise ValueError(
+                f"Invalid technique_family {tech_raw!r}; expected 'vibrational' or 'xps'"
+            )
+
     return FitProblem(
         x=xy.x.astype(float, copy=False),
         y=xy.y.astype(float, copy=False),
@@ -137,6 +164,10 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
         bounds_lower=[None if v is None else float(v) for v in lo],
         bounds_upper=[None if v is None else float(v) for v in hi],
         initial_guess_mode=igm,
+        technique_family=tech,
+        vary=vary,
+        param_links=param_links,
+        xps_region=xps_region,
     )
 
 
@@ -152,11 +183,35 @@ def _validate_vectors(n: int, p0: list[float], lo: list[float | None], hi: list[
 
 def fit_curve(problem: FitProblem) -> FitResult:
     """
-    Fit a sum of components using bounded non-linear least squares.
-
-    The ordering of parameters is defined by component specs (see fitting_specs.py),
-    and must match p0/bounds vectors.
+    Fit a sum of components using technique-gated engines:
+    - vibrational -> SciPy curve_fit
+    - xps -> lmfit (always)
     """
+    tech = str(problem.technique_family or "vibrational").strip().lower()
+    if tech not in ("vibrational", "xps"):
+        raise ValueError(
+            f"Invalid technique_family {problem.technique_family!r}; expected 'vibrational' or 'xps'"
+        )
+    if tech == "xps":
+        from sersflow.core.preprocess.fitting_lmfit import fit_curve_lmfit
+
+        return fit_curve_lmfit(problem)
+
+    from sersflow.core.preprocess.fitting_specs import XPS_BACKGROUND_COMPONENT_TYPES
+
+    for comp in problem.components:
+        if comp.component_type.strip().lower() in XPS_BACKGROUND_COMPONENT_TYPES:
+            raise ValueError(
+                f"Active XPS background {comp.component_type!r} requires an XPS pipeline (lmfit engine)"
+            )
+    if problem.param_links:
+        raise ValueError("Parameter links require an XPS pipeline (lmfit engine)")
+
+    return _fit_curve_scipy(problem)
+
+
+def _fit_curve_scipy(problem: FitProblem) -> FitResult:
+    """Fit a sum of components using bounded SciPy curve_fit."""
     if problem.x.ndim != 1 or problem.y.ndim != 1:
         raise ValueError("x and y must be 1D arrays")
     if problem.x.shape[0] != problem.y.shape[0]:
@@ -164,7 +219,6 @@ def fit_curve(problem: FitProblem) -> FitResult:
     if not problem.components:
         raise ValueError("components must not be empty")
 
-    # Build a flattened model with parameter slicing.
     funcs = []
     slices: list[tuple[int, int]] = []
     mapping: list[dict[str, Any]] = []
@@ -188,9 +242,17 @@ def fit_curve(problem: FitProblem) -> FitResult:
 
     _validate_vectors(cursor, problem.p0, problem.bounds_lower, problem.bounds_upper)
 
+    lo_list = list(problem.bounds_lower)
+    hi_list = list(problem.bounds_upper)
+    p0_list = [float(v) for v in problem.p0]
+    if problem.vary is not None:
+        for i, vflag in enumerate(problem.vary):
+            if i < len(p0_list) and not vflag:
+                lo_list[i] = p0_list[i]
+                hi_list[i] = p0_list[i]
+
     param_keys_per_comp = [m["param_keys"] for m in mapping]
     mode = str(problem.initial_guess_mode or "default").strip().lower()
-    p0_list = [float(v) for v in problem.p0]
     if mode == "auto":
         p0_list = _apply_auto_peak_amplitudes(
             problem.x,
@@ -199,8 +261,8 @@ def fit_curve(problem: FitProblem) -> FitResult:
             problem.components,
             slices,
             param_keys_per_comp,
-            problem.bounds_lower,
-            problem.bounds_upper,
+            lo_list,
+            hi_list,
         )
 
     n_data = int(problem.x.shape[0])
@@ -212,20 +274,17 @@ def fit_curve(problem: FitProblem) -> FitResult:
 
     def model_sum(x: np.ndarray, *p: float) -> np.ndarray:
         yhat = np.zeros_like(x, dtype=float)
-        for (comp, f, _params), (s, e) in zip(funcs, slices):
+        for (_comp, f, _params), (s, e) in zip(funcs, slices):
             yhat = yhat + f(x, *p[s:e])
         return yhat
 
-    lo = np.array([(-np.inf if v is None else float(v)) for v in problem.bounds_lower], dtype=float)
-    hi = np.array([(np.inf if v is None else float(v)) for v in problem.bounds_upper], dtype=float)
+    lo = np.array([(-np.inf if v is None else float(v)) for v in lo_list], dtype=float)
+    hi = np.array([(np.inf if v is None else float(v)) for v in hi_list], dtype=float)
 
     p0 = np.array(p0_list, dtype=float)
     xf = problem.x.astype(float)
     yf = problem.y.astype(float)
     try:
-        # SciPy compatibility:
-        # - Newer SciPy exposes `max_nfev`
-        # - Older SciPy uses `maxfev` (passed down to `leastsq`)
         sig = inspect.signature(curve_fit)
         if "max_nfev" in sig.parameters:
             max_kwargs = {"max_nfev": 50_000}

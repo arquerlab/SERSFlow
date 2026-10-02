@@ -43,6 +43,7 @@ BASELINE_CATEGORIES: tuple[BaselineCategorySpec, ...] = (
     BaselineCategorySpec("polynomial", "Polynomial"),
     BaselineCategorySpec("morphological", "Morphological"),
     BaselineCategorySpec("miscellaneous", "Miscellaneous"),
+    BaselineCategorySpec("lmfitxps", "lmfitxps (XPS)"),
 )
 
 _PARAM_DESCRIPTIONS: dict[str, str] = {
@@ -116,6 +117,12 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "weights": "Optional per-point weights.",
     "width_scale": "Ria peak-width scaling factor.",
     "window_kwargs": "Advanced morphological window options passed to pybaselines.",
+    "maxit": "Maximum number of Shirley/Tougaard refinement iterations.",
+    "bounds": "Optional Shirley edge bounds (two energies or two (x,y) pairs).",
+    "tb": "Tougaard B (scale) start value; optimized during calculation.",
+    "tc": "Tougaard C parameter of the 4-PIESCS loss function.",
+    "tcd": "Tougaard C' parameter (set with td for 2/3/4-PIESCS variants).",
+    "td": "Tougaard D parameter of the 4-PIESCS loss function.",
 }
 
 _INT_PARAMS = {
@@ -132,6 +139,7 @@ _INT_PARAMS = {
     "sections",
     "spline_degree",
     "total_points",
+    "maxit",
 }
 _BOOLEAN_PARAMS = {
     "conserve_memory",
@@ -148,7 +156,7 @@ _BOOLEAN_PARAMS = {
     "use_threshold",
 }
 _STRING_PARAMS = {"interp_method", "side"}
-_JSON_PARAMS = {"baseline_points", "pad_kwargs", "roi", "sections", "weights", "window_kwargs"}
+_JSON_PARAMS = {"baseline_points", "pad_kwargs", "roi", "sections", "weights", "window_kwargs", "bounds"}
 _HIDDEN_PARAMS = _JSON_PARAMS | {"return_coef"}
 _OPTIONS: dict[str, tuple[str, ...]] = {
     "side": ("both", "left", "right"),
@@ -188,12 +196,13 @@ def _method(
     *,
     primary: tuple[str, ...] = (),
     ui_enabled: bool = True,
+    label: str | None = None,
 ) -> BaselineMethodSpec:
     primary_set = set(primary)
     return BaselineMethodSpec(
         id=method_id,
         category=category,
-        label=method_id,
+        label=label or method_id,
         params=tuple(_param(key, default, primary_set) for key, default in params),
         ui_enabled=ui_enabled,
     )
@@ -257,6 +266,21 @@ BASELINE_METHOD_SPECS: tuple[BaselineMethodSpec, ...] = (
     # Miscellaneous
     _method("interp_pts", "miscellaneous", [("baseline_points", ()), ("interp_method", "linear")], ui_enabled=False),
     _method("beads", "miscellaneous", [("freq_cutoff", 0.005), ("lam_0", 1.0), ("lam_1", 1.0), ("lam_2", 1.0), ("asymmetry", 6.0), ("filter_type", 1), ("cost_function", 2), ("max_iter", 50), ("tol", 0.01), ("eps_0", 1e-6), ("eps_1", 1e-6), ("fit_parabola", True), ("smooth_half_window", None)], primary=("freq_cutoff",)),
+    # lmfitxps static XPS backgrounds
+    _method(
+        "shirley",
+        "lmfitxps",
+        [("tol", 1e-5), ("maxit", 10), ("bounds", None)],
+        primary=("tol", "maxit"),
+        label="Shirley",
+    ),
+    _method(
+        "tougaard",
+        "lmfitxps",
+        [("tb", 2866.0), ("tc", 1643.0), ("tcd", 1.0), ("td", 1.0), ("maxit", 100)],
+        primary=("tb", "tc"),
+        label="Tougaard",
+    ),
 )
 
 BASELINE_METHODS: dict[str, BaselineMethodSpec] = {spec.id: spec for spec in BASELINE_METHOD_SPECS}
@@ -337,7 +361,7 @@ def baseline_kwargs(method: str, params: dict[str, Any] | None = None) -> dict[s
 
 
 def baseline_signature_drift() -> list[str]:
-    """Compare the curated catalog against the installed pybaselines signatures."""
+    """Compare the curated pybaselines catalog against the installed signatures."""
     try:
         from pybaselines import Baseline  # type: ignore
     except Exception as e:
@@ -345,6 +369,8 @@ def baseline_signature_drift() -> list[str]:
 
     issues: list[str] = []
     for spec in BASELINE_METHOD_SPECS:
+        if spec.category == "lmfitxps":
+            continue
         func = getattr(Baseline, spec.id, None)
         if func is None:
             issues.append(f"{spec.id}: missing from pybaselines.Baseline")
@@ -361,26 +387,78 @@ def baseline_signature_drift() -> list[str]:
     return issues
 
 
-def correct_baseline(intensity: np.ndarray, method: str = "derpsalsa", **kwargs: Any) -> tuple[np.ndarray, dict]:
-    """
-    Apply pybaselines baseline correction to a spectrum using the SERSFlow baseline catalog.
+def _correct_lmfitxps_baseline(
+    intensity: np.ndarray,
+    *,
+    x: np.ndarray,
+    method_id: str,
+    kwargs: dict[str, Any],
+) -> tuple[np.ndarray, dict]:
+    try:
+        from lmfitxps.backgrounds import shirley_calculate, tougaard_calculate  # type: ignore
+    except Exception as e:
+        raise ImportError(
+            "Baseline method requires optional dependency 'lmfitxps'. "
+            "Install lmfitxps>=4.2.0 or choose a pybaselines method."
+        ) from e
 
-    All supported baseline methods, including Whittaker, smoothing, spline, polynomial,
-    morphological, and miscellaneous methods, dispatch through the same catalog-driven path.
-    """
+    y = np.asarray(intensity, dtype=float)
+    xx = np.asarray(x, dtype=float)
+    if xx.shape != y.shape:
+        raise ValueError(f"lmfitxps baseline requires x and y of equal length; got {xx.shape} vs {y.shape}")
+    coerced = baseline_kwargs(method_id, kwargs)
+    info: dict[str, Any] = {"method": method_id}
+    if method_id == "shirley":
+        baseline = np.asarray(
+            shirley_calculate(xx, y, tol=coerced["tol"], maxit=coerced["maxit"], bounds=coerced["bounds"]),
+            dtype=float,
+        )
+    elif method_id == "tougaard":
+        baseline_arr, b_opt = tougaard_calculate(
+            xx,
+            y,
+            tb=coerced["tb"],
+            tc=coerced["tc"],
+            tcd=coerced["tcd"],
+            td=coerced["td"],
+            maxit=coerced["maxit"],
+        )
+        baseline = np.asarray(baseline_arr, dtype=float)
+        info["tougaard_B"] = float(b_opt)
+    else:
+        raise ValueError(f"Unknown lmfitxps baseline method: {method_id}")
+    info["baseline"] = baseline
+    return y - baseline, info
+
+
+def correct_baseline(
+    intensity: np.ndarray,
+    method: str = "derpsalsa",
+    *,
+    x: np.ndarray | None = None,
+    **kwargs: Any,
+) -> tuple[np.ndarray, dict]:
+    """Apply cataloged baseline correction (pybaselines or lmfitxps static backgrounds)."""
+    method_id = str(method or "derpsalsa").lower()
+    spec = BASELINE_METHODS.get(method_id)
+    if spec is None:
+        raise ValueError(f"Unknown baseline correction method: {method}")
+
+    if spec.category == "lmfitxps":
+        if x is None:
+            raise ValueError(f"Baseline method {method_id!r} requires the spectrum x-axis")
+        return _correct_lmfitxps_baseline(
+            intensity, x=np.asarray(x, dtype=float), method_id=method_id, kwargs=kwargs
+        )
+
     try:
         from pybaselines import Baseline  # type: ignore
     except Exception as e:
-        # Common on Windows when llvmlite/numba native libs are missing/incompatible.
         raise ImportError(
             "Baseline correction requires optional dependency 'pybaselines'. "
             "In this environment it failed to import (often due to numba/llvmlite native libraries). "
             "Either install a compatible pybaselines/numba/llvmlite stack, or disable the baseline step."
         ) from e
-
-    method_id = str(method or "derpsalsa").lower()
-    if method_id not in BASELINE_METHODS:
-        raise ValueError(f"Unknown baseline correction method: {method}")
 
     fitter = Baseline()
     try:

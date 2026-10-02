@@ -45,6 +45,11 @@ export function summarizeUploadLabels(labels?: Record<string, unknown> | null): 
     else parts.push(String(labels.electrolyte));
   }
 
+  const skipped = num(labels.nxs_skipped_count);
+  if (skipped != null && skipped > 0) {
+    parts.push(`${skipped} NXS region(s) skipped`);
+  }
+
   const full = parts.join(" • ");
   const maxPrimary = 5;
   const short =

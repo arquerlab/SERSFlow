@@ -47,6 +47,10 @@ from sersflow.api.services.explore_stats import (
 from sersflow.api.services.matrix_export_runner import execute_matrix_export_job
 from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.sessions_service import pipeline_hash, subset_hash
+from sersflow.api.services.technique_guard import (
+    dataset_technique_family,
+    prepare_pipeline_for_run,
+)
 from sersflow.api.deps import current_user_id
 from sersflow.api.services.ownership import (
     get_dataset_for_user,
@@ -181,7 +185,8 @@ def post_matrix_job(payload: MatrixExportRequest, request: Request) -> MatrixExp
     if not payload.dataset_id:
         raise HTTPException(status_code=400, detail="dataset_id is required unless analysis_run_id is provided")
 
-    if get_dataset_for_user(payload.dataset_id, user_id) is None:
+    ds = get_dataset_for_user(payload.dataset_id, user_id)
+    if ds is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     if payload.session_id:
@@ -202,6 +207,14 @@ def post_matrix_job(payload: MatrixExportRequest, request: Request) -> MatrixExp
         pipeline = payload.pipeline
         pipeline_json = pipeline.model_dump_json()
         session_id = None
+
+    pipeline = prepare_pipeline_for_run(
+        pipeline,
+        dataset_technique_family(ds.metadata),
+        context=f"matrix job on dataset {payload.dataset_id}",
+    )
+    if pipeline_json is not None:
+        pipeline_json = pipeline.model_dump_json()
 
     ph = pipeline_hash(pipeline)
     sh = subset_hash(SubsetStrategy(kind="all"))

@@ -13,6 +13,9 @@ import { UploadDatasetPicker, type UploadDatasetPickerHandle } from "./legacy-wr
 import { ResizableSplit } from "./components/ResizableSplit";
 import { ResizableVerticalSplit } from "./components/ResizableVerticalSplit";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { acceptFromFormats, useFormatsCatalog, useMergedFormatUi } from "./preprocess/hooks/useFormatsCatalog";
+import { usePipelineStepsCatalog, stepSpecsFromCatalog } from "./preprocess/hooks/usePipelineStepsCatalog";
+import { fetchUploadsList, UPLOADS_LIST_QUERY_KEY, useUploadsList } from "./preprocess/hooks/useUploadsList";
 import {
   clearAllDatasets,
   createDatasetFromUploads,
@@ -22,6 +25,7 @@ import {
   deletePipelineLibraryEntry,
   exportDatasetPackage,
   exportPipelineLibraryEntry,
+  fetchDatasetXpsRegions,
   getDataset,
   getPipelineLibraryEntry,
   importDatasetPackage,
@@ -44,6 +48,7 @@ import {
   type PipelineInputFrom,
   type SessionRunMetricsResponse,
   type SpectrumRef,
+  type TechniqueFamily,
 } from "./preprocess/api";
 import {
   additionalParams,
@@ -60,13 +65,20 @@ import {
 import {
   PEAK_COMPONENT_TYPES,
   PEAK_TYPE_LABELS,
+  XPS_REGION_PRESETS,
   defaultFittingEditorParams,
   defaultRowsForComponent,
+  findParamLink,
   isPeakComponentType,
   migrateFittingParamsToEditor,
   parseFittingComponentType,
+  upsertParamLink,
+  xpsBgComponentTypesFromCatalog,
+  xpsBgTypeLabel,
   type FittingEditorParams,
+  type FittingParamLink,
 } from "./preprocess/fittingUtils";
+import { FittingRecipePicker } from "./preprocess/FittingRecipePicker";
 import { DEFAULT_GUARDRAILS, type Mode, type PlotView } from "./preprocess/runController";
 
 function normalizePlotView(s: unknown): PlotView {
@@ -104,10 +116,10 @@ import { addSavedSubset, clearSavedSubsets, deleteSavedSubset, loadSavedSubsets,
 import {
   type EditorStep,
   type FieldSpec,
+  migrateMetadataFilterStepsOnLoad,
   sanitizeStepInputs,
 } from "./preprocess/editorTypes";
 import { pipelineOptionLabel } from "./preprocess/labels";
-import { pipelineStepSpecs } from "./preprocess/pipelineStepSpecs";
 import { buildPipelineFromEditor, editorStepsToApiSteps, normalizeMethodParams } from "./preprocess/pipelineEditor";
 import { SpectralIntensitiesProbeEditor } from "./preprocess/SpectralIntensitiesProbeEditor";
 import { defaultSpectralIntensitiesParams, probesFromParams, probesToApiParams } from "./preprocess/spectralIntensitiesUtils";
@@ -130,9 +142,21 @@ import {
   referenceTransformFromParams,
   referenceTransformToApiParams,
 } from "./preprocess/referenceTransformUtils";
+import {
+  defaultXAxisCalibrationParams,
+  earlierFittingStepOptions,
+  fittingPosKeysForStep,
+  multiFittingInPipeline,
+  normalizeXAxisCalibrationParams,
+} from "./preprocess/xAxisCalibrationUtils";
 import { runExplorePlot as runExplorePlotCore } from "./preprocess/explorePlotRunner";
 import { LowSignalFilterEditor } from "./preprocess/LowSignalFilterEditor";
 import { OutlierDetectionEditor } from "./preprocess/OutlierDetectionEditor";
+import { MetadataFilterEditor } from "./preprocess/MetadataFilterEditor";
+import { TickDropdown } from "./preprocess/TickDropdown";
+import { getBlockSpectra } from "./preprocess/uploadBlockSpectra";
+import { selectionMixesTechniques } from "./preprocess/uploadXpsRegionGroups";
+import { dualXpsBackgroundConflict } from "./preprocess/xpsBackgroundGuard";
 import { AnalyzeContextBanner } from "./preprocess/components/AnalyzeContextBanner";
 import { PipelineCard } from "./preprocess/components/PipelineCard";
 import { PipelineStepList } from "./preprocess/components/PipelineStepList";
@@ -159,7 +183,18 @@ export default function PreprocessingWorkspace() {
   const datasetImportInputRef = useRef<HTMLInputElement | null>(null);
   const pipelineImportInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedUploads, setSelectedUploads] = useState<string[]>([]);
+  const [selectedRecordIndices, setSelectedRecordIndices] = useState<Record<string, number[]>>({});
   const [newDatasetName, setNewDatasetName] = useState("");
+  const [vmsSpectrumMode, setVmsSpectrumMode] = useState<"averages" | "individuals" | "all">("averages");
+  const [createXpsRegions, setCreateXpsRegions] = useState<string[]>([]);
+  const [regionSubsetPicks, setRegionSubsetPicks] = useState<string[]>([]);
+  const formatsQ = useFormatsCatalog();
+  const { ui: selectedFormatUi } = useMergedFormatUi(selectedUploads);
+  const uploadAccept = acceptFromFormats(formatsQ.data?.items);
+  const selectedHasMulti =
+    selectedFormatUi.show_spectrum_mode || selectedFormatUi.show_region_filter;
+  // Block picker lives in the uploads list; do not OR show_block_picker into Prepare mode/region UI.
+  const selectedHasExplicitBlocks = Object.keys(selectedRecordIndices).length > 0;
   const [datasetId, setDatasetId] = useState<string | null>(() => {
     const u = searchParams.get("dataset_id");
     if (u) return u;
@@ -197,6 +232,7 @@ export default function PreprocessingWorkspace() {
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [pipelineVersion, setPipelineVersion] = useState(0);
   const [lastSavedPipelineVersion, setLastSavedPipelineVersion] = useState(0);
+  const dualBgConflict = useMemo(() => dualXpsBackgroundConflict(steps), [steps]);
 
   // view
   const [plotView, setPlotView] = useState<PlotView>(() => normalizePlotView(preparePrefs.plotView));
@@ -229,6 +265,8 @@ export default function PreprocessingWorkspace() {
   const [libraryOverwrite, setLibraryOverwrite] = useState(
     () => typeof preparePrefs.libraryOverwrite === "boolean" && preparePrefs.libraryOverwrite
   );
+  const [pipelineTechniqueFamily, setPipelineTechniqueFamily] = useState<TechniqueFamily>("vibrational");
+  const isXpsPipeline = pipelineTechniqueFamily === "xps";
 
   const patchParams = useCallback(
     (patch: Record<string, string | null | undefined>) => {
@@ -252,6 +290,25 @@ export default function PreprocessingWorkspace() {
     else localStorage.removeItem(LS_ANALYZE_DATASET);
     patchParams({ dataset_id: datasetId || null });
   }, [datasetId, patchParams]);
+
+  useEffect(() => {
+    const input = document.getElementById("files");
+    if (input instanceof HTMLInputElement && uploadAccept) {
+      input.accept = uploadAccept;
+    }
+  }, [uploadAccept]);
+
+  useEffect(() => {
+    const channel = new BroadcastChannel("sersflow:uploads-changed");
+    const onMsg = () => {
+      void queryClient.invalidateQueries({ queryKey: UPLOADS_LIST_QUERY_KEY });
+    };
+    channel.addEventListener("message", onMsg);
+    return () => {
+      channel.removeEventListener("message", onMsg);
+      channel.close();
+    };
+  }, [queryClient]);
 
   useEffect(() => {
     if (sessionId) localStorage.setItem(LS_ANALYZE_SESSION, sessionId);
@@ -299,8 +356,8 @@ export default function PreprocessingWorkspace() {
   ]);
 
   const pipelinesLibraryQ = useQuery({
-    queryKey: ["pipelines", { limit: 200, offset: 0 }],
-    queryFn: () => listPipelines(200, 0),
+    queryKey: ["pipelines", { limit: 200, offset: 0, technique_family: pipelineTechniqueFamily }],
+    queryFn: () => listPipelines(200, 0, null, pipelineTechniqueFamily),
   });
 
   const fittingModelsQ = useQuery({
@@ -356,12 +413,99 @@ export default function PreprocessingWorkspace() {
     queryFn: () => getDataset(String(datasetId)),
   });
 
+  useEffect(() => {
+    const fam = datasetQ.data?.dataset?.metadata?.technique_family;
+    if (fam === "xps" || fam === "vibrational") {
+      setPipelineTechniqueFamily(fam);
+    }
+  }, [datasetId, datasetQ.data?.dataset?.metadata?.technique_family]);
+
+  const datasetCapabilities = datasetQ.data?.dataset?.metadata?.capabilities ?? [];
+  const pipelineStepsQ = usePipelineStepsCatalog({
+    techniqueFamily: pipelineTechniqueFamily,
+    capabilities: datasetCapabilities,
+  });
+  const pipelineStepSpecsFromApi = useMemo(
+    () => stepSpecsFromCatalog(pipelineStepsQ.data?.items),
+    [pipelineStepsQ.data?.items]
+  );
+  const stepsCatalogReady = Boolean(pipelineStepsQ.data?.items?.length);
+
+  const uploadsMetaQ = useUploadsList({ limit: 5000 });
+
+  const preferredPassEnergy = useMemo(() => {
+    const items = uploadsMetaQ.data?.items ?? [];
+    const paths =
+      selectedUploads.length > 0
+        ? selectedUploads
+        : (datasetQ.data?.dataset?.spectra ?? [])
+            .map((s: { relative_path?: string }) => s.relative_path)
+            .filter((p): p is string => Boolean(p));
+    const seen = new Set(paths);
+    for (const it of items) {
+      if (!seen.has(it.relative_path)) continue;
+      const labels = it.labels;
+      if (!labels || typeof labels !== "object") continue;
+      const top = Number((labels as { pass_energy_eV?: unknown }).pass_energy_eV);
+      if (Number.isFinite(top) && top > 0) return Math.round(top);
+      const blocks = (labels as { vms_spectra?: Record<string, { pass_energy_eV?: unknown }> }).vms_spectra;
+      if (blocks && typeof blocks === "object") {
+        for (const b of Object.values(blocks)) {
+          const pe = Number(b?.pass_energy_eV);
+          if (Number.isFinite(pe) && pe > 0) return Math.round(pe);
+        }
+      }
+    }
+    return null;
+  }, [selectedUploads, uploadsMetaQ.data?.items, datasetQ.data?.dataset?.spectra]);
+
+  const selectionMixedTechniques = useMemo(() => {
+    const items = uploadsMetaQ.data?.items ?? [];
+    return selectionMixesTechniques(selectedUploads, items);
+  }, [selectedUploads, uploadsMetaQ.data?.items]);
+
+  const createRegionOptions = useMemo(() => {
+    const items = uploadsMetaQ.data?.items ?? [];
+    const set = new Set<string>();
+    for (const p of selectedUploads) {
+      const it = items.find((x) => x.relative_path === p);
+      for (const r of it?.xps_regions ?? []) {
+        const t = String(r || "").trim();
+        if (t) set.add(t);
+      }
+    }
+    return [...set].sort();
+  }, [selectedUploads, uploadsMetaQ.data?.items]);
+
+  const xpsRegionsQ = useQuery({
+    queryKey: ["dataset-xps-regions", datasetId],
+    queryFn: () => fetchDatasetXpsRegions(datasetId!),
+    enabled: Boolean(datasetId) && pipelineTechniqueFamily === "xps",
+  });
+
   const createFromUploadsM = useMutation({
-    mutationFn: async (args: { paths: string[]; name?: string }) =>
-      createDatasetFromUploads(
+    mutationFn: async (args: {
+      paths: string[];
+      name?: string;
+      vms_spectrum_mode?: "averages" | "individuals" | "all";
+      xps_regions?: string[];
+      record_indices?: Record<string, number[]>;
+    }) => {
+      if (selectionMixedTechniques) {
+        throw new Error("Cannot mix vibrational and XPS files in one dataset. Deselect one technique first.");
+      }
+      return createDatasetFromUploads(
         args.paths,
-        args.name?.trim() ? { name: args.name.trim() } : undefined
-      ),
+        args.name?.trim() ? { name: args.name.trim() } : undefined,
+        {
+          ...(args.vms_spectrum_mode ? { vms_spectrum_mode: args.vms_spectrum_mode } : {}),
+          ...(args.xps_regions?.length ? { xps_regions: args.xps_regions } : {}),
+          ...(args.record_indices && Object.keys(args.record_indices).length
+            ? { record_indices: args.record_indices }
+            : {}),
+        }
+      );
+    },
     onSuccess: async (data) => {
       const nextDatasetId = data?.dataset?.dataset_id;
       if (!nextDatasetId) return;
@@ -378,6 +522,8 @@ export default function PreprocessingWorkspace() {
       } else {
         setLastError(null);
       }
+      const fam = data?.dataset?.metadata?.technique_family;
+      if (fam === "xps" || fam === "vibrational") setPipelineTechniqueFamily(fam);
       setNewDatasetName("");
       setDatasetId(nextDatasetId);
       // Create a session (subsets are explicit; user creates/applies subset next).
@@ -395,6 +541,7 @@ export default function PreprocessingWorkspace() {
       await queryClient.invalidateQueries({ queryKey: ["datasets"] });
       await queryClient.refetchQueries({ queryKey: ["datasets"] });
     },
+    onError: (e: unknown) => setLastError(String((e as Error)?.message ?? e)),
   });
 
   const restoreDatasetUploadsM = useMutation({
@@ -480,8 +627,9 @@ export default function PreprocessingWorkspace() {
   }
 
   const buildPipeline = useCallback(
-    (): Pipeline => buildPipelineFromEditor(steps, fittingCatalog, baselineCatalog),
-    [steps, fittingCatalog, baselineCatalog]
+    (): Pipeline =>
+      buildPipelineFromEditor(steps, fittingCatalog, baselineCatalog, pipelineTechniqueFamily, pipelineStepSpecsFromApi),
+    [steps, fittingCatalog, baselineCatalog, pipelineTechniqueFamily, pipelineStepSpecsFromApi]
   );
 
   // Load saved subsets when dataset changes.
@@ -518,15 +666,21 @@ export default function PreprocessingWorkspace() {
 
   async function applySavedSubset(s: SavedSubset) {
     if (!sessionId) return;
-    await updateSessionSubset(sessionId, { kind: "indices", indices: s.indices });
-    setSubsetIndices(s.indices);
-    setActiveSubsetId(s.id);
-    setSubsetSource(s.label);
+    try {
+      await updateSessionSubset(sessionId, { kind: "indices", indices: s.indices });
+      setSubsetIndices(s.indices);
+      setActiveSubsetId(s.id);
+      setSubsetSource(s.label);
+    } catch (e) {
+      setLastError(String((e as Error)?.message ?? e));
+    }
   }
 
   const savePipelineM = useMutation({
     mutationFn: async (pipeline: Pipeline) => {
       if (!sessionId) throw new Error("No session");
+      const conflict = dualXpsBackgroundConflict(pipeline.steps ?? []);
+      if (conflict) throw new Error(conflict);
       return await updateSessionPipeline(sessionId, pipeline);
     },
     onSuccess: () => setLastSavedPipelineVersion(pipelineVersion),
@@ -616,8 +770,14 @@ export default function PreprocessingWorkspace() {
           after_step_id: input_from === "after_step" && after ? after : null,
         };
       });
-      setSteps(sanitizeStepInputs(next));
+      const migrated = migrateMetadataFilterStepsOnLoad(sanitizeStepInputs(next));
+      setSteps(migrated);
       setSelectedStepId(null);
+      const fam =
+        item.technique_family ??
+        item.pipeline.technique_family ??
+        null;
+      if (fam === "xps" || fam === "vibrational") setPipelineTechniqueFamily(fam);
       setPipelineVersion((v) => v + 1);
     } catch (e: any) {
       setLastError(String(e?.message ?? e));
@@ -728,8 +888,12 @@ export default function PreprocessingWorkspace() {
       currentFigure,
       setCurrentFigure,
       subsetInputsFromIndices,
-      editorStepsToApiSteps: (slice) => editorStepsToApiSteps(slice, fittingCatalog, baselineCatalog),
+      editorStepsToApiSteps: (slice) =>
+        editorStepsToApiSteps(slice, fittingCatalog, baselineCatalog, pipelineStepSpecsFromApi),
       fittingCatalog,
+      techniqueFamily: pipelineTechniqueFamily,
+      formatPlotMode: selectedFormatUi.plot_mode,
+      defaultXLabel: selectedFormatUi.default_x_label,
     });
   }
 
@@ -774,71 +938,67 @@ export default function PreprocessingWorkspace() {
     description: string;
   };
 
-  const stepPicker: StepPickerItem[] = [
-    // Data Preparation
-    { category: "Data Preparation", name: "crop", label: "Crop", description: "Restrict spectra to a selected Raman-shift range." },
-    {
-      category: "Data Preparation",
-      name: "low_signal_filter",
-      label: "Low-Signal Filter",
-      description:
-        "Detect and exclude laser-off, blocked-beam, or abnormally low-count spectra using configurable intensity metrics and thresholds.",
-    },
-    {
-      category: "Data Preparation",
-      name: "outlier_detection",
-      label: "Outlier Detection",
-      description:
-        "Detect anomalous whole spectra using interpretable methods (correlation / PCA-based), with options to flag or exclude.",
-    },
-
-    // Preprocessing
-    { category: "Preprocessing", name: "cosmic_ray_removal", label: "Cosmic Ray Removal", description: "Detect and correct narrow spike artifacts." },
-    { category: "Preprocessing", name: "baseline", label: "Baseline Correction", description: "Estimate and subtract fluorescence or background contributions." },
-    { category: "Preprocessing", name: "noise_savgol", label: "Smoothing", description: "Reduce high-frequency spectral noise." },
-    {
-      category: "Preprocessing",
-      name: "align_resample",
-      label: "Alignment & Resampling",
-      description: "Align spectral features and interpolate spectra onto a common Raman-shift axis.",
-    },
-
-    // Transformation
-    { category: "Transformation", name: "normalize", label: "Normalization", description: "Transform spectral intensity scale (vector/area/peak/SNV/min–max, etc.)." },
-    { category: "Transformation", name: "spectrum_derivative", label: "Derivative", description: "Calculate first- or higher-order spectral derivatives." },
-    {
-      category: "Transformation",
-      name: "reference_transform",
-      label: "Reference Transformation",
-      description: "Transform each spectrum relative to a selected reference spectrum (difference/ratio/log-ratio).",
-    },
-
-    // Feature Extraction
-    { category: "Feature Extraction", name: "spectral_intensities", label: "Peak Identification", description: "Detect and characterize spectral peaks (intensity probes for analysis columns)." },
-    { category: "Feature Extraction", name: "fitting", label: "Peak Fitting", description: "Fit analytical peak models and extract fitted parameters." },
-    { category: "Feature Extraction", name: "spectral_integrations", label: "Peak Integration", description: "Calculate integrated intensity over selected spectral regions or fitted peaks." },
-    { category: "Feature Extraction", name: "feature_operations", label: "Metric Calculation", description: "Create derived metrics by applying mathematical expressions and operations to previously extracted features." },
-  ];
+  const stepPicker: StepPickerItem[] = useMemo(() => {
+    const items = pipelineStepsQ.data?.items;
+    if (!items?.length) return [];
+    const groups: StepCategory[] = ["Data Preparation", "Preprocessing", "Transformation", "Feature Extraction"];
+    return items
+      .filter((it) => groups.includes(it.palette_group as StepCategory))
+      .map((it) => ({
+        category: it.palette_group as StepCategory,
+        name: it.id,
+        label: it.label,
+        description: it.description || "",
+      }));
+  }, [pipelineStepsQ.data?.items]);
 
   function addStepTemplate(name: string) {
     const defaultBaseline = defaultMethodForCategory(baselineCatalog, "whittaker") ?? baselineCatalog.methods[0];
+    const catalogItem = pipelineStepsQ.data?.items?.find((it) => it.id === name);
+    const catalogMethod = catalogItem?.ui?.methods?.[0];
+    const catalogDefaults =
+      catalogMethod != null
+        ? {
+            ...(catalogItem?.ui?.method_param_key
+              ? { [catalogItem.ui.method_param_key]: catalogMethod.id }
+              : {}),
+            ...(catalogMethod.defaults ?? {}),
+          }
+        : null;
+
     const templates: Record<string, any> = {
-      noise_savgol: { name: "noise_savgol", enabled: true, params: { window_length: 11, polyorder: 3 } },
+      noise_savgol: {
+        name: "noise_savgol",
+        enabled: true,
+        params: catalogDefaults ?? { window_length: 11, polyorder: 3 },
+      },
       cosmic_ray_removal: {
         name: "cosmic_ray_removal",
         enabled: true,
-        params: { method: "zscore", threshold: 5.0, window: 5, interpolation: "median", max_width: 10, min_intensity_ratio: 2.0, n_iterations: 3 },
+        params: catalogDefaults ?? {
+          method: "zscore",
+          threshold: 5.0,
+          window: 5,
+          interpolation: "median",
+          max_width: 10,
+          min_intensity_ratio: 2.0,
+          n_iterations: 3,
+        },
       },
       baseline: {
         name: "baseline",
         enabled: true,
         params: { method: defaultBaseline?.id ?? "asls", ...defaultsForPrimaryParams(defaultBaseline) },
       },
-      crop: { name: "crop", enabled: true, params: { min_x: 400, max_x: 2000 } },
+      crop: {
+        name: "crop",
+        enabled: true,
+        params: catalogDefaults ?? { min_x: 400, max_x: 2000 },
+      },
       align_resample: {
         name: "align_resample",
         enabled: true,
-        params: {
+        params: catalogDefaults ?? {
           method: "uniform",
           min_x: 400,
           max_x: 2000,
@@ -848,8 +1008,16 @@ export default function PreprocessingWorkspace() {
           interp: "linear",
         },
       },
-      // Backend supports: max/min/mean/median/vector/spectrum_point/baseline_point.
-      normalize: { name: "normalize", enabled: true, params: { method: "max" } },
+      x_axis_calibration: {
+        name: "x_axis_calibration",
+        enabled: true,
+        params: defaultXAxisCalibrationParams(pipelineTechniqueFamily) as unknown as Record<string, unknown>,
+      },
+      normalize: {
+        name: "normalize",
+        enabled: true,
+        params: catalogDefaults ?? { method: "max" },
+      },
       fitting: {
         name: "fitting",
         enabled: true,
@@ -873,7 +1041,7 @@ export default function PreprocessingWorkspace() {
       spectrum_derivative: {
         name: "spectrum_derivative",
         enabled: true,
-        params: { method: "gradient", order: 1 },
+        params: catalogDefaults ?? { method: "gradient", order: 1 },
       },
       reference_transform: {
         name: "reference_transform",
@@ -883,17 +1051,35 @@ export default function PreprocessingWorkspace() {
       low_signal_filter: {
         name: "low_signal_filter",
         enabled: true,
-        params: { metric: "median", threshold: 0, percentile: 10, action: "exclude" },
+        params: { metric: "median", threshold: 0, divisor: 10, action: "exclude" },
+      },
+      metadata_filter: {
+        name: "metadata_filter",
+        enabled: true,
+        params: { filters: [], action: "keep" },
       },
       outlier_detection: {
         name: "outlier_detection",
         enabled: true,
-        params: { method: "correlation_to_median", threshold: 0.98, action: "exclude", pca_scaler: "none", n_components: 8 },
+        params: {
+          method: "correlation_to_median",
+          threshold: 0.98,
+          action: "exclude",
+          pca_scaler: "none",
+          n_components: 8,
+        },
       },
     };
-    const t = templates[name] ?? { name, enabled: true, params: {} };
+    const t = templates[name] ?? {
+      name,
+      enabled: true,
+      params: catalogDefaults ?? {},
+    };
     const id = crypto.randomUUID();
-    setSteps((prev) => [...prev, { id, name: t.name, enabled: t.enabled, params: t.params, input_from: "previous", after_step_id: null }]);
+    setSteps((prev) => [
+      ...prev,
+      { id, name: t.name, enabled: t.enabled, params: t.params, input_from: "previous", after_step_id: null },
+    ]);
     setSelectedStepId(id);
     setPipelineVersion((v) => v + 1);
   }
@@ -1022,6 +1208,69 @@ export default function PreprocessingWorkspace() {
                 Create subset
               </button>
             ) : null}
+            {mode === "explore" && pipelineTechniqueFamily === "xps" ? (
+              <>
+                <TickDropdown
+                  label="Regions"
+                  appearance="select"
+                  options={(xpsRegionsQ.data?.regions ?? []).map((r) => r.region)}
+                  selected={regionSubsetPicks}
+                  emptySummary="Select regions…"
+                  title="Select one or more XPS regions for the subset"
+                  disabled={!sessionId || !datasetId || subsetLocked}
+                  onChange={setRegionSubsetPicks}
+                />
+                <button
+                  type="button"
+                  disabled={!sessionId || !datasetId || subsetLocked || !regionSubsetPicks.length}
+                  onClick={async () => {
+                    if (!sessionId || !datasetId) return;
+                    const spectra = datasetQ.data?.dataset?.spectra ?? [];
+                    const wanted = new Set(regionSubsetPicks);
+                    const labJson = await fetchUploadsList(5000);
+                    const byPath = new Map<string, any>(
+                      (labJson.items ?? []).map((it: any) => [String(it.relative_path), it.labels || {}])
+                    );
+                    const indices: number[] = [];
+                    spectra.forEach((s, i) => {
+                      const labels = byPath.get(s.relative_path) || {};
+                      const blocks = getBlockSpectra(labels);
+                      let region: string | undefined;
+                      if (Object.keys(blocks).length && s.record_index != null) {
+                        const b = blocks[String(s.record_index)];
+                        if (b) region = String(b.xps_region || "");
+                      } else if (typeof labels.xps_region === "string") {
+                        region = labels.xps_region;
+                      }
+                      if (region && wanted.has(region)) indices.push(i);
+                    });
+                    if (!indices.length) {
+                      setLastError("No spectra match the selected XPS regions.");
+                      return;
+                    }
+                    await updateSessionSubset(sessionId, { kind: "indices", indices });
+                    setSubsetIndices(indices);
+                    const names = [...wanted].sort().join(", ");
+                    const label =
+                      wanted.size === 1 ? `Region ${names} (${indices.length})` : `Regions ${names} (${indices.length})`;
+                    const subset = {
+                      id: crypto.randomUUID(),
+                      label,
+                      indices,
+                      size: indices.length,
+                      createdAt: Date.now(),
+                    };
+                    const next = addSavedSubset(datasetId, subset, 15);
+                    setSavedSubsets(next);
+                    setActiveSubsetId(subset.id);
+                    setSubsetSource(subset.label);
+                    setLastError(null);
+                  }}
+                >
+                  Create region subset
+                </button>
+              </>
+            ) : null}
             {mode === "explore" ? (
               <button
                 type="button"
@@ -1050,6 +1299,11 @@ export default function PreprocessingWorkspace() {
         {lastError ? (
           <div className="err" style={{ marginTop: "10px" }}>
             {lastError}
+          </div>
+        ) : null}
+        {dualBgConflict ? (
+          <div className="err" style={{ marginTop: "10px" }} title="Dual Shirley/Tougaard not allowed">
+            {dualBgConflict}
           </div>
         ) : null}
         {workspaceInfo ? (
@@ -1094,11 +1348,58 @@ export default function PreprocessingWorkspace() {
         <div className="row" style={{ marginTop: "8px", alignItems: "flex-end", flexWrap: "wrap", gap: "10px" }}>
           <button
             type="button"
-            onClick={() => createFromUploadsM.mutate({ paths: selectedUploads, name: newDatasetName })}
-            disabled={selectedUploads.length === 0 || createFromUploadsM.isPending}
+            onClick={() =>
+              createFromUploadsM.mutate({
+                paths: selectedUploads,
+                name: newDatasetName,
+                vms_spectrum_mode: selectedHasMulti ? (selectedHasExplicitBlocks ? "all" : vmsSpectrumMode) : undefined,
+                xps_regions: selectedHasMulti && createXpsRegions.length ? createXpsRegions : undefined,
+                record_indices: selectedHasExplicitBlocks ? selectedRecordIndices : undefined,
+              })
+            }
+            disabled={selectedUploads.length === 0 || createFromUploadsM.isPending || selectionMixedTechniques}
           >
             {createFromUploadsM.isPending ? "Creating…" : "Create dataset"}
           </button>
+          {selectedHasMulti ? (
+            <>
+              {selectedFormatUi.show_spectrum_mode ? (
+              <label
+                className="inline"
+                style={{ margin: 0, opacity: selectedHasExplicitBlocks ? 0.55 : 1 }}
+                title={
+                  selectedHasExplicitBlocks
+                    ? "Specific spectra are ticked — those blocks are used (mode ignored)"
+                    : "Multi-spectrum files may contain averaged and individual replicate blocks per region"
+                }
+              >
+                Multi-spectrum blocks
+                <select
+                  value={vmsSpectrumMode}
+                  disabled={selectedHasExplicitBlocks}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setVmsSpectrumMode(v === "individuals" ? "individuals" : v === "all" ? "all" : "averages");
+                  }}
+                >
+                  <option value="averages">Averaged</option>
+                  <option value="individuals">Individual</option>
+                  <option value="all">All</option>
+                </select>
+              </label>
+              ) : null}
+              {selectedFormatUi.show_region_filter ? (
+              <TickDropdown
+                label="Regions"
+                options={createRegionOptions}
+                selected={createXpsRegions}
+                emptySummary="All regions"
+                title="Optional: keep only selected XPS regions when creating the dataset"
+                onChange={setCreateXpsRegions}
+              />
+              ) : null}
+            </>
+          ) : null}
           <label className="inline" style={{ margin: 0, display: "flex", width: "100%", maxWidth: "420px" }}>
             Dataset name (optional)
             <input
@@ -1110,10 +1411,37 @@ export default function PreprocessingWorkspace() {
             />
           </label>
         </div>
-        <UploadDatasetPicker ref={uploadsListRef} onSelectionChange={setSelectedUploads} />
+        <UploadDatasetPicker
+          ref={uploadsListRef}
+          onSelectionChange={(paths, recordIndices) => {
+            setSelectedUploads(paths);
+            setSelectedRecordIndices(recordIndices || {});
+          }}
+        />
         <div className="hint">
           Selected uploads: {selectedUploads.length}. You can create a dataset from a single file or many.
+          {selectedFormatUi.create_dataset_hints.length ? (
+            <>
+              {" "}
+              {selectedFormatUi.create_dataset_hints[0]}
+            </>
+          ) : null}
         </div>
+        {selectedFormatUi.show_skip_summary &&
+        uploadsMetaQ.data?.items?.some((it) => {
+          if (!selectedUploads.includes(it.relative_path)) return false;
+          const n = Number((it.labels as { nxs_skipped_count?: unknown } | undefined)?.nxs_skipped_count);
+          return Number.isFinite(n) && n > 0;
+        }) ? (
+          <div className="hint" style={{ marginTop: "4px" }}>
+            Some NeXus regions were skipped (non–binding-energy axes). Check upload labels for details.
+          </div>
+        ) : null}
+        {selectionMixedTechniques ? (
+          <div className="hint" style={{ color: "var(--danger, #b00020)", marginTop: "4px" }}>
+            Selection mixes XPS and vibrational files. Deselect one technique before creating a dataset.
+          </div>
+        ) : null}
         {selectedUploads.length === 1 ? (
           <div className="hint" style={{ marginTop: "4px" }}>
             One file is enough. Series or map files expand to multiple spectra inside the dataset.
@@ -1273,7 +1601,28 @@ export default function PreprocessingWorkspace() {
           bottom={
             <div className="preprocess-bottom card" id="pipeline-library-section">
         <div className="section-title">Pipeline</div>
+        <div className="row" style={{ marginBottom: "10px", alignItems: "center" }}>
+          <label className="inline" style={{ justifyContent: "space-between", minWidth: "280px" }}>
+            Pipeline type
+            <select
+              value={pipelineTechniqueFamily}
+              onChange={(e) => {
+                const v = e.target.value === "xps" ? "xps" : "vibrational";
+                setPipelineTechniqueFamily(v);
+                setSelectedLibraryPipelineId("");
+              }}
+              title="Required for save-to-library; selects fit engine (XPS→lmfit, vibrational→curve_fit)"
+            >
+              <option value="vibrational">Vibrational (Raman / SERS / FTIR)</option>
+              <option value="xps">XPS</option>
+            </select>
+          </label>
+          <span className="hint">
+            {isXpsPipeline ? "Fitting uses lmfit (constraints + XPS backgrounds)." : "Fitting uses SciPy curve_fit."}
+          </span>
+        </div>
         <div className="pipeline-step-picker" role="group" aria-label="Add pipeline step">
+          {!stepsCatalogReady ? <div className="hint">Loading step catalog…</div> : null}
           {(["Data Preparation", "Preprocessing", "Transformation", "Feature Extraction"] as StepCategory[]).map((cat) => {
             const items = stepPicker.filter((x) => x.category === cat);
             return (
@@ -1287,6 +1636,7 @@ export default function PreprocessingWorkspace() {
                       className="mini pipeline-step-picker-btn"
                       onClick={() => addStepTemplate(it.name)}
                       title={it.description}
+                      disabled={!stepsCatalogReady}
                     >
                       + {it.label}
                     </button>
@@ -1463,8 +1813,80 @@ export default function PreprocessingWorkspace() {
               {(() => {
                 if (selectedStep.name === "fitting") {
                   const fp = migrateFittingParamsToEditor(selectedStep.params ?? {}, fittingCatalog);
+                  const linkTargets = fp.components.flatMap((c) =>
+                    c.rows.map((r) => ({
+                      component_id: c.component_id || "(unnamed)",
+                      key: r.key,
+                      label: `${c.component_id || "peak"}.${r.label}`,
+                    }))
+                  );
                   return (
                     <>
+                      {isXpsPipeline ? (
+                        <FittingRecipePicker
+                          fittingParams={fp}
+                          fittingCatalog={fittingCatalog}
+                          enabled={isXpsPipeline}
+                          preferredPassEnergy={preferredPassEnergy}
+                          onApply={(next) => updateSelectedFittingParams(next)}
+                        />
+                      ) : null}
+                      {isXpsPipeline ? (
+                        <label className="inline" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                          Region / band
+                          <span style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                            <select
+                              value={(() => {
+                                const opts = [
+                                  ...(xpsRegionsQ.data?.regions?.map((r) => r.region) ?? []),
+                                  ...(fp.xps_region ? [fp.xps_region] : []),
+                                  ...XPS_REGION_PRESETS,
+                                ].filter(Boolean);
+                                const uniq = [...new Set(opts.map(String))];
+                                return uniq.includes(fp.xps_region ?? "") ? fp.xps_region : "";
+                              })()}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                updateSelectedFittingParams({ ...fp, xps_region: v });
+                              }}
+                              style={{ width: "100px" }}
+                              title="Dataset XPS regions (fallback: presets)"
+                            >
+                              <option value="">Custom…</option>
+                              {(xpsRegionsQ.data?.regions?.length
+                                ? xpsRegionsQ.data.regions.map((r) => r.region)
+                                : [...XPS_REGION_PRESETS]
+                              ).map((r) => (
+                                <option key={r} value={r}>
+                                  {r}
+                                </option>
+                              ))}
+                              {fp.xps_region &&
+                              !(xpsRegionsQ.data?.regions ?? []).some((r) => r.region === fp.xps_region) &&
+                              !(XPS_REGION_PRESETS as readonly string[]).includes(fp.xps_region) ? (
+                                <option value={fp.xps_region}>{fp.xps_region}</option>
+                              ) : null}
+                            </select>
+                            <input
+                              type="text"
+                              list="xps-region-presets"
+                              placeholder="e.g. O1s, Ir4f"
+                              value={fp.xps_region ?? ""}
+                              onChange={(e) => updateSelectedFittingParams({ ...fp, xps_region: e.target.value })}
+                              style={{ width: "120px" }}
+                              title="Core-level / region label for feature column prefixes"
+                            />
+                            <datalist id="xps-region-presets">
+                              {(xpsRegionsQ.data?.regions?.length
+                                ? xpsRegionsQ.data.regions.map((r) => r.region)
+                                : [...XPS_REGION_PRESETS]
+                              ).map((r) => (
+                                <option key={r} value={r} />
+                              ))}
+                            </datalist>
+                          </span>
+                        </label>
+                      ) : null}
                       <label className="inline" style={{ justifyContent: "space-between" }}>
                         Output mode
                         <select
@@ -1571,6 +1993,13 @@ export default function PreprocessingWorkspace() {
                                   </option>
                                 ))}
                                 <option value="polynomial_background">Polynomial</option>
+                                {isXpsPipeline
+                                  ? xpsBgComponentTypesFromCatalog(fittingCatalog).map((t) => (
+                                      <option key={t} value={t}>
+                                        {xpsBgTypeLabel(t, fittingCatalog)}
+                                      </option>
+                                    ))
+                                  : null}
                               </select>
                             </label>
 
@@ -1601,7 +2030,9 @@ export default function PreprocessingWorkspace() {
                               className="hint"
                               style={{
                                 display: "grid",
-                                gridTemplateColumns: "minmax(120px, 1fr) 140px 170px",
+                                gridTemplateColumns: isXpsPipeline
+                                  ? "minmax(100px, 1fr) 110px 150px 56px minmax(140px, 1.2fr)"
+                                  : "minmax(120px, 1fr) 140px 170px",
                                 gap: "8px",
                                 fontWeight: 800,
                               }}
@@ -1609,13 +2040,19 @@ export default function PreprocessingWorkspace() {
                               <span>Parameter</span>
                               <span>Initial Guess</span>
                               <span>Bounds</span>
+                              {isXpsPipeline ? <span>Vary</span> : null}
+                              {isXpsPipeline ? <span>Link</span> : null}
                             </div>
-                            {comp.rows.map((row, ri) => (
+                            {comp.rows.map((row, ri) => {
+                              const existingLink = findParamLink(fp.param_links, comp.component_id, row.key);
+                              return (
                               <div
                                 key={row.key}
                                 style={{
                                   display: "grid",
-                                  gridTemplateColumns: "minmax(120px, 1fr) 140px 170px",
+                                  gridTemplateColumns: isXpsPipeline
+                                    ? "minmax(100px, 1fr) 110px 150px 56px minmax(140px, 1.2fr)"
+                                    : "minmax(120px, 1fr) 140px 170px",
                                   gap: "8px",
                                   alignItems: "center",
                                 }}
@@ -1656,7 +2093,7 @@ export default function PreprocessingWorkspace() {
                                       next[ci] = { ...next[ci]!, rows };
                                       updateSelectedFittingParams({ ...fp, components: next });
                                     }}
-                                    style={{ width: "78px" }}
+                                    style={{ width: "68px" }}
                                   />
                                   <DraftNumberInput
                                     nullable
@@ -1669,11 +2106,144 @@ export default function PreprocessingWorkspace() {
                                       next[ci] = { ...next[ci]!, rows };
                                       updateSelectedFittingParams({ ...fp, components: next });
                                     }}
-                                    style={{ width: "78px" }}
+                                    style={{ width: "68px" }}
                                   />
                                 </div>
+                                {isXpsPipeline ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={row.vary !== false}
+                                    onChange={(e) => {
+                                      const next = fp.components.slice();
+                                      const rows = next[ci]!.rows.slice();
+                                      rows[ri] = { ...row, vary: e.target.checked };
+                                      next[ci] = { ...next[ci]!, rows };
+                                      updateSelectedFittingParams({ ...fp, components: next });
+                                    }}
+                                    title="When unchecked, parameter is held fixed during the fit"
+                                  />
+                                ) : null}
+                                {isXpsPipeline ? (
+                                  <div className="row" style={{ gap: "4px", flexWrap: "wrap" }}>
+                                    <select
+                                      value={
+                                        existingLink
+                                          ? `${existingLink.target_component_id}::${existingLink.target_key}`
+                                          : ""
+                                      }
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        if (!v) {
+                                          updateSelectedFittingParams({
+                                            ...fp,
+                                            param_links: upsertParamLink(fp.param_links, null, comp.component_id, row.key),
+                                          });
+                                          return;
+                                        }
+                                        const [tid, tkey] = v.split("::");
+                                        const link: FittingParamLink = {
+                                          source_component_id: comp.component_id,
+                                          source_key: row.key,
+                                          target_component_id: tid || "",
+                                          target_key: tkey || "",
+                                          mode: existingLink?.mode ?? "equal",
+                                          scale: existingLink?.scale,
+                                        };
+                                        updateSelectedFittingParams({
+                                          ...fp,
+                                          param_links: upsertParamLink(fp.param_links, link, comp.component_id, row.key),
+                                        });
+                                      }}
+                                      style={{ maxWidth: "120px" }}
+                                      title="Link this parameter to another component parameter"
+                                    >
+                                      <option value="">None</option>
+                                      {linkTargets
+                                        .filter(
+                                          (t) =>
+                                            !(t.component_id === (comp.component_id || "(unnamed)") && t.key === row.key)
+                                        )
+                                        .map((t) => (
+                                          <option key={`${t.component_id}::${t.key}`} value={`${t.component_id}::${t.key}`}>
+                                            {t.label}
+                                          </option>
+                                        ))}
+                                    </select>
+                                    {existingLink ? (
+                                      <>
+                                        <select
+                                          value={existingLink.mode}
+                                          onChange={(e) => {
+                                            const v = e.target.value;
+                                            const mode =
+                                              v === "scale" ? "scale" : v === "offset" ? "offset" : "equal";
+                                            const link: FittingParamLink = {
+                                              ...existingLink,
+                                              mode,
+                                              scale: mode === "scale" ? existingLink.scale ?? 1 : undefined,
+                                              offset: mode === "offset" ? existingLink.offset ?? 0 : undefined,
+                                            };
+                                            updateSelectedFittingParams({
+                                              ...fp,
+                                              param_links: upsertParamLink(
+                                                fp.param_links,
+                                                link,
+                                                comp.component_id,
+                                                row.key
+                                              ),
+                                            });
+                                          }}
+                                          style={{ width: "72px" }}
+                                        >
+                                          <option value="equal">equal</option>
+                                          <option value="scale">scale</option>
+                                          <option value="offset">offset</option>
+                                        </select>
+                                        {existingLink.mode === "scale" ? (
+                                          <DraftNumberInput
+                                            value={existingLink.scale ?? 1}
+                                            onChange={(n) => {
+                                              if (n == null) return;
+                                              const link: FittingParamLink = { ...existingLink, scale: n };
+                                              updateSelectedFittingParams({
+                                                ...fp,
+                                                param_links: upsertParamLink(
+                                                  fp.param_links,
+                                                  link,
+                                                  comp.component_id,
+                                                  row.key
+                                                ),
+                                              });
+                                            }}
+                                            style={{ width: "56px" }}
+                                          />
+                                        ) : null}
+                                        {existingLink.mode === "offset" ? (
+                                          <DraftNumberInput
+                                            value={existingLink.offset ?? 0}
+                                            onChange={(n) => {
+                                              if (n == null) return;
+                                              const link: FittingParamLink = { ...existingLink, offset: n };
+                                              updateSelectedFittingParams({
+                                                ...fp,
+                                                param_links: upsertParamLink(
+                                                  fp.param_links,
+                                                  link,
+                                                  comp.component_id,
+                                                  row.key
+                                                ),
+                                              });
+                                            }}
+                                            style={{ width: "56px" }}
+                                          />
+                                        ) : null}
+                                      </>
+                                    ) : null}
+                                  </div>
+                                ) : null}
                               </div>
-                            ))}
+                            );
+                            })}
                           </div>
                         </div>
                       ))}
@@ -1752,6 +2322,16 @@ export default function PreprocessingWorkspace() {
                   );
                 }
 
+                if (selectedStep.name === "metadata_filter") {
+                  return (
+                    <MetadataFilterEditor
+                      datasetId={datasetId}
+                      params={selectedStep.params ?? {}}
+                      onChange={(next) => setSelectedStepParams(next)}
+                    />
+                  );
+                }
+
                 if (selectedStep.name === "outlier_detection") {
                   return (
                     <OutlierDetectionEditor
@@ -1771,7 +2351,10 @@ export default function PreprocessingWorkspace() {
                   const method = String(p.method || baselineCatalog.methods[0]?.id || "");
                   const m = methodSpec(baselineCatalog, method) ?? baselineCatalog.methods.find((x) => x.ui_enabled !== false);
                   const category = m ? m.category : methodCategoryFor(baselineCatalog, method);
-                  const categoryOptions = baselineCatalog.categories.filter((cat) => methodsForCategory(baselineCatalog, cat.id).length);
+                  const categoryOptions = baselineCatalog.categories.filter((cat) => {
+                    if (!isXpsPipeline && cat.id === "lmfitxps") return false;
+                    return methodsForCategory(baselineCatalog, cat.id).length > 0;
+                  });
                   const categoryMethods = methodsForCategory(baselineCatalog, category);
                   const paramMap = paramsByKey(m);
                   const primary = primaryParams(m);
@@ -1922,7 +2505,7 @@ export default function PreprocessingWorkspace() {
                   );
                 }
 
-                const spec = pipelineStepSpecs[selectedStep.name];
+                const spec = pipelineStepSpecsFromApi[selectedStep.name];
                 if (!spec) {
                   return Object.keys(selectedStep.params || {}).map((k) => {
                     const v = (selectedStep.params as any)[k];
@@ -1950,7 +2533,19 @@ export default function PreprocessingWorkspace() {
                   });
                 }
 
-                const p = normalizeMethodParams(selectedStep.name, selectedStep.params, fittingCatalog);
+                const p =
+                  selectedStep.name === "x_axis_calibration"
+                    ? (normalizeXAxisCalibrationParams(
+                        selectedStep.params as Record<string, unknown>,
+                        pipelineTechniqueFamily
+                      ) as unknown as Record<string, unknown>)
+                    : normalizeMethodParams(
+                        selectedStep.name,
+                        selectedStep.params,
+                        fittingCatalog,
+                        baselineCatalog,
+                        pipelineStepSpecsFromApi
+                      );
                 const method = String(p.method || spec.methods[0]?.id || "");
                 const m = spec.methods.find((x) => x.id === method) ?? spec.methods[0];
                 const fields: FieldSpec[] = [...(spec.commonFields ?? []), ...(m?.fields ?? [])];
@@ -1969,6 +2564,31 @@ export default function PreprocessingWorkspace() {
                   selectedBaselineStepId !== "" &&
                   !baselineStepOptions.some(({ step }) => step.id === selectedBaselineStepId);
 
+                const fittingStepOptions =
+                  selectedStep.name === "x_axis_calibration" && method === "reference_peak"
+                    ? earlierFittingStepOptions(steps, selectedStep.id)
+                    : [];
+                const selectedFittingStepId = String((p as any).fitting_step_id ?? "");
+                const fittingStepIsInvalid =
+                  selectedStep.name === "x_axis_calibration" &&
+                  method === "reference_peak" &&
+                  selectedFittingStepId !== "" &&
+                  !fittingStepOptions.some(({ step }) => step.id === selectedFittingStepId);
+                const multiFit = multiFittingInPipeline(steps);
+                const selectedFittingOpt = fittingStepOptions.find(({ step }) => step.id === selectedFittingStepId);
+                const posKeyOptions = selectedFittingOpt
+                  ? fittingPosKeysForStep(selectedFittingOpt.step, {
+                      stepIndex: selectedFittingOpt.index,
+                      multiFitting: multiFit,
+                    })
+                  : [];
+                const selectedPosKey = String((p as any).pos_key ?? "");
+                const posKeyIsInvalid =
+                  selectedStep.name === "x_axis_calibration" &&
+                  method === "reference_peak" &&
+                  selectedPosKey !== "" &&
+                  !posKeyOptions.includes(selectedPosKey);
+
                 return (
                   <>
                     <label className="inline" style={{ justifyContent: "space-between" }}>
@@ -1978,6 +2598,19 @@ export default function PreprocessingWorkspace() {
                         onChange={(e) => {
                           const nextMethod = String(e.target.value || "");
                           const mm = spec.methods.find((x) => x.id === nextMethod) ?? spec.methods[0];
+                          if (selectedStep.name === "x_axis_calibration") {
+                            const base = defaultXAxisCalibrationParams(pipelineTechniqueFamily);
+                            setSelectedStepParams({
+                              ...base,
+                              ...(mm?.defaults ?? {}),
+                              method: nextMethod,
+                              target_x:
+                                nextMethod === "reference_peak" && pipelineTechniqueFamily === "xps"
+                                  ? 284.8
+                                  : Number((mm?.defaults as any)?.target_x ?? base.target_x),
+                            });
+                            return;
+                          }
                           setSelectedStepParams({ method: nextMethod, ...(mm?.defaults ?? {}) });
                         }}
                       >
@@ -2013,6 +2646,74 @@ export default function PreprocessingWorkspace() {
                         ) : null}
                         {baselineStepIsInvalid ? (
                           <div className="err">Selected baseline step is no longer an earlier enabled baseline step.</div>
+                        ) : null}
+                      </>
+                    ) : null}
+
+                    {selectedStep.name === "x_axis_calibration" && method === "reference_peak" ? (
+                      <>
+                        <label className="inline" style={{ justifyContent: "space-between" }}>
+                          fitting step
+                          <select
+                            value={selectedFittingStepId}
+                            onChange={(e) => {
+                              const nextId = String(e.target.value || "");
+                              const opt = fittingStepOptions.find(({ step }) => step.id === nextId);
+                              const nextKeys = opt
+                                ? fittingPosKeysForStep(opt.step, { stepIndex: opt.index, multiFitting: multiFit })
+                                : [];
+                              setSelectedStepParams({
+                                ...normalizeXAxisCalibrationParams(
+                                  selectedStep.params as Record<string, unknown>,
+                                  pipelineTechniqueFamily
+                                ),
+                                method: "reference_peak",
+                                fitting_step_id: nextId,
+                                pos_key: nextKeys.includes(selectedPosKey) ? selectedPosKey : nextKeys[0] ?? "",
+                              });
+                            }}
+                          >
+                            <option value="">Select fitting step…</option>
+                            {fittingStepOptions.map(({ step, index }) => {
+                              const region = String((step.params as any)?.xps_region || "").trim();
+                              const nComp = Array.isArray((step.params as any)?.components)
+                                ? (step.params as any).components.length
+                                : 0;
+                              const suffix = region ? ` (${region})` : nComp ? ` (${nComp} component${nComp === 1 ? "" : "s"})` : "";
+                              return (
+                                <option key={step.id} value={step.id}>
+                                  Step {index + 1}: fitting{suffix}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </label>
+                        {!fittingStepOptions.length ? (
+                          <div className="hint">Add or move an enabled fitting step before this calibration step.</div>
+                        ) : null}
+                        {fittingStepIsInvalid ? (
+                          <div className="err">Selected fitting step is no longer an earlier enabled fitting step.</div>
+                        ) : null}
+                        <label className="inline" style={{ justifyContent: "space-between" }}>
+                          position key
+                          <select
+                            value={selectedPosKey}
+                            onChange={(e) => updateSelectedStepParam("pos_key", String(e.target.value || ""))}
+                            disabled={!selectedFittingStepId || !posKeyOptions.length}
+                          >
+                            <option value="">Select pos key…</option>
+                            {posKeyOptions.map((key) => (
+                              <option key={key} value={key}>
+                                {key}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        {selectedFittingStepId && !posKeyOptions.length ? (
+                          <div className="hint">Selected fitting step has no peak position parameters.</div>
+                        ) : null}
+                        {posKeyIsInvalid ? (
+                          <div className="err">Selected position key is not available on the chosen fitting step.</div>
                         ) : null}
                       </>
                     ) : null}

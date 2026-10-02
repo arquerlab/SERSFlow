@@ -12,6 +12,10 @@ const desc: Record<string, string> = {
   quantile: "Target quantile for quantile-based baseline fitting.",
   fraction: "Fraction of points used in each local LOESS regression.",
   freq_cutoff: "BEADS cutoff frequency separating baseline from peaks.",
+  tol: "Convergence tolerance for iterative XPS background calculation.",
+  maxit: "Maximum iterations for XPS background calculation.",
+  tb: "Tougaard B parameter.",
+  tc: "Tougaard C parameter.",
 };
 
 function p(key: string, kind: BaselineParamSpecPublic["kind"], def: unknown, role: BaselineParamSpecPublic["ui_role"]): BaselineParamSpecPublic {
@@ -38,6 +42,7 @@ export const fallbackBaselineCatalog: BaselineMethodsResponse = {
     { id: "polynomial", label: "Polynomial" },
     { id: "morphological", label: "Morphological" },
     { id: "miscellaneous", label: "Miscellaneous" },
+    { id: "lmfitxps", label: "lmfitxps (XPS)" },
   ],
   methods: [
     method("asls", "whittaker", [p("lam", "number", 1_000_000, "primary"), p("p", "number", 0.01, "primary")]),
@@ -91,6 +96,8 @@ export const fallbackBaselineCatalog: BaselineMethodsResponse = {
     method("jbcd", "morphological", [p("half_window", "int", null, "primary")]),
     method("interp_pts", "miscellaneous", [], false),
     method("beads", "miscellaneous", [p("freq_cutoff", "number", 0.005, "primary")]),
+    method("shirley", "lmfitxps", [p("tol", "number", 1e-5, "primary"), p("maxit", "int", 10, "primary")]),
+    method("tougaard", "lmfitxps", [p("tb", "number", 2866, "primary"), p("tc", "number", 1643, "primary")]),
   ],
 };
 

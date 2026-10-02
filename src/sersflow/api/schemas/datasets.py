@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
+
+TechniqueFamily = Literal["vibrational", "xps"]
 
 
 class DatasetMetadata(BaseModel):
@@ -12,6 +14,10 @@ class DatasetMetadata(BaseModel):
     tags: list[str] = Field(default_factory=list)
     created_by: str | None = None
     created_at: str | None = None
+    """Technique family for this dataset. Missing/legacy datasets default to vibrational."""
+    technique_family: TechniqueFamily = "vibrational"
+    """Union of format capability tokens from source uploads (e.g. multi_block, xps_regions)."""
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class SpectrumRef(BaseModel):
@@ -33,6 +39,25 @@ class Dataset(BaseModel):
 class DatasetCreateRequest(BaseModel):
     relative_paths: list[str] = Field(min_length=1)
     metadata: DatasetMetadata = Field(default_factory=DatasetMetadata)
+    """
+    When creating from VAMAS (.vms) uploads that contain both averaged and individual
+    blocks: ``averages`` keeps only averages; ``individuals`` keeps only replicates;
+    ``all`` keeps every block. Ignored for non-VMS files and for VMS files that only
+    contain one role (except ``all``, which always keeps all blocks).
+    """
+    vms_spectrum_mode: Literal["averages", "individuals", "all"] = "averages"
+    """
+    Optional XPS region tokens (e.g. C1s, O1s). When non-empty, only VAMAS blocks
+    whose ``xps_region`` is in this list are kept (after ``vms_spectrum_mode``).
+    None or empty means no region restriction.
+    """
+    xps_regions: list[str] | None = None
+    """
+    Optional explicit multi-spectrum block indices per relative_path.
+    When provided for a path, kept indices are intersected with this list
+    (after mode / region filters). Paths omitted use mode/regions only.
+    """
+    record_indices: dict[str, list[int]] | None = None
 
     @model_validator(mode="after")
     def default_or_strip_display_name(self) -> DatasetCreateRequest:

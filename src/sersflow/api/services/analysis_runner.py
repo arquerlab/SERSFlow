@@ -32,6 +32,8 @@ from sersflow.core.metrics.intensity_probes import (
 )
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline, run_pipeline_parallel_no_cache
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
+from sersflow.api.services.observation_export import _labels_for_spectrum
+from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
 from sersflow.infra.analysis_store import (
     insert_spectrum_rows_batch,
     prune_unpinned_runs,
@@ -117,7 +119,9 @@ def _effective_pipeline_for_analysis(pipeline: Pipeline) -> tuple[Pipeline, bool
     ]
     if keys:
         return pipeline, False
-    merged = Pipeline(steps=[*pipeline.steps, _default_analysis_spectral_intensities_step()])
+    merged = pipeline.model_copy(
+        update={"steps": [*pipeline.steps, _default_analysis_spectral_intensities_step()]}
+    )
     return merged, True
 
 
@@ -139,6 +143,7 @@ def _collect_feature_row(
     *,
     per_step_input_xy: dict[int, Any],
     null_row: dict[str, Any],
+    spectrum_xps_region: str | None = None,
 ) -> dict[str, Any]:
     feats = dict(null_row)
     accumulated: dict[str, Any] = {}
@@ -149,7 +154,9 @@ def _collect_feature_row(
     integration_groups = integration_feature_key_groups_for_pipeline(pipeline)
     operation_groups = operation_feature_key_groups_for_pipeline(pipeline)
 
-    _, fitting_values = collect_fitting_features_for_pipeline(xy, pipeline, per_step_input_xy=per_step_input_xy)
+    _, fitting_values = collect_fitting_features_for_pipeline(
+        xy, pipeline, per_step_input_xy=per_step_input_xy, spectrum_xps_region=spectrum_xps_region
+    )
     _, intensity_values = collect_spectral_intensity_features_for_pipeline(xy, pipeline, per_step_input_xy=per_step_input_xy)
     _, integration_values = collect_integration_features_for_pipeline(xy, pipeline, per_step_input_xy=per_step_input_xy)
 
@@ -328,10 +335,26 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
             step_nums=step_nums,
             collect_step_inputs=True,
             max_workers=ANALYSIS_MAX_WORKERS,
+            technique_family=getattr(effective_pipeline, "technique_family", None),
         )
         if not isinstance(packed, tuple):
             raise RuntimeError("collect_step_inputs=True must return (final_xy_map, per_step_inputs)")
         final, per_inputs = packed
+
+        paths = sorted({str(r.relative_path) for r in refs if r.relative_path})
+        con = with_connection()
+        try:
+            labels_by_path = fetch_upload_labels_for_paths(con, paths)
+        finally:
+            con.close()
+        region_by_sid: dict[str, str | None] = {}
+        for r in refs:
+            ri = r.record_index if isinstance(r.record_index, int) else None
+            row = _labels_for_spectrum(labels_by_path.get(str(r.relative_path)) or {}, record_index=ri)
+            raw_region = row.get("xps_region")
+            region_by_sid[str(r.spectrum_id)] = (
+                str(raw_region).strip() if raw_region is not None and str(raw_region).strip() else None
+            )
 
         buffer: list[tuple[str, dict[str, Any]]] = []
         done = 0
@@ -339,7 +362,13 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
         for sid, xy in final.items():
             pin = per_inputs.get(sid) or {}
             try:
-                feats = _collect_feature_row(xy, effective_pipeline, per_step_input_xy=pin, null_row=null_row)
+                feats = _collect_feature_row(
+                    xy,
+                    effective_pipeline,
+                    per_step_input_xy=pin,
+                    null_row=null_row,
+                    spectrum_xps_region=region_by_sid.get(sid),
+                )
             except Exception as e:
                 logger.warning("feature extraction failed for spectrum %s (skipped): %s", sid, e)
                 feats = dict(null_row)

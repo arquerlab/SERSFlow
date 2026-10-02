@@ -72,9 +72,14 @@ class FitRequest(BaseModel):
     initial_guess_mode: Literal["default", "auto"] = "default"
     """
     default: use p0 from the client for all parameters.
-    auto: for each peak (gaussian / lorentzian / pseudo_voigt / voigt), set initial
-    amplitude to the spectrum y value at the initial center (pos).
+    auto: for each peak (gaussian / lorentzian / pseudo_voigt / gl / voigt /
+    ds / gds / la / lf / apv / asymmetric_voigt), set initial amplitude to the
+    spectrum y value at the initial center (pos).
     """
+    technique_family: Literal["vibrational", "xps"] = "vibrational"
+    vary: list[bool] | None = None
+    param_links: list[dict[str, Any]] | None = None
+    xps_region: str | None = None
 
 
 class FitComponentResult(BaseModel):

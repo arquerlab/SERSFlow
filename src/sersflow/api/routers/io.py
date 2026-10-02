@@ -30,8 +30,18 @@ from sersflow.api.schemas.io import (
     UploadListResponse,
 )
 from sersflow.core.labels import extract_labels
+from sersflow.core.io.formats import get_format_for_path
 from sersflow.core.io.load_file import load_dataset
+from sersflow.core.io.multi_block_labels import (
+    BLOCK_SPECTRA_KEY,
+    INTERNAL_LABEL_KEYS,
+    get_block_spectra,
+    is_multi_spectrum_path,
+    set_block_spectra,
+)
+from sersflow.core.io.technique import infer_technique_family
 from sersflow.core.io.wn_range import dataset_spectrum_count, dataset_wn_range_cm1
+from sersflow.core.io.xps_upload_meta import dataset_xps_regions
 from sersflow.core.io.upload_registry import (
     append_upload_registry,
     make_registry_item,
@@ -136,6 +146,61 @@ def _ensure_upload_wn_metadata(root_dir: Path, row: dict[str, Any]) -> dict[str,
         return row
 
 
+def _ensure_upload_technique_meta(root_dir: Path, row: dict[str, Any]) -> dict[str, Any]:
+    """Fill technique_family / xps_regions / spectrum_count for multi-spectrum uploads when missing."""
+    rel = str(row.get("relative_path") or "")
+    if not rel:
+        return row
+    multi = is_multi_spectrum_path(rel)
+    has_family = row.get("technique_family") in ("vibrational", "xps")
+    has_regions = isinstance(row.get("xps_regions"), list)
+    labels = row.get("labels") if isinstance(row.get("labels"), dict) else {}
+    blocks = get_block_spectra(labels)
+    has_blocks = bool(blocks)
+    sc_raw = row.get("spectrum_count")
+    sc = int(sc_raw) if isinstance(sc_raw, (int, float)) and int(sc_raw) > 0 else None
+    blocks_truncated = multi and has_blocks and sc is not None and len(blocks) < sc
+    if has_family and (has_regions or not multi) and ((has_blocks and not blocks_truncated) or not multi):
+        return row
+    out = dict(row)
+    try:
+        if not has_family:
+            out["technique_family"] = infer_technique_family(rel)
+    except Exception:
+        pass
+    if multi and (not has_regions or not has_blocks or blocks_truncated or out.get("spectrum_count") is None):
+        try:
+            p = resolve_uploaded_path(root_dir, rel)
+            if p.exists():
+                fmt = get_format_for_path(p)
+                ds = load_dataset(p)
+                out["xps_regions"] = dataset_xps_regions(ds)
+                if out.get("spectrum_count") is None:
+                    out["spectrum_count"] = dataset_spectrum_count(ds)
+                if out.get("technique_family") is None:
+                    out["technique_family"] = (
+                        None if fmt.technique == "sniff" else str(fmt.technique)
+                    ) or "xps"
+                if (not has_blocks or blocks_truncated) and fmt.enrich is not None:
+                    er = fmt.enrich(p, ds, dict(labels) if labels else None)
+                    if er.block_map:
+                        out["labels"] = er.labels
+                        try:
+                            con = with_connection()
+                            try:
+                                upsert_upload_labels(con, relative_path=rel, labels=er.labels)
+                            finally:
+                                con.close()
+                        except Exception:
+                            logger.exception("Failed to persist lazy block spectra for %s", rel)
+        except Exception:
+            if out.get("technique_family") is None:
+                out["technique_family"] = "xps"
+            if not isinstance(out.get("xps_regions"), list):
+                out["xps_regions"] = []
+    return out
+
+
 def _ensure_upload_modified_utc(row: dict[str, Any]) -> dict[str, Any]:
     """Fill modified_utc from labels.acquired_utc for legacy registry rows when missing."""
     if row.get("modified_utc"):
@@ -234,6 +299,25 @@ async def upload_files(
                 labels = dict(labels)
                 labels["acquired_utc"] = acquired
 
+            technique_family = None
+            xps_regions = None
+            spectrum_count = None
+            if is_multi_spectrum_path(target):
+                try:
+                    fmt = get_format_for_path(target)
+                    ds = load_dataset(target)
+                    if fmt.enrich is not None:
+                        er = fmt.enrich(target, ds, labels)
+                        labels = er.labels
+                        ds = er.dataset
+                    technique_family = (
+                        None if fmt.technique == "sniff" else str(fmt.technique)
+                    ) or "xps"
+                    xps_regions = dataset_xps_regions(ds)
+                    spectrum_count = dataset_spectrum_count(ds)
+                except Exception:
+                    logger.exception("Upload %s: multi-spectrum enrich failed", rel)
+
             item = make_registry_item(
                 batch_id=batch_id,
                 filename=name,
@@ -243,7 +327,9 @@ async def upload_files(
                 labels=labels,
                 wn_min=None,
                 wn_max=None,
-                spectrum_count=None,
+                spectrum_count=spectrum_count,
+                xps_regions=xps_regions,
+                technique_family=technique_family,
                 owner_user_id=user_id,
             ).to_dict()
             registry_items.append(item)
@@ -300,6 +386,7 @@ def list_uploaded_files(request: Request, limit: int = Query(5000, ge=1, le=5000
         row = _ensure_upload_acquired_utc_label(row)
         row = _ensure_upload_modified_utc(row)
         row = _ensure_upload_wn_metadata(root_dir, row)
+        row = _ensure_upload_technique_meta(root_dir, row)
         merged.append(row)
 
     # `count` is the total number of uploaded files on disk (registry size),
@@ -346,26 +433,46 @@ def update_labels(payload: UpdateLabelsRequest, request: Request) -> dict[str, A
         assert_paths_owner(user_id, [rel])
     except OwnershipError:
         raise HTTPException(status_code=404, detail="Upload not found") from None
-    labels = dict(payload.labels)
+    patch = dict(payload.labels)
     con = with_connection()
     try:
         prev_map = fetch_upload_labels_for_paths(con, [rel])
-        prev = prev_map.get(rel) or {}
-        if prev.get("acquired_utc"):
-            labels["acquired_utc"] = prev["acquired_utc"]
-        if prev.get("current_is_density") is False and labels.get("current_is_density") is True:
-            logger.warning(
-                "Labels %s: update sets current_is_density True but stored value was False — check consistency.",
-                rel,
-            )
+        prev = dict(prev_map.get(rel) or {})
+        if payload.record_index is not None:
+            # Block-scoped merge: do not replace path-level keys.
+            blocks = get_block_spectra(prev)
+            key = str(int(payload.record_index))
+            cur = dict(blocks.get(key) or {})
+            for k, v in patch.items():
+                if k in INTERNAL_LABEL_KEYS:
+                    continue
+                cur[k] = v
+            blocks[key] = cur
+            set_block_spectra(prev, blocks)
+            labels = prev
+        else:
+            labels = dict(patch)
+            # Preserve block map unless client explicitly sends it.
+            if BLOCK_SPECTRA_KEY not in labels and BLOCK_SPECTRA_KEY in prev:
+                labels[BLOCK_SPECTRA_KEY] = prev[BLOCK_SPECTRA_KEY]
+            if "vms_spectrum_mode" not in labels and "vms_spectrum_mode" in prev:
+                labels["vms_spectrum_mode"] = prev["vms_spectrum_mode"]
+            if "xps_regions_filter" not in labels and "xps_regions_filter" in prev:
+                labels["xps_regions_filter"] = prev["xps_regions_filter"]
+            if prev.get("acquired_utc"):
+                labels["acquired_utc"] = prev["acquired_utc"]
+            if prev.get("current_is_density") is False and labels.get("current_is_density") is True:
+                logger.warning(
+                    "Labels %s: update sets current_is_density True but stored value was False — check consistency.",
+                    rel,
+                )
         upsert_upload_labels(con, relative_path=rel, labels=labels)
     finally:
         con.close()
-    # Labels are persisted in SQLite. Registry rows are treated as an append-only
-    # upload history, and list endpoints merge the SQLite labels back in.
     return {
         "ok": True,
         "relative_path": rel,
+        "record_index": payload.record_index,
         "updated_unloaded_registry": False,
         "updated_upload_registry": False,
     }
@@ -414,6 +521,20 @@ def auto_labels(payload: AutoLabelsRequest, request: Request) -> dict[str, Any]:
                 if prev.get("acquired_utc"):
                     labels = dict(labels)
                     labels["acquired_utc"] = prev["acquired_utc"]
+                if is_multi_spectrum_path(p):
+                    try:
+                        fmt = get_format_for_path(p)
+                        ds = load_dataset(p)
+                        if fmt.enrich is not None:
+                            er = fmt.enrich(p, ds, labels)
+                            labels = er.labels
+                        # Preserve mode/filter markers from previous if present.
+                        if prev.get("vms_spectrum_mode"):
+                            labels["vms_spectrum_mode"] = prev["vms_spectrum_mode"]
+                        if prev.get("xps_regions_filter"):
+                            labels["xps_regions_filter"] = prev["xps_regions_filter"]
+                    except Exception:
+                        logger.exception("labels/auto: block enrich failed for %s", rel)
                 upsert_upload_labels(con, relative_path=rel, labels=labels)
                 updated += 1
             except Exception:

@@ -32,6 +32,10 @@ from sersflow.api.services.pipeline_qc import (
     qc_step_xy_inputs,
 )
 from sersflow.api.services.sessions_service import pipeline_hash, resolve_subset_indices, subset_hash
+from sersflow.api.services.technique_guard import (
+    dataset_technique_family,
+    prepare_pipeline_for_run,
+)
 from sersflow.core.metrics.compute import compute_metrics
 from sersflow.core.pipeline.cache import InProcessLRUCache
 from sersflow.core.pipeline.engine import (
@@ -85,7 +89,12 @@ def create_session_endpoint(payload: SessionCreateRequest, request: Request) -> 
     ds = get_dataset_for_user(payload.dataset_id, user_id)
     if ds is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    pipeline = payload.pipeline or Pipeline(steps=[])
+    pipeline = prepare_pipeline_for_run(
+        payload.pipeline or Pipeline(steps=[]),
+        dataset_technique_family(ds.metadata),
+        context=f"session create on dataset {payload.dataset_id}",
+        allow_empty_align=True,
+    )
     subset = payload.subset or SubsetStrategy(kind="all")
     rec = create_session(dataset_id=payload.dataset_id, pipeline=pipeline, subset=subset)
     return {"session": to_schema(rec)}
@@ -107,9 +116,19 @@ def update_pipeline_endpoint(
     request: Request,
 ) -> dict[str, Any]:
     user_id = current_user_id(request)
-    if get_session_for_user(session_id, user_id) is None:
+    rec0 = get_session_for_user(session_id, user_id)
+    if rec0 is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    rec = update_session_pipeline(session_id, payload.pipeline)
+    ds = get_dataset_for_user(rec0.dataset_id, user_id)
+    if ds is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    pipeline = prepare_pipeline_for_run(
+        payload.pipeline,
+        dataset_technique_family(ds.metadata),
+        context=f"session {session_id} pipeline update",
+        allow_empty_align=True,
+    )
+    rec = update_session_pipeline(session_id, pipeline)
     if rec is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"pipeline": rec.pipeline, "pipeline_hash": pipeline_hash(rec.pipeline)}
@@ -175,8 +194,8 @@ def session_qc_preview_endpoint(
     if idx is None:
         raise HTTPException(status_code=400, detail="QC preview step_id does not match any pipeline step")
     step = runtime_pipeline.steps[idx]
-    if step.name not in ("low_signal_filter", "outlier_detection"):
-        raise HTTPException(status_code=400, detail="Selected step_id is not an enabled QC step")
+    if step.name not in ("low_signal_filter", "outlier_detection", "metadata_filter"):
+        raise HTTPException(status_code=400, detail="Selected step_id is not a previewable filter/QC step")
 
     # Apply earlier QC steps so preview matches the effective cohort at this location.
     refs, _qc_before = apply_pipeline_qc_filters_before_step(
@@ -188,6 +207,64 @@ def session_qc_preview_endpoint(
         strict=True,
     )
 
+    params = dict(step.params or {})
+    params.update(dict(payload.step_params or {}))
+
+    if step.name == "metadata_filter":
+        from sersflow.api.services.spectrum_context import load_spectrum_contexts
+        from sersflow.core.qc.metadata_filter import evaluate_filters
+        from sersflow.infra.datasets_store import iter_spectrum_axes_page
+        from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
+
+        filters = params.get("filters") if isinstance(params.get("filters"), list) else []
+        paths = sorted({str(r.relative_path) for r in refs if r.relative_path})
+        con = with_connection()
+        try:
+            labels_by_path = fetch_upload_labels_for_paths(con, paths)
+        finally:
+            con.close()
+        axes_by_sid: dict[str, dict[str, Any]] = {}
+        offset = 0
+        while True:
+            page, total = iter_spectrum_axes_page(dataset_id=ds.dataset_id, limit=500, offset=offset)
+            for it in page:
+                sid = str(it.get("spectrum_id") or "")
+                if sid:
+                    axes_by_sid[sid] = it
+            offset += len(page)
+            if offset >= total or not page:
+                break
+        score_rows = []
+        flagged_count = 0
+        for ctx in load_spectrum_contexts(refs, labels_by_path=labels_by_path):
+            row = dict(ctx.labels)
+            axes = axes_by_sid.get(ctx.spectrum_id) or {}
+            for k in ("axis_map_x", "axis_map_y", "axis_time_s", "file_kind"):
+                if axes.get(k) is not None:
+                    row[k] = axes[k]
+            ok = evaluate_filters(row, filters)
+            if not ok:
+                flagged_count += 1
+            score_rows.append(
+                {
+                    "spectrum_id": ctx.spectrum_id,
+                    "score": 1.0 if ok else 0.0,
+                    "flagged": not ok,
+                }
+            )
+        total = len(score_rows)
+        flagged_pct = float((flagged_count / total) * 100.0) if total else 0.0
+        return {
+            "step_id": step_id,
+            "step_name": step.name,
+            "summary": {"total": total, "flagged_count": flagged_count, "flagged_pct": flagged_pct},
+            "histogram": {"bins": [], "counts": [], "nonfinite": 0},
+            "threshold": 0.5,
+            "direction": "below",
+            "scores": score_rows,
+            "meta": {"filters": filters, "n_filters": len(filters)},
+        }
+
     # Compute XY right before this QC step and score.
     finals = qc_step_xy_inputs(
         pipeline=runtime_pipeline,
@@ -196,9 +273,6 @@ def session_qc_preview_endpoint(
         step_index=idx,
         strict=True,
     )
-
-    params = dict(step.params or {})
-    params.update(dict(payload.step_params or {}))
 
     scores_by_id: dict[str, float] = {}
     flagged: set[str] = set()
@@ -306,6 +380,12 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
     if ds is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
+    prepare_pipeline_for_run(
+        rec.pipeline,
+        dataset_technique_family(ds.metadata),
+        context=f"session {session_id} run",
+    )
+
     runtime_pipeline = hydrate_reference_transforms(
         rec.pipeline,
         ds,
@@ -316,22 +396,50 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
     # QC steps do not transform XY; they only shrink the working set for downstream execution.
     cache_ns = (rec.cache.cache_namespace if rec.cache else rec.session_id)
 
+    # Sentinels (no XY transforms):
+    # - __source__: true raw subset/all — skip QC entirely
+    # - __raw__: cohort QC (low_signal / outlier) applied, then raw XY of remaining spectra
+    # - __raw__:<N>: cohort QC applied only through pipeline step index N (1-based), then raw XY
+    up_token = str(payload.up_to_step or "").strip()
+    source_only = up_token == "__source__"
+    raw_through_step: int | None = None
+    raw_only = False
+    if up_token == "__raw__":
+        raw_only = True
+    elif up_token.startswith("__raw__:"):
+        raw_only = True
+        try:
+            raw_through_step = int(up_token.split(":", 1)[1].strip())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid up_to_step {up_token!r}") from e
+        if raw_through_step < 1:
+            raise HTTPException(status_code=400, detail="__raw__:<N> requires N >= 1")
+
     if payload.scope == "all":
         refs = filter_reference_spectra(ds.spectra, runtime_pipeline)
     else:
         indices = resolve_subset_indices(dataset=ds, subset=rec.subset, pipeline=runtime_pipeline)
         refs = filter_reference_spectra([ds.spectra[i] for i in indices], runtime_pipeline)
 
-    refs, _qc_report = apply_pipeline_qc_filters(
-        dataset=ds,
-        pipeline=runtime_pipeline,
-        refs=refs,
-        cache_namespace=cache_ns,
-        strict=True,
-    )
+    if not source_only:
+        pipe_for_qc = runtime_pipeline
+        if raw_through_step is not None:
+            pipe_for_qc = runtime_pipeline.model_copy(
+                update={"steps": [s.model_copy(deep=True) for s in runtime_pipeline.steps[:raw_through_step]]},
+            )
+        refs, _qc_report = apply_pipeline_qc_filters(
+            dataset=ds,
+            pipeline=pipe_for_qc,
+            refs=refs,
+            cache_namespace=cache_ns,
+            strict=True,
+        )
     runtime_pipeline_no_qc = pipeline_without_qc_steps(runtime_pipeline)
 
     cfg = EngineConfig(cache_namespace=cache_ns)
+
+    if source_only or raw_only:
+        runtime_pipeline_no_qc = Pipeline(steps=[])
 
     if isinstance(payload.return_, SessionRunReturnFinal):
         try:
@@ -340,14 +448,17 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
                 pipeline=runtime_pipeline_no_qc,
                 cache=_cache,
                 config=cfg,
-                up_to_step=payload.up_to_step,
+                up_to_step=None if (source_only or raw_only) else payload.up_to_step,
                 strict=True,
             )
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=f"Uploaded file not found: {e}") from e
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         items = [
             {"spectrum_id": sid, "x": xy.x.astype(float).tolist(), "y": xy.y.astype(float).tolist()}
             for sid, xy in final.items()
+            if getattr(xy, "x", None) is not None and len(xy.x) > 0
         ]
         return {"items": items}
 
@@ -410,6 +521,7 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
             config=cfg,
             up_to_step=payload.up_to_step,
             max_workers=SESSION_MAX_WORKERS,
+            technique_family=getattr(runtime_pipeline_no_qc, "technique_family", None),
         )
     else:
         try:

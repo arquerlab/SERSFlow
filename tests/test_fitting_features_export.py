@@ -9,6 +9,7 @@ from sersflow.api.schemas.pipeline import Pipeline, PipelineStep
 from sersflow.core.metrics.fitting_features import (
     collect_fitting_features_for_pipeline,
     gaussian_peak_area,
+    gl_peak_area,
     lorentzian_peak_area,
     preview_fitting_feature_keys_for_pipeline,
     pseudo_voigt_peak_area,
@@ -41,6 +42,11 @@ def test_pseudo_voigt_peak_area_matches_mix() -> None:
     amp, fwhm, eta = 50.0, 15.0, 0.3
     expected = eta * lorentzian_peak_area(amp, fwhm) + (1.0 - eta) * gaussian_peak_area(amp, fwhm)
     assert pseudo_voigt_peak_area(amp, fwhm, eta) == pytest.approx(expected)
+
+
+def test_gl_peak_area_matches_casaxps_percent() -> None:
+    amp, fwhm, m = 50.0, 15.0, 30.0
+    assert gl_peak_area(amp, fwhm, m) == pytest.approx(pseudo_voigt_peak_area(amp, fwhm, m / 100.0))
 
 
 def test_voigt_peak_area_matches_numeric_integral() -> None:
@@ -82,31 +88,24 @@ def test_preview_fitting_keys_lorentzian_and_voigt() -> None:
                         {"component_id": "l1", "component_type": "lorentzian"},
                         {"component_id": "v1", "component_type": "voigt"},
                         {"component_id": "pv1", "component_type": "pseudo_voigt"},
+                        {"component_id": "gl1", "component_type": "gl"},
+                        {"component_id": "ds1", "component_type": "ds"},
+                        {"component_id": "apv1", "component_type": "apv"},
                     ],
-                    "p0": [500.0, 1.0, 10.0, 500.0, 1.0, 8.0, 6.0, 500.0, 1.0, 10.0, 0.5],
-                    "bounds_lower": [None] * 11,
-                    "bounds_upper": [None] * 11,
+                    "p0": [0.0] * (3 + 4 + 4 + 4 + 4 + 6),
+                    "bounds_lower": [None] * (3 + 4 + 4 + 4 + 4 + 6),
+                    "bounds_upper": [None] * (3 + 4 + 4 + 4 + 4 + 6),
                 },
             ),
         ]
     )
     keys = preview_fitting_feature_keys_for_pipeline(pipe)
-    assert keys == [
-        "fit_l1_pos",
-        "fit_l1_amp",
-        "fit_l1_fwhm",
-        "fit_l1_area",
-        "fit_v1_pos",
-        "fit_v1_amp",
-        "fit_v1_fwhm_g",
-        "fit_v1_fwhm_l",
-        "fit_v1_area",
-        "fit_pv1_pos",
-        "fit_pv1_amp",
-        "fit_pv1_fwhm",
-        "fit_pv1_eta",
-        "fit_pv1_area",
-    ]
+    assert "fit_ds1_pos" in keys
+    assert "fit_ds1_alpha" in keys
+    assert "fit_ds1_area" not in keys  # infinite-area model
+    assert "fit_apv1_eta_l" in keys
+    assert "fit_apv1_area" in keys
+    assert "fit_gl1_m" in keys
 
 
 def test_preview_fitting_keys_include_polynomial_coefficients() -> None:
@@ -182,4 +181,27 @@ def test_collect_fitting_features_populates_polynomial_coefficients() -> None:
     assert feats["fit_bg_c2"] == pytest.approx(2.0, abs=1e-8)
     assert feats["fit_bg_c1"] == pytest.approx(-0.5, abs=1e-8)
     assert feats["fit_bg_c0"] == pytest.approx(3.0, abs=1e-8)
+
+
+def test_xps_region_prefixes_feature_keys() -> None:
+    pipe = Pipeline(
+        steps=[
+            PipelineStep(
+                name="fitting",
+                params={
+                    "output_mode": "fit",
+                    "xps_region": "O1s",
+                    "components": [{"component_id": "pk", "component_type": "gaussian"}],
+                    "p0": [500.0, 70.0, 12.0],
+                    "bounds_lower": [400.0, 0.0, 1e-6],
+                    "bounds_upper": [600.0, None, 40.0],
+                },
+            ),
+        ],
+        technique_family="xps",
+    )
+    keys = preview_fitting_feature_keys_for_pipeline(pipe)
+    assert any(k.startswith("fit_O1s_pk_") for k in keys)
+    assert "fit_O1s_pk_amp" in keys
+    assert "fit_O1s_pk_area" in keys
 

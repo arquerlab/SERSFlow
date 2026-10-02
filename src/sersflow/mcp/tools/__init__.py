@@ -14,6 +14,7 @@ from sersflow.mcp.tools import (
     pipelines,
     sessions,
     tabular,
+    xps_recipes,
 )
 
 if TYPE_CHECKING:
@@ -29,6 +30,7 @@ def register_all(mcp: FastMCP, ctx: RuntimeContext) -> None:
     sessions.register(mcp, ctx)
     pipelines.register(mcp, ctx)
     fitting.register(mcp, ctx)
+    xps_recipes.register(mcp, ctx)
     analysis.register(mcp, ctx)
     explore.register(mcp, ctx)
     tabular.register(mcp, ctx)

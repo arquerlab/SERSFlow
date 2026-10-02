@@ -25,6 +25,8 @@ class UploadRegistryItem:
     wn_min: float | None = None
     wn_max: float | None = None
     spectrum_count: int | None = None
+    xps_regions: list[str] | None = None
+    technique_family: str | None = None
     owner_user_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +47,10 @@ class UploadRegistryItem:
             d["wn_max"] = float(self.wn_max)
         if self.spectrum_count is not None:
             d["spectrum_count"] = int(self.spectrum_count)
+        if self.xps_regions is not None:
+            d["xps_regions"] = list(self.xps_regions)
+        if self.technique_family is not None:
+            d["technique_family"] = self.technique_family
         if self.owner_user_id is not None:
             d["owner_user_id"] = self.owner_user_id
         return d
@@ -279,6 +285,8 @@ def make_registry_item(
     wn_min: float | None = None,
     wn_max: float | None = None,
     spectrum_count: int | None = None,
+    xps_regions: list[str] | None = None,
+    technique_family: str | None = None,
     owner_user_id: str | None = None,
 ) -> UploadRegistryItem:
     rel_part = relative_subpath if relative_subpath else filename
@@ -294,6 +302,8 @@ def make_registry_item(
         wn_min=wn_min,
         wn_max=wn_max,
         spectrum_count=spectrum_count,
+        xps_regions=xps_regions,
+        technique_family=technique_family,
         owner_user_id=owner_user_id,
     )
 

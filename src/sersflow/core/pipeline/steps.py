@@ -15,7 +15,9 @@ from sersflow.core.preprocess.cosmic_ray import remove_cosmic_rays
 from sersflow.core.metrics.intensity_probes import parse_probes
 from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
 from sersflow.core.preprocess.noise import apply_savitzky_golay
-from sersflow.core.spectrum import XY
+from sersflow.core.preprocess.x_axis_calibration import apply_x_axis_calibration
+from sersflow.core.qc.metadata_filter import evaluate_filters
+from sersflow.core.spectrum import EMPTY_XY, XY
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,38 @@ def _crop(xy: XY, params: dict[str, Any]) -> XY:
     y = xy.y
     mask = (x >= min_x) & (x <= max_x)
     return XY(x=x[mask], y=y[mask])
+
+
+def _metadata_filter(xy: XY, params: dict[str, Any]) -> XY:
+    """
+    Branch-local spectrum mask (crop analogue for spectra, not the x-axis).
+
+    Matching spectra pass through; non-matches become EMPTY_XY so downstream steps
+    on this branch do not use them. Respects pipeline input_from (e.g. initial).
+    Engine injects ``_spectrum_labels`` before calling this transform.
+    """
+    filters = params.get("filters") if isinstance(params.get("filters"), list) else []
+    if not filters:
+        return xy
+    action = str(params.get("action") or "keep").strip().lower()
+    exclude_matches = action in {"exclude", "drop", "remove"}
+    labels = params.get("_spectrum_labels")
+    row = dict(labels) if isinstance(labels, dict) else {}
+    matched = evaluate_filters(row, filters)
+    keep = (not matched) if exclude_matches else matched
+    return xy if keep else EMPTY_XY
+
+
+def _x_axis_calibration(xy: XY, params: dict[str, Any]) -> XY:
+    """
+    Shift the spectrum x-axis.
+
+    Methods:
+    - fixed_offset: x' = x + offset
+    - reference_peak: x' = x + (target_x - _measured_pos); ``_measured_pos`` is injected by the engine
+      from a prior fitting step (fitting_step_id + pos_key).
+    """
+    return apply_x_axis_calibration(xy, params)
 
 
 def _normalize(xy: XY, params: dict[str, Any]) -> XY:
@@ -159,7 +193,12 @@ def _baseline(xy: XY, params: dict[str, Any]) -> XY:
 
     method = str(params.get("method", "derpsalsa"))
     kwargs = baseline_kwargs(method, params)
-    corrected, _ = correct_baseline(xy.y.astype(float, copy=False), method=method, **kwargs)
+    corrected, _ = correct_baseline(
+        xy.y.astype(float, copy=False),
+        method=method,
+        x=xy.x.astype(float, copy=False),
+        **kwargs,
+    )
     return XY(x=xy.x, y=np.asarray(corrected, dtype=float))
 
 
@@ -167,7 +206,8 @@ def _fitting(xy: XY, params: dict[str, Any]) -> XY:
     """
     Nonlinear least-squares fit (sum of peak + polynomial_background components).
 
-    Peak types: gaussian, lorentzian, pseudo_voigt, voigt.
+    Peak types: gaussian, lorentzian, pseudo_voigt, gl, voigt,
+    ds, gds, la, lf, apv, asymmetric_voigt.
 
     Params (flattened for caching + API):
     - output_mode: "fit" (replace y with model sum) or "residual" (y - model sum)
@@ -177,13 +217,14 @@ def _fitting(xy: XY, params: dict[str, Any]) -> XY:
     - initial_guess_mode: "default" | "auto" (peak amp from y at pos in auto mode)
     """
     output_mode = str(params.get("output_mode", "fit"))
-    prob = fit_problem_from_step_params(xy, params)
-    if prob is None:
-        return xy
     try:
+        prob = fit_problem_from_step_params(xy, params)
+        if prob is None:
+            return xy
         res = fit_curve(prob)
     except (ValueError, RuntimeError) as e:
-        # Mixed batches: crop may leave too few points or non-overlapping wavenumbers for some spectra.
+        # Mixed multi-region XPS pipelines may run an O1s recipe on a C1s spectrum (or vice versa).
+        # Do not fail the whole session run — pass the spectrum through unchanged.
         logger.info("Fitting step skipped (pass-through unchanged spectrum): %s", e)
         return xy
     y_in = xy.y.astype(float, copy=False)
@@ -388,14 +429,21 @@ def _baseline_curve(xy: XY, params: dict[str, Any]) -> XY:
 
     method = str(params.get("method", "derpsalsa"))
     kwargs = baseline_kwargs(method, params)
-    _, info = correct_baseline(xy.y.astype(float, copy=False), method=method, **kwargs)
+    _, info = correct_baseline(
+        xy.y.astype(float, copy=False),
+        method=method,
+        x=xy.x.astype(float, copy=False),
+        **kwargs,
+    )
     baseline = np.asarray(info.get("baseline", []), dtype=float)
     return XY(x=xy.x, y=baseline)
 
 
 DEFAULT_STEPS: dict[str, StepImpl] = {
     "crop": StepImpl(name="crop", impl_version="1", transform=_crop),
+    "metadata_filter": StepImpl(name="metadata_filter", impl_version="1", transform=_metadata_filter),
     "align_resample": StepImpl(name="align_resample", impl_version="1", transform=_align_resample),
+    "x_axis_calibration": StepImpl(name="x_axis_calibration", impl_version="1", transform=_x_axis_calibration),
     "normalize": StepImpl(name="normalize", impl_version="2", transform=_normalize),
     "noise_savgol": StepImpl(name="noise_savgol", impl_version="1", transform=_noise_savgol),
     "cosmic_ray_removal": StepImpl(name="cosmic_ray_removal", impl_version="1", transform=_cosmic_ray_removal),

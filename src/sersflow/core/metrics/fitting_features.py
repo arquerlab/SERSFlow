@@ -2,10 +2,9 @@
 Export fitted peak parameters as analysis feature columns (per spectrum).
 
 Area formulas match fitting_models (amplitude = peak height):
-- gaussian: amp * fwhm * sqrt(pi / (4 ln 2))
-- lorentzian: amp * pi * fwhm / 2
-- pseudo_voigt: eta * lorentzian_area + (1 - eta) * gaussian_area
-- voigt: amp / voigt_profile(0, sigma, gamma)  (unit-area profile normalized to peak height)
+- gaussian / lorentzian / gl / pseudo_voigt / apv / la / lf / a_gl: via peak_area.area_per_height
+- voigt / asymmetric_voigt: amp / unit-profile height (exact for SciPy voigt_profile)
+- ds / gds: no area export (non-integrable tail for alpha > 0)
 """
 
 from __future__ import annotations
@@ -14,12 +13,23 @@ import math
 import re
 from typing import Any
 
+import numpy as np
 from scipy.special import voigt_profile
 
 from sersflow.core.metrics.key_dedupe import dedupe_parallel
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
-from sersflow.core.preprocess.fitting_specs import PEAK_COMPONENT_TYPES, build_component_function
+from sersflow.core.preprocess.fitting_specs import (
+    AREA_EXPORT_COMPONENT_TYPES,
+    component_param_specs,
+)
+from sersflow.core.preprocess.peak_area import (
+    apv_area_per_height,
+    area_per_height,
+    gaussian_area_per_height,
+    gl_area_per_height,
+    lorentzian_area_per_height,
+)
 from sersflow.core.spectrum import XY
 
 _LN2 = math.log(2.0)
@@ -27,28 +37,31 @@ _GAUSS_FWHM_TO_SIGMA = 1.0 / (2.0 * math.sqrt(2.0 * _LN2))
 
 
 def gaussian_peak_area(amp: float, fwhm: float) -> float:
-    """Analytical area under the Gaussian peak used in fitting_models.gaussian (same x units as pos)."""
+    """Analytical area under the Gaussian peak used in fitting_models.gaussian."""
     if not math.isfinite(amp) or not math.isfinite(fwhm) or fwhm <= 0:
         return float("nan")
-    return float(amp * fwhm * math.sqrt(math.pi / (4.0 * _LN2)))
+    return float(amp * gaussian_area_per_height(fwhm))
 
 
 def lorentzian_peak_area(amp: float, fwhm: float) -> float:
     """Analytical area under fitting_models.lorentzian (peak-height amplitude)."""
     if not math.isfinite(amp) or not math.isfinite(fwhm) or fwhm <= 0:
         return float("nan")
-    return float(amp * math.pi * fwhm / 2.0)
+    return float(amp * lorentzian_area_per_height(fwhm))
 
 
 def pseudo_voigt_peak_area(amp: float, fwhm: float, eta: float) -> float:
     """Analytical area under fitting_models.pseudo_voigt."""
-    if not math.isfinite(eta):
+    if not math.isfinite(amp) or not math.isfinite(fwhm) or not math.isfinite(eta) or fwhm <= 0:
         return float("nan")
-    g = gaussian_peak_area(amp, fwhm)
-    lor = lorentzian_peak_area(amp, fwhm)
-    if not math.isfinite(g) or not math.isfinite(lor):
+    return float(amp * gl_area_per_height(fwhm, eta * 100.0))
+
+
+def gl_peak_area(amp: float, fwhm: float, m: float) -> float:
+    """Analytical area under fitting_models.gl (CasaXPS GL(m), m = % Lorentzian)."""
+    if not math.isfinite(amp) or not math.isfinite(fwhm) or not math.isfinite(m) or fwhm <= 0:
         return float("nan")
-    return float(eta * lor + (1.0 - eta) * g)
+    return float(amp * gl_area_per_height(fwhm, m))
 
 
 def voigt_peak_area(amp: float, fwhm_g: float, fwhm_l: float) -> float:
@@ -69,6 +82,24 @@ def voigt_peak_area(amp: float, fwhm_g: float, fwhm_l: float) -> float:
     return float(amp / y0)
 
 
+def apv_peak_area(amp: float, fwhm_l: float, fwhm_r: float, eta_l: float, eta_r: float) -> float:
+    """Half-side sum of pseudo-Voigt areas (continuous unit-height branches)."""
+    if not math.isfinite(amp):
+        return float("nan")
+    return float(amp * apv_area_per_height(fwhm_l, fwhm_r, eta_l, eta_r))
+
+
+def asymmetric_voigt_peak_area(
+    amp: float, fwhm_g_l: float, fwhm_l_l: float, fwhm_g_r: float, fwhm_l_r: float
+) -> float:
+    """Half-side sum of Voigt areas (continuous unit-height branches)."""
+    left = 0.5 * voigt_peak_area(amp, fwhm_g_l, fwhm_l_l)
+    right = 0.5 * voigt_peak_area(amp, fwhm_g_r, fwhm_l_r)
+    if not math.isfinite(left) or not math.isfinite(right):
+        return float("nan")
+    return float(left + right)
+
+
 def _safe_id_fragment(s: str) -> str:
     t = re.sub(r"[^a-zA-Z0-9_]+", "_", s.strip())
     return t or "comp"
@@ -78,7 +109,7 @@ def _param_keys_for_component(row: dict[str, Any]) -> list[str]:
     ctype = str(row.get("component_type") or "").strip()
     degree_raw = row.get("degree")
     degree = int(degree_raw) if degree_raw is not None else None
-    _func, params = build_component_function(ctype, degree=degree)
+    params = component_param_specs(ctype, degree=degree)
     return [p.key for p in params]
 
 
@@ -88,40 +119,48 @@ def _feature_keys_for_component(
     component_id: str,
     component_type: str,
     param_keys: list[str],
+    xps_region: str | None = None,
 ) -> list[str]:
     cid = _safe_id_fragment(component_id)
     prefix = f"s{step_index}_" if multi_step else ""
-    base = f"{prefix}fit_{cid}_"
+    region = _safe_id_fragment(xps_region) if xps_region else ""
+    mid = f"{region}_" if region else ""
+    base = f"{prefix}fit_{mid}{cid}_"
     keys = [base + _safe_id_fragment(k) for k in param_keys]
-    if component_type.strip().lower() in PEAK_COMPONENT_TYPES:
+    if component_type.strip().lower() in AREA_EXPORT_COMPONENT_TYPES:
         keys.append(base + "area")
     return keys
 
 
 def _derived_peak_area(ctype: str, pk: dict[str, float]) -> float | None:
     ct = ctype.strip().lower()
-    if ct == "gaussian":
-        amp, fwhm = pk.get("amp"), pk.get("fwhm")
-        if amp is None or fwhm is None:
-            return None
-        area = gaussian_peak_area(amp, fwhm)
-    elif ct == "lorentzian":
-        amp, fwhm = pk.get("amp"), pk.get("fwhm")
-        if amp is None or fwhm is None:
-            return None
-        area = lorentzian_peak_area(amp, fwhm)
-    elif ct == "pseudo_voigt":
-        amp, fwhm, eta = pk.get("amp"), pk.get("fwhm"), pk.get("eta")
-        if amp is None or fwhm is None or eta is None:
-            return None
-        area = pseudo_voigt_peak_area(amp, fwhm, eta)
-    elif ct == "voigt":
-        amp, fwhm_g, fwhm_l = pk.get("amp"), pk.get("fwhm_g"), pk.get("fwhm_l")
-        if amp is None or fwhm_g is None or fwhm_l is None:
+    if ct not in AREA_EXPORT_COMPONENT_TYPES:
+        return None
+    amp = pk.get("amp")
+    if amp is None or not math.isfinite(amp):
+        return None
+    # Exact Voigt area from amplitude / unit-profile height (more accurate than peak_area approx).
+    if ct == "voigt":
+        fwhm_g, fwhm_l = pk.get("fwhm_g"), pk.get("fwhm_l")
+        if fwhm_g is None or fwhm_l is None:
             return None
         area = voigt_peak_area(amp, fwhm_g, fwhm_l)
-    else:
+        return area if math.isfinite(area) else None
+    if ct == "asymmetric_voigt":
+        fwhm_g_l, fwhm_l_l = pk.get("fwhm_g_l"), pk.get("fwhm_l_l")
+        fwhm_g_r, fwhm_l_r = pk.get("fwhm_g_r"), pk.get("fwhm_l_r")
+        if None in (fwhm_g_l, fwhm_l_l, fwhm_g_r, fwhm_l_r):
+            return None
+        area = asymmetric_voigt_peak_area(
+            float(amp), float(fwhm_g_l), float(fwhm_l_l), float(fwhm_g_r), float(fwhm_l_r)
+        )
+        return area if math.isfinite(area) else None
+    # Shared Area/amp factors (recipe links + export stay consistent), including LA / a_gl.
+    try:
+        factor = area_per_height(ct, pk)
+    except Exception:
         return None
+    area = float(amp) * float(factor)
     return area if math.isfinite(area) else None
 
 
@@ -135,6 +174,8 @@ def _raw_fitting_keys_and_nums(pipeline: Any) -> tuple[list[str], list[int]]:
     for i in fit_indices:
         step = steps[i]
         params = step.params or {}
+        region = params.get("xps_region")
+        xps_region = str(region).strip() if region is not None and str(region).strip() else None
         comps = params.get("components")
         if not isinstance(comps, list):
             continue
@@ -147,7 +188,7 @@ def _raw_fitting_keys_and_nums(pipeline: Any) -> tuple[list[str], list[int]]:
                 param_keys = _param_keys_for_component(row)
             except ValueError:
                 continue
-            for kk in _feature_keys_for_component(i, multi, cid, ctype, param_keys):
+            for kk in _feature_keys_for_component(i, multi, cid, ctype, param_keys, xps_region=xps_region):
                 raw.append(kk)
                 nums.append(sns[i])
     return raw, nums
@@ -185,7 +226,13 @@ def fitting_feature_key_groups_for_pipeline(pipeline: Any) -> dict[int, list[str
                     param_keys = _param_keys_for_component(row)
                 except ValueError:
                     continue
-                step_key_count += len(_feature_keys_for_component(i, len(fit_indices) > 1, cid, ctype, param_keys))
+                region = params.get("xps_region")
+                xps_region = str(region).strip() if region is not None and str(region).strip() else None
+                step_key_count += len(
+                    _feature_keys_for_component(
+                        i, len(fit_indices) > 1, cid, ctype, param_keys, xps_region=xps_region
+                    )
+                )
         out[sns[i]] = final_keys[key_cursor : key_cursor + step_key_count]
         key_cursor += step_key_count
     return out
@@ -196,6 +243,7 @@ def collect_fitting_features_for_pipeline(
     pipeline: Any,
     *,
     per_step_input_xy: dict[int, XY] | None = None,
+    spectrum_xps_region: str | None = None,
 ) -> tuple[list[str], dict[str, float | None]]:
     """
     Re-fit using stored step params and export optimized parameters per component.
@@ -206,7 +254,12 @@ def collect_fitting_features_for_pipeline(
     per_step_input_xy:
         When provided, each fitting step uses the spectrum *input* to that step (after prior
         transforms). Otherwise all steps use ``xy`` (legacy single-final-XY behavior).
+
+    spectrum_xps_region:
+        When set, fitting steps whose ``xps_region`` does not match are skipped (null features).
     """
+    from sersflow.core.pipeline.engine import fitting_region_applies
+
     steps = getattr(pipeline, "steps", None) or []
     sns = assign_pipeline_step_nums(steps)
     raw, nums = _raw_fitting_keys_and_nums(pipeline)
@@ -224,6 +277,8 @@ def collect_fitting_features_for_pipeline(
         comps = params.get("components")
         if not isinstance(comps, list):
             continue
+        region = params.get("xps_region")
+        xps_region = str(region).strip() if region is not None and str(region).strip() else None
         step_key_groups: list[list[str]] = []
         for row in comps:
             if not isinstance(row, dict):
@@ -234,7 +289,9 @@ def collect_fitting_features_for_pipeline(
                 param_keys = _param_keys_for_component(row)
             except ValueError:
                 continue
-            step_key_groups.append(_feature_keys_for_component(i, multi, cid, ctype, param_keys))
+            step_key_groups.append(
+                _feature_keys_for_component(i, multi, cid, ctype, param_keys, xps_region=xps_region)
+            )
 
         step_raw: list[str] = []
         for group in step_key_groups:
@@ -254,11 +311,18 @@ def collect_fitting_features_for_pipeline(
         xy_use = per_step_input_xy.get(sn, xy) if per_step_input_xy is not None else xy
 
         nulls = {k: None for k in step_final_keys}
+        if not fitting_region_applies(step_params=dict(params), spectrum_xps_region=spectrum_xps_region):
+            merged.update(nulls)
+            continue
         if xy_use.x.size == 0 or xy_use.y.size == 0:
             merged.update(nulls)
             continue
         try:
-            prob = fit_problem_from_step_params(xy_use, params)
+            fit_params = dict(params)
+            tech = getattr(pipeline, "technique_family", None)
+            if tech and "technique_family" not in fit_params:
+                fit_params["technique_family"] = tech
+            prob = fit_problem_from_step_params(xy_use, fit_params)
         except ValueError:
             merged.update(nulls)
             continue
@@ -286,7 +350,7 @@ def collect_fitting_features_for_pipeline(
                 if value is not None and math.isfinite(value):
                     out[final_key] = value
 
-            if ctype in PEAK_COMPONENT_TYPES and len(final_group) > len(keys_list):
+            if ctype in AREA_EXPORT_COMPONENT_TYPES and len(final_group) > len(keys_list):
                 area_key = final_group[len(keys_list)]
                 out[area_key] = _derived_peak_area(ctype, pk)
 

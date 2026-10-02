@@ -10,6 +10,8 @@ from sersflow.infra.analysis_store import iter_spectrum_rows
 from sersflow.infra.datasets_store import spectrum_export_lookup
 from sersflow.infra.sqlite_db import connect
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths
+from sersflow.api.services.spectrum_context import labels_for_spectrum as _labels_for_spectrum
+from sersflow.core.io.multi_block_labels import INTERNAL_LABEL_KEYS, get_block_spectra
 
 
 def csv_cell(value: Any) -> str:
@@ -121,10 +123,15 @@ def _prepare_observation_wide(
     meta_union: dict[str, None] = {}
     if join_labels:
         for path, lab in labels_by_path.items():
-            flat = _flatten_labels(lab)
+            # Path-level template (without nested vms_spectra dump); per-record merge happens at row time.
+            flat = _flatten_labels(_labels_for_spectrum(lab, record_index=None))
             meta_templates[path] = flat
             for k in flat:
                 meta_union[k] = None
+            blocks = get_block_spectra(lab if isinstance(lab, dict) else None)
+            for block in blocks.values():
+                for k in _flatten_labels(block):
+                    meta_union[k] = None
         meta_keys = sorted(meta_union.keys())
     return axis_cols, meta_keys, meta_templates
 
@@ -132,6 +139,8 @@ def _prepare_observation_wide(
 def _flatten_labels(labels: dict[str, Any], *, prefix: str = "meta_") -> dict[str, Any]:
     out: dict[str, Any] = {}
     for k, v in labels.items():
+        if k in INTERNAL_LABEL_KEYS:
+            continue
         col = prefix + re.sub(r"[^a-zA-Z0-9_]+", "_", str(k).strip()) if k else f"{prefix}unknown"
         if isinstance(v, (dict, list)):
             out[col] = json.dumps(v, separators=(",", ":"), ensure_ascii=False)
@@ -153,7 +162,7 @@ def iter_observation_wide_dicts(
     """
     One dict per spectrum: raw Python values (for Parquet); same column order as wide CSV header.
     """
-    axis_cols, meta_keys, meta_templates = _prepare_observation_wide(
+    axis_cols, meta_keys, _meta_templates = _prepare_observation_wide(
         labels_by_path=labels_by_path,
         join_labels=join_labels,
         join_axes=join_axes,
@@ -175,7 +184,10 @@ def iter_observation_wide_dicts(
             row["grid_ny"] = info.get("grid_ny")
             row["file_kind"] = info.get("file_kind")
         if join_labels:
-            flat = meta_templates.get(rel, {})
+            ri = info.get("record_index")
+            ri_int = int(ri) if ri is not None and str(ri).strip() != "" else None
+            lab = _labels_for_spectrum(labels_by_path.get(rel, {}), record_index=ri_int)
+            flat = _flatten_labels(lab)
             for mk in meta_keys:
                 row[mk] = flat.get(mk)
         yield row
@@ -267,7 +279,7 @@ def iter_observation_wide_csv_bytes(
     buf = io.StringIO()
     w = csv.writer(buf)
 
-    axis_cols, meta_keys, meta_templates = _prepare_observation_wide(
+    axis_cols, meta_keys, _meta_templates = _prepare_observation_wide(
         labels_by_path=labels_by_path,
         join_labels=join_labels,
         join_axes=join_axes,
@@ -298,7 +310,11 @@ def iter_observation_wide_csv_bytes(
                 ]
             )
         if join_labels:
-            flat = meta_templates.get(str(rel), {})
+            ri = info.get("record_index")
+            ri_int = int(ri) if ri is not None and str(ri).strip() != "" else None
+            flat = _flatten_labels(
+                _labels_for_spectrum(labels_by_path.get(str(rel), {}), record_index=ri_int)
+            )
             row.extend([csv_cell(flat.get(k)) for k in meta_keys])
         w.writerow(row)
         yield buf.getvalue().encode("utf-8")
@@ -353,7 +369,9 @@ def iter_observation_long_csv_bytes(
                 buf.truncate(0)
 
         if join_labels and rel:
-            flat = _flatten_labels(labels_by_path.get(rel, {}))
+            ri = info.get("record_index")
+            ri_int = int(ri) if ri is not None and str(ri).strip() != "" else None
+            flat = _flatten_labels(_labels_for_spectrum(labels_by_path.get(rel, {}), record_index=ri_int))
             for mk, mv in flat.items():
                 w.writerow([run_id_value, dataset_id, sid, mk, csv_cell(mv), "meta"])
                 yield buf.getvalue().encode("utf-8")

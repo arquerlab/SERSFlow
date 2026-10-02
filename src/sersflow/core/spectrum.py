@@ -4,7 +4,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from sersflow.core.models.datasets import Dataset, MapDataset, SeriesDataset, SpectrumDataset
+from sersflow.core.models.datasets import (
+    Dataset,
+    MapDataset,
+    MultiSpectrumDataset,
+    SeriesDataset,
+    SpectrumDataset,
+)
 
 
 @dataclass(frozen=True)
@@ -22,7 +28,7 @@ def extract_xy(ds: Dataset, *, record_index: int | None = None) -> XY:
     Extract a single spectrum (x,y) from a loaded dataset.
 
     - SpectrumDataset: returns the only spectrum.
-    - SeriesDataset/MapDataset: returns row `record_index` (default 0).
+    - SeriesDataset/MapDataset/MultiSpectrumDataset: returns row ``record_index`` (default 0).
     """
     if isinstance(ds, SpectrumDataset):
         return XY(x=ds.x, y=ds.y)
@@ -38,5 +44,9 @@ def extract_xy(ds: Dataset, *, record_index: int | None = None) -> XY:
             raise IndexError(f"record_index out of range: {idx}")
         return XY(x=ds.x, y=ds.spectra[idx, :])
 
-    raise TypeError(f"Unsupported dataset type: {type(ds)}")
+    if isinstance(ds, MultiSpectrumDataset):
+        if idx < 0 or idx >= len(ds.xs):
+            raise IndexError(f"record_index out of range: {idx}")
+        return XY(x=ds.xs[idx], y=ds.ys[idx])
 
+    raise TypeError(f"Unsupported dataset type: {type(ds)}")

@@ -20,6 +20,7 @@ from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.api.services.dataset_export import export_dataset_package, import_dataset_package
 from sersflow.api.services.dataset_restore import restore_dataset_uploads
 from sersflow.api.services.datasets_service import create_dataset_from_uploads
+from sersflow.api.services.filter_catalog import build_filter_fields_catalog, list_xps_regions_for_dataset
 from sersflow.core.metrics.compute import compute_metrics
 from sersflow.core.pipeline.cache import InProcessLRUCache
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
@@ -130,6 +131,24 @@ def list_spectrum_axes(
         raise HTTPException(status_code=404, detail="Dataset not found")
     items, total = iter_spectrum_axes_page(dataset_id=dataset_id, limit=limit, offset=offset)
     return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/{dataset_id}/xps-regions")
+def list_dataset_xps_regions(dataset_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    rec = get_dataset(dataset_id, owner_user_id=user_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return {"regions": list_xps_regions_for_dataset(rec)}
+
+
+@router.get("/{dataset_id}/filter-fields")
+def list_dataset_filter_fields(dataset_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    rec = get_dataset(dataset_id, owner_user_id=user_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return {"fields": build_filter_fields_catalog(rec)}
 
 
 @router.delete("/{dataset_id}")

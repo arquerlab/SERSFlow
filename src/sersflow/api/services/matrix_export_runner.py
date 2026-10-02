@@ -74,18 +74,24 @@ def execute_matrix_export_job(matrix_job_id: str) -> None:
         if len(refs) > _max_spectra():
             raise ValueError(f"too many spectra (max {_max_spectra()})")
 
-        steps = [
-            {
-                "name": s.name,
-                "params": s.params,
-                "enabled": s.enabled,
-                "impl_version": s.impl_version,
-                "step_id": s.step_id,
-                "input_from": s.input_from,
-                "after_step_id": s.after_step_id,
-            }
-            for s in pipeline.steps
-        ]
+        # Sentinel: QC-filtered cohort with no XY transforms (same as session up_to_step=__raw__).
+        raw_only = str(rec.up_to_step or "").strip() == "__raw__"
+        steps = (
+            []
+            if raw_only
+            else [
+                {
+                    "name": s.name,
+                    "params": s.params,
+                    "enabled": s.enabled,
+                    "impl_version": s.impl_version,
+                    "step_id": s.step_id,
+                    "input_from": s.input_from,
+                    "after_step_id": s.after_step_id,
+                }
+                for s in pipeline.steps
+            ]
+        )
         inputs = [
             {
                 "spectrum_id": r.spectrum_id,
@@ -103,8 +109,9 @@ def execute_matrix_export_job(matrix_job_id: str) -> None:
             inputs=inputs,
             pipeline_steps=steps,
             config=cfg,
-            up_to_step=rec.up_to_step,
+            up_to_step=None if raw_only else rec.up_to_step,
             max_workers=MATRIX_MAX_WORKERS,
+            technique_family=getattr(pipeline, "technique_family", None),
         )
 
         x0: np.ndarray | None = None

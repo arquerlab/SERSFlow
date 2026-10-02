@@ -21,7 +21,7 @@ class Preview(BaseModel):
 
 class IoLoadResponse(BaseModel):
     filename: str | None = None
-    kind: Literal["unknown", "spectrum", "series", "map"] = "unknown"
+    kind: Literal["unknown", "spectrum", "series", "map", "multi"] = "unknown"
     shapes: Shapes
     preview: Preview
 
@@ -36,6 +36,8 @@ class UploadRegistryItem(BaseModel):
     wn_min: float | None = None
     wn_max: float | None = None
     spectrum_count: int | None = None
+    xps_regions: list[str] | None = None
+    technique_family: Literal["vibrational", "xps"] | None = None
     labels: dict[str, Any] = Field(
         default_factory=dict,
         description=(
@@ -110,6 +112,11 @@ class UpdateLabelsRequest(BaseModel):
             "Label dict to store. Prefer: current_density_A_cm2, concentration_M, electrolyte, "
             "plus other keys as in GET /io/uploads. Legacy keys may be accepted."
         ),
+    )
+    record_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="When set, merge labels into vms_spectra[str(record_index)] only (multi-spectrum blocks).",
     )
 
 

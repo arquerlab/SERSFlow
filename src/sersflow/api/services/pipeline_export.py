@@ -20,14 +20,24 @@ def export_pipeline_package(record: PipelineLibraryRecord) -> PipelineExportPack
         exported_at=_utc_now_iso(),
         name=record.name,
         pipeline=record.pipeline,
+        technique_family=getattr(record, "technique_family", None)
+        or getattr(record.pipeline, "technique_family", None)
+        or "vibrational",
         source_pipeline_id=record.pipeline_id,
     )
 
 
-def import_pipeline_package(*, name: str | None, pipeline: Pipeline, owner_user_id: str) -> PipelineLibraryRecord:
+def import_pipeline_package(
+    *,
+    name: str | None,
+    pipeline: Pipeline,
+    owner_user_id: str,
+    technique_family: str | None = None,
+) -> PipelineLibraryRecord:
     return create_pipeline(
         name=name or "Imported pipeline",
         pipeline=pipeline,
         owner_user_id=owner_user_id,
         overwrite=False,
+        technique_family=technique_family or getattr(pipeline, "technique_family", None),
     )

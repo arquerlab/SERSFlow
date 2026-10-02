@@ -726,10 +726,26 @@ export default function AnalyzeWorkspace() {
     queryFn: () => listDatasets(200, 0),
   });
 
+  const selectedDataset = useMemo(() => {
+    return (datasetsQ.data?.items ?? []).find((d) => d.dataset_id === datasetId);
+  }, [datasetsQ.data?.items, datasetId]);
+
+  const datasetTechniqueFamily = selectedDataset?.metadata?.technique_family ?? null;
+
   const pipelinesQ = useQuery({
-    queryKey: ["pipelines", { limit: 500, offset: 0 }],
-    queryFn: () => listPipelines(500, 0),
+    queryKey: ["pipelines", { limit: 500, offset: 0, technique_family: datasetTechniqueFamily }],
+    queryFn: () => listPipelines(500, 0, null, datasetTechniqueFamily),
+    enabled: !!datasetId,
   });
+
+  // Drop a stale pipeline selection when the dataset technique filter changes.
+  useEffect(() => {
+    if (!pipelineId) return;
+    const items = pipelinesQ.data?.items ?? [];
+    if (!pipelinesQ.isFetched) return;
+    if (items.some((p) => p.pipeline_id === pipelineId)) return;
+    setPipelineId("");
+  }, [pipelineId, pipelinesQ.data?.items, pipelinesQ.isFetched]);
 
   const runsQ = useQuery({
     queryKey: ["analysisRuns", datasetId],
@@ -921,7 +937,15 @@ export default function AnalyzeWorkspace() {
     mutationFn: async () => {
       if (!datasetId) throw new Error("Select a dataset");
       if (!pipelineId || !selectedPipeline) throw new Error("Select a pipeline");
-      const ds = (datasetsQ.data?.items ?? []).find((d) => d.dataset_id === datasetId);
+      const dsFam = selectedDataset?.metadata?.technique_family;
+      const pipeFam =
+        selectedPipeline.technique_family ?? selectedPipeline.pipeline?.technique_family;
+      if (dsFam && pipeFam && dsFam !== pipeFam) {
+        throw new Error(
+          `technique_family mismatch: dataset is ${dsFam} but pipeline is ${pipeFam}`
+        );
+      }
+      const ds = selectedDataset ?? (datasetsQ.data?.items ?? []).find((d) => d.dataset_id === datasetId);
       const datasetName = normalizeRunNameToken(ds?.metadata?.name ?? ds?.dataset_id ?? datasetId);
       const pipelineName = normalizeRunNameToken(selectedPipeline.name ?? pipelineId);
       const base = normalizeRunNameToken(`${datasetName} ${pipelineName}`);
@@ -1656,13 +1680,14 @@ export default function AnalyzeWorkspace() {
   function matrixStepLabel(value: string | null | undefined): string {
     const v = String(value || "").trim();
     if (!v) return "Final (all steps)";
-    return matrixStepOptions.find((o) => o.value === v)?.label ?? "Final (all steps)";
+    if (v === "__raw__") return "Raw spectra";
+    return matrixStepOptions.find((o) => o.value === v)?.label ?? v;
   }
 
   // Back-compat: migrate previously stored "matrixUpTo" (often a step name like "normalize")
   // to the first matching option value when the pipeline changes.
   useEffect(() => {
-    if (!matrixUpTo) return;
+    if (!matrixUpTo || matrixUpTo === "__raw__") return;
     const values = new Set(matrixStepOptions.map((o) => o.value));
     if (values.has(matrixUpTo)) return;
     const firstByName = matrixStepOptions.find((o) => o.legacyName === matrixUpTo);
@@ -2811,11 +2836,12 @@ export default function AnalyzeWorkspace() {
             <div className="section-title">Matrix export job</div>
             <p className="hint">
               Materializes a shared wavenumber grid for <b>all spectra</b> in the dataset (session subset does not apply).
-              Use <code>up_to_step</code> to stop after a pipeline step (e.g. crop + normalize), or leave empty for the full
-              saved pipeline. Export needs the <b>same</b> Raman shift axis for every spectrum. If the job fails with
-              inconsistent grids, apply a <b>consistent crop</b> to all spectra and add <code>align_resample</code> after crop,
-              then choose <code>up_to_step</code> = <code>align_resample</code> (or a later step). Align alone is not enough if
-              spectra end up with different surviving wavenumber ranges after crop—then grids can still differ in length.
+              Choose <b>Raw spectra</b> for the QC-filtered cohort with no XY transforms, use <code>up_to_step</code> to stop
+              after a pipeline step (e.g. crop + normalize), or leave empty for the full saved pipeline. Export needs the{" "}
+              <b>same</b> Raman shift axis for every spectrum. If the job fails with inconsistent grids, apply a{" "}
+              <b>consistent crop</b> to all spectra and add <code>align_resample</code> after crop, then choose{" "}
+              <code>up_to_step</code> = <code>align_resample</code> (or a later step). Align alone is not enough if spectra
+              end up with different surviving wavenumber ranges after crop—then grids can still differ in length.
             </p>
             {emptyDataset || emptyPipeline || !selectedPipeline ? (
               <div className="hint">Select dataset and pipeline.</div>
@@ -2923,6 +2949,7 @@ export default function AnalyzeWorkspace() {
                   up_to_step (optional)
                   <select value={matrixUpTo} onChange={(e) => setMatrixUpTo(e.target.value)}>
                     <option value="">Final (all steps)</option>
+                    <option value="__raw__">Raw spectra (no XY steps)</option>
                     {matrixStepOptions.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}

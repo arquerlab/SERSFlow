@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 
-from sersflow.core.models.datasets import Dataset, MapDataset, SeriesDataset, SpectrumDataset
+from sersflow.core.models.datasets import Dataset, MapDataset, MultiSpectrumDataset, SeriesDataset, SpectrumDataset
 from sersflow.core.plot.figure_json import (
     RAMAN_SHIFT_AXIS_TITLE,
+    independent_overlay_figure_json,
     overlay_figure_json,
     series_heatmap_figure_json,
     spectrum_figure_json,
@@ -28,6 +29,7 @@ def pick_1d_spectrum(dataset: Dataset, *, spectrum_index: int) -> np.ndarray:
     - SpectrumDataset -> its y
     - SeriesDataset -> spectra[spectrum_index]
     - MapDataset -> spectra[spectrum_index]
+    - MultiSpectrumDataset -> ys[spectrum_index]
     """
     i = int(spectrum_index)
     if i < 0:
@@ -35,6 +37,10 @@ def pick_1d_spectrum(dataset: Dataset, *, spectrum_index: int) -> np.ndarray:
 
     if isinstance(dataset, SpectrumDataset):
         return dataset.y
+    if isinstance(dataset, MultiSpectrumDataset):
+        if i >= len(dataset.ys):
+            raise ValueError(f"spectrum_index out of range (max {len(dataset.ys) - 1})")
+        return dataset.ys[i]
     if isinstance(dataset, (SeriesDataset, MapDataset)):
         if i >= dataset.spectra.shape[0]:
             raise ValueError(f"spectrum_index out of range (max {dataset.spectra.shape[0]-1})")
@@ -51,7 +57,11 @@ def plot_spectrum(
     y_title: str = "Intensity (counts)",
 ) -> dict:
     y = pick_1d_spectrum(dataset, spectrum_index=spectrum_index)
-    return spectrum_figure_json(x=dataset.x, y=y, title=title, x_title=x_title, y_title=y_title)
+    if isinstance(dataset, MultiSpectrumDataset):
+        x = dataset.xs[int(spectrum_index)]
+    else:
+        x = dataset.x
+    return spectrum_figure_json(x=x, y=y, title=title, x_title=x_title, y_title=y_title)
 
 
 def plot_overlay(
@@ -201,6 +211,44 @@ def plot_map_points(
     ys = [dataset.spectra[i, :] for i in dedup]
     labels = [f"x={float(dataset.xpos[i]):g}, y={float(dataset.ypos[i]):g}" for i in dedup]
     return overlay_figure_json(x=dataset.x, ys=ys, labels=labels, title=title, x_title=x_title, y_title=y_title)
+
+
+def plot_multi_points(
+    dataset: MultiSpectrumDataset,
+    *,
+    indices: list[int],
+    title: str = "Multi spectra",
+    x_title: str = "Binding energy (eV)",
+    y_title: str = "Intensity (counts)",
+    max_traces: int = 30,
+) -> dict:
+    n = len(dataset.ys)
+    dedup: list[int] = []
+    seen: set[int] = set()
+    for i in indices:
+        ii = int(i)
+        if ii < 0 or ii >= n:
+            raise ValueError(f"Index out of range: {ii} (0..{n-1})")
+        if ii in seen:
+            continue
+        seen.add(ii)
+        dedup.append(ii)
+    if len(dedup) > int(max_traces):
+        dedup = dedup[: int(max_traces)]
+
+    traces: list[tuple[Any, Any, str]] = []
+    for ii in dedup:
+        meta = dataset.meta[ii] if ii < len(dataset.meta) else {}
+        region = str((meta or {}).get("xps_region") or "")
+        role = str((meta or {}).get("spectrum_role") or "")
+        block = str((meta or {}).get("block_name") or f"block_{ii}")
+        label = block
+        if region or role:
+            bits = [b for b in (region, role) if b]
+            label = f"{block} ({', '.join(bits)})" if bits else block
+        traces.append((dataset.xs[ii], dataset.ys[ii], label))
+    _ = title  # layout has no top title today; keep signature parallel to other plotters
+    return independent_overlay_figure_json(traces=traces, x_title=x_title, y_title=y_title)
 
 
 def default_title_from_path(relative_path: str) -> str:

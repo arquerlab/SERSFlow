@@ -2,24 +2,92 @@ import type { FittingComponentSpecPublic, FittingParamSpecPublic } from "./api";
 
 export const MAX_POLY_DEGREE = 12;
 
-export const PEAK_COMPONENT_TYPES = ["gaussian", "lorentzian", "pseudo_voigt", "voigt"] as const;
+export const PEAK_COMPONENT_TYPES = [
+  "gaussian",
+  "lorentzian",
+  "pseudo_voigt",
+  "gl",
+  "voigt",
+  "ds",
+  "gds",
+  "la",
+  "lf",
+  "a_gl",
+  "apv",
+  "asymmetric_voigt",
+] as const;
 export type FittingPeakType = (typeof PEAK_COMPONENT_TYPES)[number];
-export type FittingComponentType = FittingPeakType | "polynomial_background";
+
+export const XPS_BG_COMPONENT_TYPES = ["shirley_bg", "tougaard_bg", "slope_bg"] as const;
+export type FittingXpsBgType = (typeof XPS_BG_COMPONENT_TYPES)[number];
+
+/** Prefer catalog `component_type` list; fall back to builtin XPS bg ids. */
+export function xpsBgComponentTypesFromCatalog(
+  catalog: FittingComponentSpecPublic[] | undefined
+): readonly string[] {
+  if (!catalog?.length) return XPS_BG_COMPONENT_TYPES;
+  const fromCat = catalog
+    .map((c) => String(c.component_type || "").trim().toLowerCase())
+    .filter((ct) => ct.endsWith("_bg") || XPS_BG_COMPONENT_TYPES.includes(ct as FittingXpsBgType));
+  const uniq = [...new Set(fromCat)];
+  return uniq.length ? uniq : XPS_BG_COMPONENT_TYPES;
+}
+
+export function xpsBgTypeLabel(ct: string, catalog: FittingComponentSpecPublic[] | undefined): string {
+  const key = ct.trim().toLowerCase();
+  const spec = catalog?.find((c) => String(c.component_type || "").trim().toLowerCase() === key);
+  if (spec?.display_name) return spec.display_name;
+  return XPS_BG_TYPE_LABELS[key as FittingXpsBgType] ?? key;
+}
+
+export type FittingComponentType = FittingPeakType | "polynomial_background" | FittingXpsBgType | string;
 
 export const PEAK_TYPE_LABELS: Record<FittingPeakType, string> = {
   gaussian: "Gaussian",
   lorentzian: "Lorentzian",
   pseudo_voigt: "Pseudo-Voigt",
+  gl: "Gaussian–Lorentzian (GL)",
   voigt: "Voigt",
+  ds: "Doniach–Šunjić (DS)",
+  gds: "Gaussian-convoluted DS (GDS)",
+  la: "Asymmetric Lorentzian (LA)",
+  lf: "Finite Lorentzian (LF)",
+  a_gl: "Asymmetric GL A(a,n,m)",
+  apv: "Asymmetric GL (APV)",
+  asymmetric_voigt: "Asymmetric Voigt",
+};
+
+export const XPS_BG_TYPE_LABELS: Record<FittingXpsBgType, string> = {
+  shirley_bg: "Shirley background (active)",
+  tougaard_bg: "Tougaard background (active)",
+  slope_bg: "Slope background (active)",
+};
+
+export const XPS_REGION_PRESETS = ["O1s", "C1s", "N1s", "S2p", "Ir4f", "Au4f", "Ag3d", "Pt4f"] as const;
+
+export type FittingParamLink = {
+  source_component_id: string;
+  source_key: string;
+  target_component_id: string;
+  target_key: string;
+  mode: "equal" | "scale" | "offset";
+  scale?: number;
+  offset?: number;
 };
 
 export function isPeakComponentType(ct: string): ct is FittingPeakType {
   return (PEAK_COMPONENT_TYPES as readonly string[]).includes(ct.trim().toLowerCase());
 }
 
+export function isXpsBgComponentType(ct: string): ct is FittingXpsBgType {
+  const t = ct.trim().toLowerCase();
+  return (XPS_BG_COMPONENT_TYPES as readonly string[]).includes(t) || t.endsWith("_bg");
+}
+
 export function parseFittingComponentType(raw: string | null | undefined): FittingComponentType {
   const ct = String(raw ?? "gaussian").trim().toLowerCase();
   if (ct === "polynomial_background") return "polynomial_background";
+  if (isXpsBgComponentType(ct)) return ct;
   if (isPeakComponentType(ct)) return ct;
   return "gaussian";
 }
@@ -30,6 +98,8 @@ export type FittingParamRow = {
   p0: number;
   lower: number | null;
   upper: number | null;
+  /** When false, parameter is held fixed (XPS/lmfit). Default true. */
+  vary?: boolean;
 };
 
 export type FittingComponentEditor = {
@@ -50,6 +120,14 @@ export type FittingEditorParams = {
    */
   initial_guess_mode: "default" | "auto";
   components: FittingComponentEditor[];
+  /** XPS core-level / region label for this fitting step (naming + metadata). */
+  xps_region?: string;
+  /** XPS/lmfit parameter links (equal, scale, or offset). */
+  param_links?: FittingParamLink[];
+  /** Provenance: applied XPS fitting recipe id. */
+  recipe_id?: string;
+  /** Pass energy used when applying the recipe (eV). */
+  recipe_pass_energy?: number;
 };
 
 export function polynomialParamKeys(degree: number): string[] {
@@ -59,20 +137,54 @@ export function polynomialParamKeys(degree: number): string[] {
   return keys;
 }
 
-const FALLBACK_PEAK_KEYS: Record<FittingPeakType, string[]> = {
+export const INFINITE_AREA_PEAK_TYPES = new Set<FittingPeakType>(["ds", "gds"]);
+
+/** Vibrational peak keys only — XPS peak/bg shapes require `/fitting/models` catalog. */
+export const FALLBACK_PEAK_KEYS: Record<FittingPeakType, string[]> = {
   gaussian: ["pos", "amp", "fwhm"],
   lorentzian: ["pos", "amp", "fwhm"],
   pseudo_voigt: ["pos", "amp", "fwhm", "eta"],
+  gl: ["pos", "amp", "fwhm", "m"],
   voigt: ["pos", "amp", "fwhm_g", "fwhm_l"],
+  ds: ["pos", "amp", "gamma", "alpha"],
+  gds: ["pos", "amp", "gamma", "alpha", "sigma"],
+  la: ["pos", "amp", "fwhm", "alpha", "beta", "fwhm_g"],
+  lf: ["pos", "amp", "fwhm", "alpha", "beta", "w", "fwhm_g"],
+  a_gl: ["pos", "amp", "fwhm", "m", "a", "n", "m_asym"],
+  apv: ["pos", "amp", "fwhm_l", "fwhm_r", "eta_l", "eta_r"],
+  asymmetric_voigt: ["pos", "amp", "fwhm_g_l", "fwhm_l_l", "fwhm_g_r", "fwhm_l_r"],
 };
 
 const FALLBACK_PEAK_P0: Record<string, number> = {
   pos: 1000,
   amp: 1,
   fwhm: 10,
-  fwhm_g: 10,
+  fwhm_g: 0,
   fwhm_l: 10,
+  fwhm_r: 10,
+  fwhm_g_l: 8,
+  fwhm_l_l: 6,
+  fwhm_g_r: 8,
+  fwhm_l_r: 6,
   eta: 0.5,
+  eta_l: 0.5,
+  eta_r: 0.5,
+  m: 30,
+  a: 0.4,
+  n: 0.55,
+  m_asym: 10,
+  gamma: 5,
+  sigma: 3,
+  w: 20,
+};
+
+/** Per-type overrides when catalog defaults are unavailable (alpha means different things). */
+const FALLBACK_PEAK_P0_BY_TYPE: Partial<Record<FittingPeakType, Record<string, number>>> = {
+  ds: { alpha: 0.1 },
+  gds: { alpha: 0.1 },
+  la: { alpha: 1.5, beta: 1.0, fwhm_g: 0 },
+  lf: { alpha: 1.5, beta: 1.0, fwhm_g: 0, w: 20 },
+  voigt: { fwhm_g: 10, fwhm_l: 10 },
 };
 
 export function paramKeysForComponent(
@@ -84,6 +196,14 @@ export function paramKeysForComponent(
   if (isPeakComponentType(ct)) {
     const spec = catalog?.find((c) => c.component_type === ct);
     const keys = spec?.params?.map((p) => p.key) ?? FALLBACK_PEAK_KEYS[ct];
+    const labels = new Map<string, string>();
+    for (const p of spec?.params ?? []) labels.set(p.key, p.label);
+    for (const k of keys) if (!labels.has(k)) labels.set(k, k);
+    return { keys, labels };
+  }
+  if (isXpsBgComponentType(ct)) {
+    const spec = catalog?.find((c) => c.component_type === ct);
+    const keys = spec?.params?.map((p) => p.key) ?? [];
     const labels = new Map<string, string>();
     for (const p of spec?.params ?? []) labels.set(p.key, p.label);
     for (const k of keys) if (!labels.has(k)) labels.set(k, k);
@@ -106,13 +226,12 @@ export function defaultRowsForComponent(
 ): FittingParamRow[] {
   const { keys, labels } = paramKeysForComponent(componentType, degree, catalog);
   const byKey = new Map<string, FittingParamSpecPublic>();
-  if (isPeakComponentType(componentType)) {
+  if (isPeakComponentType(componentType) || isXpsBgComponentType(componentType)) {
     const spec = catalog?.find((c) => c.component_type === componentType);
     if (spec) {
       for (const p of spec.params) byKey.set(p.key, p);
     }
   }
-  // For polynomial, match degree from catalog if present
   if (componentType === "polynomial_background" && catalog) {
     const polySpec = catalog.find(
       (c) => c.component_type === "polynomial_background" && c.params.length === keys.length
@@ -131,7 +250,11 @@ export function defaultRowsForComponent(
     if (typeof def === "number" && Number.isFinite(def)) {
       p0 = def;
     } else if (isPeakComponentType(componentType)) {
-      p0 = FALLBACK_PEAK_P0[k] ?? 0;
+      const typed = FALLBACK_PEAK_P0_BY_TYPE[componentType]?.[k];
+      p0 = typeof typed === "number" ? typed : (FALLBACK_PEAK_P0[k] ?? 0);
+    } else if (isXpsBgComponentType(componentType)) {
+      // XPS bg p0/keys come from `/fitting/models` only.
+      p0 = 0;
     }
     return {
       key: k,
@@ -139,6 +262,7 @@ export function defaultRowsForComponent(
       p0,
       lower: lo ?? null,
       upper: hi ?? null,
+      vary: true,
     };
   });
 }
@@ -213,6 +337,10 @@ export function defaultFittingEditorParams(catalog: FittingComponentSpecPublic[]
         rows: defaultRowsForComponent("gaussian", 0, catalog),
       },
     ],
+    xps_region: "",
+    param_links: [],
+    recipe_id: "",
+    recipe_pass_energy: undefined,
   };
 }
 
@@ -224,6 +352,35 @@ function isStructuredFittingParams(p: unknown): p is FittingEditorParams {
   return Array.isArray(c0?.rows);
 }
 
+function normalizeParamLinks(raw: unknown): FittingParamLink[] {
+  if (!Array.isArray(raw)) return [];
+  const out: FittingParamLink[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const modeRaw = String(r.mode ?? "equal").trim().toLowerCase();
+    const mode: FittingParamLink["mode"] =
+      modeRaw === "scale" ? "scale" : modeRaw === "offset" ? "offset" : "equal";
+    const link: FittingParamLink = {
+      source_component_id: String(r.source_component_id ?? ""),
+      source_key: String(r.source_key ?? ""),
+      target_component_id: String(r.target_component_id ?? ""),
+      target_key: String(r.target_key ?? ""),
+      mode,
+    };
+    if (mode === "scale" && typeof r.scale === "number" && Number.isFinite(r.scale)) {
+      link.scale = r.scale;
+    }
+    if (mode === "offset" && typeof r.offset === "number" && Number.isFinite(r.offset)) {
+      link.offset = r.offset;
+    }
+    if (link.source_component_id && link.source_key && link.target_component_id && link.target_key) {
+      out.push(link);
+    }
+  }
+  return out;
+}
+
 /** Pipeline/backend shape: flattened bounds + component list without rows. */
 export function flattenFittingForPipeline(fp: FittingEditorParams): Record<string, unknown> {
   const named = assignPeakNames(fp.components);
@@ -231,6 +388,7 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
   const p0: number[] = [];
   const bounds_lower: (number | null)[] = [];
   const bounds_upper: (number | null)[] = [];
+  const vary: boolean[] = [];
   for (const c of named) {
     components.push({
       component_id: c.component_id,
@@ -241,9 +399,12 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
       p0.push(r.p0);
       bounds_lower.push(r.lower);
       bounds_upper.push(r.upper);
+      vary.push(r.vary !== false);
     }
   }
-  return {
+  const region = String(fp.xps_region ?? "").trim();
+  const links = normalizeParamLinks(fp.param_links);
+  const out: Record<string, unknown> = {
     output_mode: fp.output_mode,
     fill_opacity: fp.fill_opacity,
     initial_guess_mode: fp.initial_guess_mode,
@@ -251,7 +412,16 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
     p0,
     bounds_lower,
     bounds_upper,
+    vary,
   };
+  if (region) out.xps_region = region;
+  if (links.length) out.param_links = links;
+  const recipeId = String(fp.recipe_id ?? "").trim();
+  if (recipeId) out.recipe_id = recipeId;
+  if (typeof fp.recipe_pass_energy === "number" && Number.isFinite(fp.recipe_pass_energy)) {
+    out.recipe_pass_energy = fp.recipe_pass_energy;
+  }
+  return out;
 }
 
 export function migrateFittingParamsToEditor(
@@ -263,10 +433,18 @@ export function migrateFittingParamsToEditor(
     return {
       ...r,
       initial_guess_mode: r.initial_guess_mode === "auto" ? "auto" : "default",
+      xps_region: typeof r.xps_region === "string" ? r.xps_region : "",
+      param_links: normalizeParamLinks(r.param_links),
+      recipe_id: typeof r.recipe_id === "string" ? r.recipe_id : "",
+      recipe_pass_energy:
+        typeof r.recipe_pass_energy === "number" && Number.isFinite(r.recipe_pass_energy)
+          ? r.recipe_pass_energy
+          : undefined,
       components: r.components.map((c) => ({
         ...c,
         component_type: parseFittingComponentType(c.component_type),
         component_id: stripLegacyFittingComponentId(c.component_id),
+        rows: c.rows.map((row) => ({ ...row, vary: row.vary !== false })),
       })),
     };
   }
@@ -274,10 +452,18 @@ export function migrateFittingParamsToEditor(
   const output_mode = p.output_mode === "residual" ? "residual" : "fit";
   const fill_opacity = typeof p.fill_opacity === "number" && Number.isFinite(p.fill_opacity) ? p.fill_opacity : 0.15;
   const initial_guess_mode = p.initial_guess_mode === "auto" ? "auto" : "default";
+  const xps_region = typeof p.xps_region === "string" ? p.xps_region : "";
+  const param_links = normalizeParamLinks(p.param_links);
+  const recipe_id = typeof p.recipe_id === "string" ? p.recipe_id : "";
+  const recipe_pass_energy =
+    typeof p.recipe_pass_energy === "number" && Number.isFinite(p.recipe_pass_energy)
+      ? Number(p.recipe_pass_energy)
+      : undefined;
   const comps = p.components;
   const p0 = p.p0;
   const lo = p.bounds_lower;
   const hi = p.bounds_upper;
+  const varyRaw = p.vary;
   if (!Array.isArray(comps) || !Array.isArray(p0) || !Array.isArray(lo) || !Array.isArray(hi)) {
     return defaultFittingEditorParams(catalog);
   }
@@ -300,12 +486,14 @@ export function migrateFittingParamsToEditor(
       const pv = p0[off + i];
       const lv = lo[off + i];
       const uv = hi[off + i];
+      const vv = Array.isArray(varyRaw) ? varyRaw[off + i] : true;
       rows.push({
         key: k,
         label: labels.get(k) ?? k,
         p0: typeof pv === "number" && Number.isFinite(pv) ? pv : 0,
         lower: lv === null || lv === undefined ? null : (typeof lv === "number" && Number.isFinite(lv) ? lv : null),
         upper: uv === null || uv === undefined ? null : (typeof uv === "number" && Number.isFinite(uv) ? uv : null),
+        vary: vv !== false,
       });
     }
     off += n;
@@ -320,5 +508,32 @@ export function migrateFittingParamsToEditor(
     fill_opacity,
     initial_guess_mode,
     components: assignPeakNames(baseComps),
+    xps_region,
+    param_links,
+    recipe_id,
+    recipe_pass_energy,
   };
+}
+
+export function linkKey(componentId: string, paramKey: string): string {
+  return `${componentId}::${paramKey}`;
+}
+
+export function findParamLink(
+  links: FittingParamLink[] | undefined,
+  componentId: string,
+  paramKey: string
+): FittingParamLink | undefined {
+  return (links ?? []).find((l) => l.source_component_id === componentId && l.source_key === paramKey);
+}
+
+export function upsertParamLink(
+  links: FittingParamLink[] | undefined,
+  next: FittingParamLink | null,
+  componentId: string,
+  paramKey: string
+): FittingParamLink[] {
+  const filtered = (links ?? []).filter((l) => !(l.source_component_id === componentId && l.source_key === paramKey));
+  if (!next) return filtered;
+  return [...filtered, next];
 }

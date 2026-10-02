@@ -4,16 +4,32 @@ import {
   runPipeline,
   runSession,
   type FittingComponentSpecPublic,
+  type FitRequest,
   type Pipeline,
   type SessionRunFinalResponse,
   type SessionRunIntermediatesResponse,
   type SpectrumRef,
+  type TechniqueFamily,
 } from "./api";
+import type { EditorStep } from "./editorTypes";
 import { flattenFittingForPipeline, isPeakComponentType, migrateFittingParamsToEditor } from "./fittingUtils";
 import { buildSafeRunRequest, capTraceCount, type Mode, type PlotView } from "./runController";
-import type { EditorStep } from "./editorTypes";
+import { fetchUploadsList } from "./hooks/useUploadsList";
 
 const RAMAN_SHIFT_AXIS_TITLE = "Raman Shift (cm⁻¹)";
+/** Session cohort QC only (shrink working set). metadata_filter is an engine mask step. */
+const QC_STEP_NAMES = new Set(["low_signal_filter", "outlier_detection"]);
+/** Steps that do not transform plot XY (features/metrics only). */
+const METRIC_STEP_NAMES = new Set([
+  "fitting",
+  "spectral_intensities",
+  "spectral_integrations",
+  "feature_operations",
+]);
+
+function hasPlottableXy(it: { x?: unknown[]; y?: unknown[] } | null | undefined): boolean {
+  return Array.isArray(it?.x) && it!.x!.length > 0;
+}
 
 function hexToRgba(hex: string, alpha: number): string {
   const h = hex.replace("#", "").trim();
@@ -42,6 +58,10 @@ export type ExplorePlotRunnerDeps = {
   subsetInputsFromIndices: (indices: number[]) => SpectrumRef[];
   editorStepsToApiSteps: (slice: EditorStep[]) => Pipeline["steps"];
   fittingCatalog: FittingComponentSpecPublic[] | undefined;
+  techniqueFamily?: TechniqueFamily;
+  /** Format-driven plot kind from /meta/formats (xy | multi_overlay | map). */
+  formatPlotMode?: "xy" | "multi_overlay" | "map";
+  defaultXLabel?: string | null;
 };
 
 /**
@@ -67,7 +87,14 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
     subsetInputsFromIndices,
     editorStepsToApiSteps,
     fittingCatalog,
+    techniqueFamily = "vibrational",
+    formatPlotMode = "xy",
+    defaultXLabel = null,
   } = deps;
+  // Format plot_mode is a format hint (map markers etc.); overlay/stack + subset size remain user prefs.
+  const xAxisTitle =
+    (defaultXLabel && String(defaultXLabel).trim()) ||
+    (techniqueFamily === "xps" ? "Binding energy (eV)" : RAMAN_SHIFT_AXIS_TITLE);
 
   explorePlotAbortRef.current?.abort();
   const ac = new AbortController();
@@ -98,42 +125,96 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
     };
     const after = parseAfterToken(afterToken);
     const afterStep = afterToken; // keep full token for intermediates lookup and request
+    // Raw (subset) = true source spectra (no QC, no XY).
+    // After a QC step = apply QC through that pipeline step only, then plot remaining raw XY.
+    // Final with only QC + metric steps: apply all QC, then plot remaining raw XY.
+    const wantsTrueRaw = plotView === "raw";
+    const enabledNonQc = steps.filter((s) => s.enabled !== false && !QC_STEP_NAMES.has(s.name));
+    const finalIsQcCohortOnly =
+      plotView === "final" &&
+      (enabledNonQc.length === 0 || enabledNonQc.every((s) => METRIC_STEP_NAMES.has(s.name)));
+    const wantsQcRaw =
+      finalIsQcCohortOnly || (after.name != null && QC_STEP_NAMES.has(after.name));
+    const wantsSourceOrQcRaw = wantsTrueRaw || wantsQcRaw;
+
+    let qcRawUpTo: string = "__raw__";
+    if (wantsQcRaw && after.name != null && QC_STEP_NAMES.has(after.name)) {
+      const through =
+        typeof after.stepNum === "number" && after.stepNum > 0
+          ? after.stepNum
+          : steps.findIndex((s) => s.enabled !== false && s.name === after.name) + 1;
+      if (through > 0) qcRawUpTo = `__raw__:${through}`;
+    }
+
     const payload = buildSafeRunRequest({
       mode,
       subsetCount: subsetIndices.length || subsetSize,
-      plotView,
-      upToStep: null,
-      collectSteps: afterStep ? [afterStep] : [],
+      // QC steps have no XY intermediates; use final + sentinel via session run below.
+      plotView: wantsSourceOrQcRaw ? "final" : plotView,
+      upToStep: wantsTrueRaw ? "__source__" : wantsQcRaw ? qcRawUpTo : null,
+      collectSteps: afterStep && !wantsSourceOrQcRaw ? [afterStep] : [],
       batchMetrics: ["peak_height", "fwhm"],
     });
 
     const seq = ++runSeq.current;
 
-    if (plotView === "raw") {
-      setExplorePlotStatus("Loading subset spectra…");
-      const inputs = subsetInputsFromIndices(subsetIndices);
-      const out = await runPipeline(
-        {
-          inputs,
-          pipeline: { steps: [] },
-          return: { kind: "final" },
-          cache_namespace: sessionId,
-        },
+    async function inputsAfterQc(): Promise<SpectrumRef[]> {
+      const all = subsetInputsFromIndices(subsetIndices);
+      const hasQc = steps.some((s) => s.enabled !== false && QC_STEP_NAMES.has(s.name));
+      if (!hasQc) return all;
+      const filtered = await runSession(
+        sessionId,
+        { scope: "subset", return: { kind: "final" }, up_to_step: "__raw__" },
         { signal }
       );
+      const keep = new Set(((filtered as SessionRunFinalResponse).items ?? []).map((it) => it.spectrum_id));
+      return all.filter((r) => keep.has(r.spectrum_id));
+    }
+
+    if (wantsSourceOrQcRaw) {
+      setExplorePlotStatus(wantsTrueRaw ? "Loading subset spectra…" : "Applying filters…");
+      const out = await runSession(sessionId, payload, { signal });
       if (seq !== runSeq.current) return;
-      const traces = capTraceCount(out.items ?? [], subsetSize).map((it) => ({
+      const items = ((out as SessionRunFinalResponse).items ?? []).filter(hasPlottableXy);
+      const traces = capTraceCount(items, subsetSize).map((it) => ({
         type: "scatter",
-        mode: "lines",
+        mode: formatPlotMode === "map" ? "lines+markers" : "lines",
         x: it.x,
         y: it.y,
         name: it.spectrum_id,
       }));
+      if (items.length === 0) {
+        setExplorePlotStatus(
+          wantsTrueRaw
+            ? "No spectra in the active subset."
+            : "No spectra remain after cohort QC for this subset."
+        );
+        setPreviousFigure(currentFigure);
+        setCurrentFigure({
+          data: [],
+          layout: {
+            xaxis: { title: { text: xAxisTitle } },
+            yaxis: { title: { text: "Intensity (counts)" } },
+            annotations: [
+              {
+                text: wantsTrueRaw ? "Empty subset" : "Empty after QC filters",
+                xref: "paper",
+                yref: "paper",
+                x: 0.5,
+                y: 0.5,
+                showarrow: false,
+              },
+            ],
+            margin: { l: 60, r: 20, t: 20, b: 95 },
+          },
+        });
+        return;
+      }
       setPreviousFigure(currentFigure);
       setCurrentFigure({
         data: traces,
         layout: {
-          xaxis: { title: { text: RAMAN_SHIFT_AXIS_TITLE } },
+          xaxis: { title: { text: xAxisTitle } },
           yaxis: { title: { text: "Intensity (counts)" } },
           legend: { orientation: "h", yanchor: "top", y: -0.25, xanchor: "center", x: 0.5 },
           margin: { l: 60, r: 20, t: 20, b: 95 },
@@ -161,10 +242,13 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         }
       }
 
-      const inputs = subsetInputsFromIndices(subsetIndices);
+      const inputs = await inputsAfterQc();
+      if (seq !== runSeq.current) return;
 
       const slice = steps.slice(0, prevEnabledIdx >= 0 ? prevEnabledIdx + 1 : 0);
-      const pipelineToInput: Pipeline = { steps: editorStepsToApiSteps(slice) };
+      const pipelineToInput: Pipeline = {
+        steps: editorStepsToApiSteps(slice).filter((s) => !QC_STEP_NAMES.has(s.name)),
+      };
 
       const pipelineToBaselineCurve: Pipeline = {
         steps: [
@@ -179,10 +263,17 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         ],
       };
 
-      const [rawIn, baseOut] = await Promise.all([
-        runPipeline({ inputs, pipeline: pipelineToInput, return: { kind: "final" }, cache_namespace: sessionId }, { signal }),
-        runPipeline({ inputs, pipeline: pipelineToBaselineCurve, return: { kind: "final" }, cache_namespace: sessionId }, { signal }),
-      ]);
+
+      let rawIn: Awaited<ReturnType<typeof runPipeline>>;
+      let baseOut: Awaited<ReturnType<typeof runPipeline>>;
+      try {
+        [rawIn, baseOut] = await Promise.all([
+          runPipeline({ inputs, pipeline: pipelineToInput, return: { kind: "final" }, cache_namespace: sessionId }, { signal }),
+          runPipeline({ inputs, pipeline: pipelineToBaselineCurve, return: { kind: "final" }, cache_namespace: sessionId }, { signal }),
+        ]);
+      } catch (err) {
+        throw err;
+      }
       if (seq !== runSeq.current) return;
 
       const rawItems = capTraceCount(rawIn.items ?? [], subsetSize);
@@ -201,7 +292,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       setCurrentFigure({
         data: traces,
         layout: {
-          xaxis: { title: { text: RAMAN_SHIFT_AXIS_TITLE } },
+          xaxis: { title: { text: xAxisTitle } },
           yaxis: { title: { text: "Intensity (counts)" } },
           legend: { orientation: "h", yanchor: "top", y: -0.25, xanchor: "center", x: 0.5 },
           margin: { l: 60, r: 20, t: 20, b: 95 },
@@ -238,13 +329,70 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         }
       }
 
-      const inputs = subsetInputsFromIndices(subsetIndices);
+      const inputs = await inputsAfterQc();
+      if (seq !== runSeq.current) return;
+
+      const wantedRegion =
+        typeof flat.xps_region === "string" && flat.xps_region.trim() ? flat.xps_region.trim() : "";
+      let gatedInputs = inputs;
+      if (wantedRegion) {
+        try {
+          const labJson = await fetchUploadsList(5000);
+          const byPath = new Map<string, Record<string, unknown>>(
+            (labJson.items ?? []).map((it: { relative_path?: string; labels?: Record<string, unknown> }) => [
+              String(it.relative_path || ""),
+              (it.labels || {}) as Record<string, unknown>,
+            ])
+          );
+          gatedInputs = inputs.filter((r) => {
+            const labels = byPath.get(String(r.relative_path || "")) || {};
+            const blocks = (labels as { vms_spectra?: Record<string, { xps_region?: string }> }).vms_spectra;
+            let region = "";
+            if (blocks && typeof blocks === "object" && r.record_index != null) {
+              const b = blocks[String(r.record_index)];
+              if (b) region = String(b.xps_region || "");
+            } else if (typeof (labels as { xps_region?: string }).xps_region === "string") {
+              region = String((labels as { xps_region?: string }).xps_region);
+            }
+            return region.toLowerCase() === wantedRegion.toLowerCase();
+          });
+        } catch (e) {
+          if (isAbortErr(e)) return;
+          // Fall back to ungated inputs if label lookup fails.
+        }
+      }
+      if (wantedRegion && gatedInputs.length === 0) {
+        setExplorePlotStatus(`No spectra match fitting region ${wantedRegion} in the QC cohort.`);
+        setPreviousFigure(currentFigure);
+        setCurrentFigure({
+          data: [],
+          layout: {
+            xaxis: { title: { text: xAxisTitle } },
+            yaxis: { title: { text: "Intensity (counts)" } },
+            annotations: [
+              {
+                text: `No spectra for region ${wantedRegion}`,
+                xref: "paper",
+                yref: "paper",
+                x: 0.5,
+                y: 0.5,
+                showarrow: false,
+              },
+            ],
+            margin: { l: 60, r: 20, t: 20, b: 95 },
+          },
+        });
+        return;
+      }
+
       const slice = steps.slice(0, prevEnabledIdx >= 0 ? prevEnabledIdx + 1 : 0);
-      const pipelineToInput: Pipeline = { steps: editorStepsToApiSteps(slice) };
+      const pipelineToInput: Pipeline = {
+        steps: editorStepsToApiSteps(slice).filter((s) => !QC_STEP_NAMES.has(s.name)),
+      };
 
       const rawIn = await runPipeline(
         {
-          inputs,
+          inputs: gatedInputs,
           pipeline: pipelineToInput,
           return: { kind: "final" },
           cache_namespace: sessionId,
@@ -277,6 +425,12 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
               bounds: { lower: lo, upper: hi },
               return_curve: true,
               initial_guess_mode: fp.initial_guess_mode === "auto" ? "auto" : "default",
+              technique_family: techniqueFamily,
+              vary: Array.isArray(flat.vary) ? (flat.vary as boolean[]) : undefined,
+              param_links: Array.isArray(flat.param_links)
+                ? (flat.param_links as FitRequest["param_links"])
+                : undefined,
+              xps_region: typeof flat.xps_region === "string" ? flat.xps_region : undefined,
             },
             { signal }
           );
@@ -325,7 +479,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       setCurrentFigure({
         data: traces,
         layout: {
-          xaxis: { title: { text: RAMAN_SHIFT_AXIS_TITLE } },
+          xaxis: { title: { text: xAxisTitle } },
           yaxis: { title: { text: "Intensity (counts)" } },
           legend: { orientation: "h", yanchor: "top", y: -0.25, xanchor: "center", x: 0.5 },
           margin: { l: 60, r: 20, t: 20, b: 95 },
@@ -340,16 +494,25 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
 
     if ((payload.return as { kind?: string }).kind === "intermediates") {
       const stepName = afterStep ?? "";
-      const items = (out as SessionRunIntermediatesResponse).items ?? [];
+      const items = ((out as SessionRunIntermediatesResponse).items ?? []).filter((it) =>
+        hasPlottableXy(it.steps?.[stepName])
+      );
       const traces = capTraceCount(items, subsetSize).map((it) => {
         const xy = it.steps?.[stepName];
         return { type: "scatter", mode: "lines", x: xy?.x ?? [], y: xy?.y ?? [], name: it.spectrum_id };
       });
+      if (items.length === 0) {
+        setExplorePlotStatus(
+          after.name === "metadata_filter"
+            ? "No spectra match this metadata filter on the active subset (non-matches are emptied on this branch)."
+            : "No plottable spectra after this step."
+        );
+      }
       setPreviousFigure(currentFigure);
       setCurrentFigure({
         data: traces,
         layout: {
-          xaxis: { title: { text: RAMAN_SHIFT_AXIS_TITLE } },
+          xaxis: { title: { text: xAxisTitle } },
           yaxis: { title: { text: "Intensity (counts)" } },
           legend: { orientation: "h", yanchor: "top", y: -0.25, xanchor: "center", x: 0.5 },
           margin: { l: 60, r: 20, t: 20, b: 95 },
@@ -358,8 +521,8 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       return;
     }
 
-    const items = (out as SessionRunFinalResponse).items ?? [];
-    const traces = capTraceCount(items, subsetSize).map((it) => ({
+    const finalItems = ((out as SessionRunFinalResponse).items ?? []).filter(hasPlottableXy);
+    const traces = capTraceCount(finalItems, subsetSize).map((it) => ({
       type: "scatter",
       mode: "lines",
       x: it.x,
@@ -370,7 +533,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
     setCurrentFigure({
       data: traces,
       layout: {
-        xaxis: { title: { text: RAMAN_SHIFT_AXIS_TITLE } },
+        xaxis: { title: { text: xAxisTitle } },
         yaxis: { title: { text: "Intensity (counts)" } },
         legend: { orientation: "h", yanchor: "top", y: -0.25, xanchor: "center", x: 0.5 },
         margin: { l: 60, r: 20, t: 20, b: 95 },

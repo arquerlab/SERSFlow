@@ -25,6 +25,10 @@ from sersflow.api.services.ownership import get_dataset_for_user, get_run_for_us
 from sersflow.api.services.analysis_runner import execute_analysis_run, spectrum_xy_for_analysis_run
 from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.sessions_service import pipeline_hash, subset_hash
+from sersflow.api.services.technique_guard import (
+    dataset_technique_family,
+    prepare_pipeline_for_run,
+)
 from sersflow.infra.analysis_store import (
     create_job,
     create_run_pending,
@@ -236,6 +240,14 @@ def create_analysis_run(payload: AnalysisRunCreateRequest, request: Request) -> 
         pipeline = payload.pipeline
         pipeline_json = pipeline.model_dump_json()
         params = {"subset": payload.subset.model_dump()}
+
+    pipeline = prepare_pipeline_for_run(
+        pipeline,
+        dataset_technique_family(ds.metadata),
+        context=f"analysis run on dataset {payload.dataset_id}",
+    )
+    if pipeline_json is not None:
+        pipeline_json = pipeline.model_dump_json()
 
     ph = pipeline_hash(pipeline)
     # Stored cohort is always the full dataset; session.subset only affects Prepare preview.

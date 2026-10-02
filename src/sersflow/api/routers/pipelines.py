@@ -36,6 +36,9 @@ def _to_item(rec) -> PipelineLibraryItem:
         pipeline_id=rec.pipeline_id,
         name=rec.name,
         pipeline=rec.pipeline,
+        technique_family=getattr(rec, "technique_family", None)
+        or getattr(rec.pipeline, "technique_family", None)
+        or "vibrational",
         created_at=rec.created_at,
         updated_at=rec.updated_at,
     )
@@ -54,6 +57,7 @@ def create_pipeline_endpoint(
             pipeline=payload.pipeline,
             owner_user_id=user_id,
             overwrite=overwrite,
+            technique_family=payload.technique_family,
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
@@ -66,9 +70,18 @@ def list_pipelines_endpoint(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     q: str | None = Query(None, description="Optional substring filter on name"),
+    technique_family: str | None = Query(
+        None, description="Optional filter: vibrational or xps (matches active dataset technique)"
+    ),
 ) -> dict[str, Any]:
     user_id = current_user_id(request)
-    rows = list_pipelines(owner_user_id=user_id, limit=limit, offset=offset, q=q)
+    rows = list_pipelines(
+        owner_user_id=user_id,
+        limit=limit,
+        offset=offset,
+        q=q,
+        technique_family=technique_family,
+    )
     items = [_to_item(r) for r in rows]
     return {"items": items, "count": len(items)}
 
@@ -105,7 +118,12 @@ def import_pipeline_endpoint(payload: PipelineImportRequest, request: Request) -
     if payload.schema_version != "sersflow.pipeline.v1":
         raise HTTPException(status_code=400, detail=f"Unsupported pipeline package schema: {payload.schema_version}")
     try:
-        rec = import_pipeline_package(name=payload.name, pipeline=payload.pipeline, owner_user_id=user_id)
+        rec = import_pipeline_package(
+            name=payload.name,
+            pipeline=payload.pipeline,
+            owner_user_id=user_id,
+            technique_family=payload.technique_family,
+        )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     return {"item": _to_item(rec)}
@@ -120,6 +138,7 @@ def update_pipeline_endpoint(pipeline_id: str, payload: PipelineUpdateRequest, r
             owner_user_id=user_id,
             name=payload.name,
             pipeline=payload.pipeline,
+            technique_family=payload.technique_family,
         )
     except ValueError as e:
         msg = str(e)
