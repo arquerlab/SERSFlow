@@ -146,7 +146,6 @@ import {
   defaultXAxisCalibrationParams,
   earlierFittingStepOptions,
   fittingPosKeysForStep,
-  multiFittingInPipeline,
   normalizeXAxisCalibrationParams,
 } from "./preprocess/xAxisCalibrationUtils";
 import { runExplorePlot as runExplorePlotCore } from "./preprocess/explorePlotRunner";
@@ -266,7 +265,6 @@ export default function PreprocessingWorkspace() {
     () => typeof preparePrefs.libraryOverwrite === "boolean" && preparePrefs.libraryOverwrite
   );
   const [pipelineTechniqueFamily, setPipelineTechniqueFamily] = useState<TechniqueFamily>("vibrational");
-  const isXpsPipeline = pipelineTechniqueFamily === "xps";
 
   const patchParams = useCallback(
     (patch: Record<string, string | null | undefined>) => {
@@ -355,11 +353,6 @@ export default function PreprocessingWorkspace() {
     libraryOverwrite,
   ]);
 
-  const pipelinesLibraryQ = useQuery({
-    queryKey: ["pipelines", { limit: 200, offset: 0, technique_family: pipelineTechniqueFamily }],
-    queryFn: () => listPipelines(200, 0, null, pipelineTechniqueFamily),
-  });
-
   const fittingModelsQ = useQuery({
     queryKey: ["fitting", "models"],
     queryFn: () => listFittingModels(),
@@ -416,13 +409,26 @@ export default function PreprocessingWorkspace() {
   useEffect(() => {
     const fam = datasetQ.data?.dataset?.metadata?.technique_family;
     if (fam === "xps" || fam === "vibrational") {
-      setPipelineTechniqueFamily(fam);
+      setPipelineTechniqueFamily((prev) => (prev === fam ? prev : fam));
     }
   }, [datasetId, datasetQ.data?.dataset?.metadata?.technique_family]);
 
+  /** Dataset family wins over the dropdown when a dataset is loaded (session must match). */
+  const effectiveTechniqueFamily: TechniqueFamily = useMemo(() => {
+    const dsFam = datasetQ.data?.dataset?.metadata?.technique_family;
+    if (dsFam === "xps" || dsFam === "vibrational") return dsFam;
+    return pipelineTechniqueFamily;
+  }, [datasetQ.data?.dataset?.metadata?.technique_family, pipelineTechniqueFamily]);
+  const isXpsPipeline = effectiveTechniqueFamily === "xps";
+
+  const pipelinesLibraryQ = useQuery({
+    queryKey: ["pipelines", { limit: 200, offset: 0, technique_family: effectiveTechniqueFamily }],
+    queryFn: () => listPipelines(200, 0, null, effectiveTechniqueFamily),
+  });
+
   const datasetCapabilities = datasetQ.data?.dataset?.metadata?.capabilities ?? [];
   const pipelineStepsQ = usePipelineStepsCatalog({
-    techniqueFamily: pipelineTechniqueFamily,
+    techniqueFamily: effectiveTechniqueFamily,
     capabilities: datasetCapabilities,
   });
   const pipelineStepSpecsFromApi = useMemo(
@@ -480,7 +486,7 @@ export default function PreprocessingWorkspace() {
   const xpsRegionsQ = useQuery({
     queryKey: ["dataset-xps-regions", datasetId],
     queryFn: () => fetchDatasetXpsRegions(datasetId!),
-    enabled: Boolean(datasetId) && pipelineTechniqueFamily === "xps",
+    enabled: Boolean(datasetId) && effectiveTechniqueFamily === "xps",
   });
 
   const createFromUploadsM = useMutation({
@@ -582,6 +588,13 @@ export default function PreprocessingWorkspace() {
       setSubsetIndices([]);
       setSubsetSource("—");
       setActiveSubsetId(null);
+      // New session starts empty — don't keep a previous technique's editor pipeline
+      // marked as "already saved" (that skipped PUT and left a mismatched family).
+      setSteps([]);
+      setSelectedStepId(null);
+      setSelectedLibraryPipelineId("");
+      setPipelineVersion(0);
+      setLastSavedPipelineVersion(0);
     },
   });
 
@@ -628,8 +641,8 @@ export default function PreprocessingWorkspace() {
 
   const buildPipeline = useCallback(
     (): Pipeline =>
-      buildPipelineFromEditor(steps, fittingCatalog, baselineCatalog, pipelineTechniqueFamily, pipelineStepSpecsFromApi),
-    [steps, fittingCatalog, baselineCatalog, pipelineTechniqueFamily, pipelineStepSpecsFromApi]
+      buildPipelineFromEditor(steps, fittingCatalog, baselineCatalog, effectiveTechniqueFamily, pipelineStepSpecsFromApi),
+    [steps, fittingCatalog, baselineCatalog, effectiveTechniqueFamily, pipelineStepSpecsFromApi]
   );
 
   // Load saved subsets when dataset changes.
@@ -774,11 +787,30 @@ export default function PreprocessingWorkspace() {
       setSteps(migrated);
       setSelectedStepId(null);
       const fam =
-        item.technique_family ??
         item.pipeline.technique_family ??
+        item.technique_family ??
         null;
+      const resolvedFam: TechniqueFamily =
+        fam === "xps" || fam === "vibrational" ? fam : effectiveTechniqueFamily;
       if (fam === "xps" || fam === "vibrational") setPipelineTechniqueFamily(fam);
-      setPipelineVersion((v) => v + 1);
+      const nextVersion = pipelineVersion + 1;
+      setPipelineVersion(nextVersion);
+      // Persist immediately with the loaded family so auto-run cannot race a stale vibrational PUT.
+      if (sessionId) {
+        const pipe = buildPipelineFromEditor(
+          migrated,
+          fittingCatalog,
+          baselineCatalog,
+          resolvedFam,
+          pipelineStepSpecsFromApi
+        );
+        try {
+          await updateSessionPipeline(sessionId, pipe);
+          setLastSavedPipelineVersion(nextVersion);
+        } catch (saveErr: any) {
+          setLastError(String(saveErr?.message ?? saveErr));
+        }
+      }
     } catch (e: any) {
       setLastError(String(e?.message ?? e));
     }
@@ -891,7 +923,7 @@ export default function PreprocessingWorkspace() {
       editorStepsToApiSteps: (slice) =>
         editorStepsToApiSteps(slice, fittingCatalog, baselineCatalog, pipelineStepSpecsFromApi),
       fittingCatalog,
-      techniqueFamily: pipelineTechniqueFamily,
+      techniqueFamily: effectiveTechniqueFamily,
       formatPlotMode: selectedFormatUi.plot_mode,
       defaultXLabel: selectedFormatUi.default_x_label,
     });
@@ -1011,7 +1043,7 @@ export default function PreprocessingWorkspace() {
       x_axis_calibration: {
         name: "x_axis_calibration",
         enabled: true,
-        params: defaultXAxisCalibrationParams(pipelineTechniqueFamily) as unknown as Record<string, unknown>,
+        params: defaultXAxisCalibrationParams(effectiveTechniqueFamily) as unknown as Record<string, unknown>,
       },
       normalize: {
         name: "normalize",
@@ -1122,7 +1154,12 @@ export default function PreprocessingWorkspace() {
             onChange={(v) => {
               setDatasetId(v || null);
               setSessionId(null);
-              if (v) createSessionM.mutate(v);
+              if (v) {
+                const item = (datasetsQ.data?.items ?? []).find((d) => d.dataset_id === v);
+                const fam = item?.metadata?.technique_family;
+                if (fam === "xps" || fam === "vibrational") setPipelineTechniqueFamily(fam);
+                createSessionM.mutate(v);
+              }
             }}
           />
           <button
@@ -1208,7 +1245,7 @@ export default function PreprocessingWorkspace() {
                 Create subset
               </button>
             ) : null}
-            {mode === "explore" && pipelineTechniqueFamily === "xps" ? (
+            {mode === "explore" && effectiveTechniqueFamily === "xps" ? (
               <>
                 <TickDropdown
                   label="Regions"
@@ -1520,16 +1557,20 @@ export default function PreprocessingWorkspace() {
           ) : null}
         </div>
         {fig && typeof fig === "object" && (fig as { kind?: string }).kind === "fit_stack" ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px", width: "100%" }}>
             {((fig as { figures?: unknown[] }).figures ?? []).map((f, i) => (
-              <PlotlyWrapper
+              <div
                 key={(f as { spectrum_id?: string })?.spectrum_id ?? i}
-                figure={f as any}
-                previousFigure={null}
-                plotStyle={{ mode: "overlay", stackSep: 0 }}
-                ghostOverlayEnabled={false}
-                className="plot"
-              />
+                style={{ width: "100%", height: 520, minHeight: 520 }}
+              >
+                <PlotlyWrapper
+                  figure={f as any}
+                  previousFigure={null}
+                  plotStyle={{ mode: "overlay", stackSep: 0 }}
+                  ghostOverlayEnabled={false}
+                  className="plot"
+                />
+              </div>
             ))}
           </div>
         ) : (
@@ -1620,11 +1661,20 @@ export default function PreprocessingWorkspace() {
           <label className="inline" style={{ justifyContent: "space-between", minWidth: "280px" }}>
             Pipeline type
             <select
-              value={pipelineTechniqueFamily}
+              value={effectiveTechniqueFamily}
               onChange={(e) => {
                 const v = e.target.value === "xps" ? "xps" : "vibrational";
+                const dsFam = datasetQ.data?.dataset?.metadata?.technique_family;
+                if ((dsFam === "xps" || dsFam === "vibrational") && dsFam !== v) {
+                  setLastError(
+                    `Pipeline type must match the loaded dataset (${dsFam}). Switch dataset to change technique.`
+                  );
+                  return;
+                }
                 setPipelineTechniqueFamily(v);
                 setSelectedLibraryPipelineId("");
+                // Force a save on next run so session pipeline technique_family updates.
+                setPipelineVersion((ver) => ver + 1);
               }}
               title="Required for save-to-library; selects fit engine (XPS→lmfit, vibrational→curve_fit)"
             >
@@ -2539,7 +2589,7 @@ export default function PreprocessingWorkspace() {
                   selectedStep.name === "x_axis_calibration"
                     ? (normalizeXAxisCalibrationParams(
                         selectedStep.params as Record<string, unknown>,
-                        pipelineTechniqueFamily
+                        effectiveTechniqueFamily
                       ) as unknown as Record<string, unknown>)
                     : normalizeMethodParams(
                         selectedStep.name,
@@ -2576,14 +2626,8 @@ export default function PreprocessingWorkspace() {
                   method === "reference_peak" &&
                   selectedFittingStepId !== "" &&
                   !fittingStepOptions.some(({ step }) => step.id === selectedFittingStepId);
-                const multiFit = multiFittingInPipeline(steps);
                 const selectedFittingOpt = fittingStepOptions.find(({ step }) => step.id === selectedFittingStepId);
-                const posKeyOptions = selectedFittingOpt
-                  ? fittingPosKeysForStep(selectedFittingOpt.step, {
-                      stepIndex: selectedFittingOpt.index,
-                      multiFitting: multiFit,
-                    })
-                  : [];
+                const posKeyOptions = selectedFittingOpt ? fittingPosKeysForStep(selectedFittingOpt.step) : [];
                 const selectedPosKey = String((p as any).pos_key ?? "");
                 const posKeyIsInvalid =
                   selectedStep.name === "x_axis_calibration" &&
@@ -2601,13 +2645,13 @@ export default function PreprocessingWorkspace() {
                           const nextMethod = String(e.target.value || "");
                           const mm = spec.methods.find((x) => x.id === nextMethod) ?? spec.methods[0];
                           if (selectedStep.name === "x_axis_calibration") {
-                            const base = defaultXAxisCalibrationParams(pipelineTechniqueFamily);
+                            const base = defaultXAxisCalibrationParams(effectiveTechniqueFamily);
                             setSelectedStepParams({
                               ...base,
                               ...(mm?.defaults ?? {}),
                               method: nextMethod,
                               target_x:
-                                nextMethod === "reference_peak" && pipelineTechniqueFamily === "xps"
+                                nextMethod === "reference_peak" && effectiveTechniqueFamily === "xps"
                                   ? 284.8
                                   : Number((mm?.defaults as any)?.target_x ?? base.target_x),
                             });
@@ -2661,13 +2705,11 @@ export default function PreprocessingWorkspace() {
                             onChange={(e) => {
                               const nextId = String(e.target.value || "");
                               const opt = fittingStepOptions.find(({ step }) => step.id === nextId);
-                              const nextKeys = opt
-                                ? fittingPosKeysForStep(opt.step, { stepIndex: opt.index, multiFitting: multiFit })
-                                : [];
+                              const nextKeys = opt ? fittingPosKeysForStep(opt.step) : [];
                               setSelectedStepParams({
                                 ...normalizeXAxisCalibrationParams(
                                   selectedStep.params as Record<string, unknown>,
-                                  pipelineTechniqueFamily
+                                  effectiveTechniqueFamily
                                 ),
                                 method: "reference_peak",
                                 fitting_step_id: nextId,

@@ -32,6 +32,45 @@ function hasPlottableXy(it: { x?: unknown[]; y?: unknown[] } | null | undefined)
   return Array.isArray(it?.x) && it!.x!.length > 0;
 }
 
+/**
+ * Parse View tokens like `fitting` or `fitting__3`.
+ * Must split on the last `__<digits>` — a greedy `[A-Za-z0-9_]+` regex would swallow
+ * `fitting__3` as the name and skip the fit/baseline special plot paths.
+ */
+export function parseAfterPlotToken(t: string | null): { name: string | null; stepNum: number | null } {
+  if (!t) return { name: null, stepNum: null };
+  const s = String(t);
+  const sep = s.lastIndexOf("__");
+  if (sep > 0) {
+    const numPart = s.slice(sep + 2);
+    if (/^\d+$/.test(numPart)) {
+      return { name: s.slice(0, sep) || null, stepNum: Number(numPart) };
+    }
+  }
+  return { name: s || null, stepNum: null };
+}
+
+function resolveEnabledStepIndex(
+  steps: EditorStep[],
+  name: string,
+  stepNum: number | null,
+  opts?: { preferLast?: boolean }
+): number {
+  if (typeof stepNum === "number" && stepNum > 0) {
+    const cand = stepNum - 1;
+    if (cand >= 0 && cand < steps.length && steps[cand]?.enabled !== false && steps[cand]?.name === name) {
+      return cand;
+    }
+  }
+  if (opts?.preferLast) {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      if (steps[i]?.enabled !== false && steps[i]?.name === name) return i;
+    }
+    return -1;
+  }
+  return steps.findIndex((s) => s.enabled !== false && s.name === name);
+}
+
 export type FitStackFigure = {
   kind: "fit_stack";
   figures: Array<{ data: Record<string, unknown>[]; layout: Record<string, unknown>; spectrum_id?: string }>;
@@ -114,21 +153,18 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
     }
 
     const afterToken = plotView.startsWith("after:") ? plotView.slice("after:".length) : null;
-    const parseAfterToken = (t: string | null): { name: string | null; stepNum: number | null } => {
-      if (!t) return { name: null, stepNum: null };
-      const m = String(t).match(/^([A-Za-z0-9_]+)(?:__(\d+))?$/);
-      if (!m) return { name: String(t), stepNum: null };
-      return { name: m[1] || null, stepNum: m[2] ? Number(m[2]) : null };
-    };
-    const after = parseAfterToken(afterToken);
+    const after = parseAfterPlotToken(afterToken);
     const afterStep = afterToken; // keep full token for intermediates lookup and request
     // Raw (subset) = true source spectra (no QC, no XY).
     // After a QC step = apply QC through that pipeline step only, then plot remaining raw XY.
     // Final with only QC + metric steps: apply all QC, then plot remaining raw XY.
     const wantsTrueRaw = plotView === "raw";
     const enabledNonQc = steps.filter((s) => s.enabled !== false && !QC_STEP_NAMES.has(s.name));
+    const lastEnabledNonQc = [...enabledNonQc].reverse()[0] ?? null;
+    const finalEndsWithFitting = plotView === "final" && lastEnabledNonQc?.name === "fitting";
     const finalIsQcCohortOnly =
       plotView === "final" &&
+      !finalEndsWithFitting &&
       (enabledNonQc.length === 0 || enabledNonQc.every((s) => METRIC_STEP_NAMES.has(s.name)));
     const wantsQcRaw =
       finalIsQcCohortOnly || (after.name != null && QC_STEP_NAMES.has(after.name));
@@ -222,11 +258,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
 
     if (after.name === "baseline") {
       setExplorePlotStatus("Baseline preview: running pipeline…");
-      let baselineIdx =
-        typeof after.stepNum === "number" && after.stepNum > 0 ? Math.min(steps.length - 1, after.stepNum - 1) : -1;
-      if (!(baselineIdx >= 0 && steps[baselineIdx]?.enabled !== false && steps[baselineIdx]?.name === "baseline")) {
-        baselineIdx = steps.findIndex((s) => s.enabled !== false && s.name === "baseline");
-      }
+      const baselineIdx = resolveEnabledStepIndex(steps, "baseline", after.stepNum);
       const baselineParams = baselineIdx >= 0 ? (steps[baselineIdx]?.params ?? {}) : {};
 
       let prevEnabledIdx = -1;
@@ -245,6 +277,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       const slice = steps.slice(0, prevEnabledIdx >= 0 ? prevEnabledIdx + 1 : 0);
       const pipelineToInput: Pipeline = {
         steps: editorStepsToApiSteps(slice).filter((s) => !QC_STEP_NAMES.has(s.name)),
+        technique_family: techniqueFamily,
       };
 
       const pipelineToBaselineCurve: Pipeline = {
@@ -258,6 +291,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
             input_from: "previous" as const,
           },
         ],
+        technique_family: techniqueFamily,
       };
 
 
@@ -298,13 +332,14 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       return;
     }
 
-    if (after.name === "fitting") {
+    if (after.name === "fitting" || finalEndsWithFitting) {
       setExplorePlotStatus("Fitting: computing pipeline input…");
-      let fittingIdx =
-        typeof after.stepNum === "number" && after.stepNum > 0 ? Math.min(steps.length - 1, after.stepNum - 1) : -1;
-      if (!(fittingIdx >= 0 && steps[fittingIdx]?.enabled !== false && steps[fittingIdx]?.name === "fitting")) {
-        fittingIdx = steps.findIndex((s) => s.enabled !== false && s.name === "fitting");
-      }
+      const fittingIdx = resolveEnabledStepIndex(
+        steps,
+        "fitting",
+        finalEndsWithFitting ? null : after.stepNum,
+        { preferLast: finalEndsWithFitting }
+      );
       const fittingStep = fittingIdx >= 0 ? steps[fittingIdx] : null;
       if (!fittingStep) {
         throw new Error("No enabled fitting step in pipeline");
@@ -385,6 +420,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       const slice = steps.slice(0, prevEnabledIdx >= 0 ? prevEnabledIdx + 1 : 0);
       const pipelineToInput: Pipeline = {
         steps: editorStepsToApiSteps(slice).filter((s) => !QC_STEP_NAMES.has(s.name)),
+        technique_family: techniqueFamily,
       };
 
       const rawIn = await runPipeline(

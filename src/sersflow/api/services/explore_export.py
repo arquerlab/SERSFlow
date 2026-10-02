@@ -57,7 +57,77 @@ def iter_matrix_csv_bytes(npz_path: str | Path) -> Iterator[bytes]:
         yield _csv_bytes([sid, *np.asarray(row).tolist()])
 
 
-def iter_pca_scores_csv_bytes(result: dict[str, Any]) -> Iterator[bytes]:
+def _parse_float_cell(value: Any, *, label: str) -> float:
+    if value is None:
+        return float("nan")
+    text = str(value).strip()
+    if not text:
+        return float("nan")
+    try:
+        return float(text)
+    except ValueError as e:
+        raise ValueError(f"Invalid numeric value for {label}: {text!r}") from e
+
+
+def parse_matrix_csv(text: str | bytes) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Parse exported matrix CSV into (Y, x, spectrum_ids).
+
+    Expected format matches ``iter_matrix_csv_bytes``:
+    header ``spectrum_id,<wavenumber>,...`` then one row per spectrum.
+    """
+    if isinstance(text, bytes):
+        raw = text.decode("utf-8-sig")
+    else:
+        raw = text.lstrip("\ufeff")
+    reader = csv.reader(io.StringIO(raw))
+    try:
+        header = next(reader)
+    except StopIteration as e:
+        raise ValueError("Matrix CSV is empty") from e
+    if not header or str(header[0]).strip().lower() not in {"spectrum_id", "spectrumid"}:
+        raise ValueError("Matrix CSV header must start with spectrum_id")
+    if len(header) < 2:
+        raise ValueError("Matrix CSV must include at least one wavenumber column")
+    x = np.asarray(
+        [_parse_float_cell(v, label=f"header column {i + 1}") for i, v in enumerate(header[1:])],
+        dtype=np.float64,
+    )
+    if x.size < 1:
+        raise ValueError("Matrix CSV must include at least one wavenumber column")
+    if not np.all(np.isfinite(x)):
+        raise ValueError("Matrix CSV wavenumber header contains non-finite values")
+
+    sids: list[str] = []
+    rows: list[np.ndarray] = []
+    for row_idx, row in enumerate(reader, start=2):
+        if not row or all(not str(c).strip() for c in row):
+            continue
+        if len(row) != len(header):
+            raise ValueError(
+                f"Matrix CSV row {row_idx} has {len(row)} columns, expected {len(header)}"
+            )
+        sid = str(row[0]).strip()
+        if not sid:
+            raise ValueError(f"Matrix CSV row {row_idx} is missing spectrum_id")
+        vals = np.asarray(
+            [_parse_float_cell(v, label=f"row {row_idx} col {i + 2}") for i, v in enumerate(row[1:])],
+            dtype=np.float32,
+        )
+        sids.append(sid)
+        rows.append(vals)
+
+    if not rows:
+        raise ValueError("Matrix CSV has no spectrum rows")
+    y = np.stack(rows, axis=0)
+    return y, x, sids
+
+
+def iter_pca_scores_csv_bytes(
+    result: dict[str, Any],
+    *,
+    meta_columns: list[str] | None = None,
+    meta_by_spectrum_id: dict[str, dict[str, Any]] | None = None,
+) -> Iterator[bytes]:
     scores = np.asarray(result.get("scores", []), dtype=np.float64)
     if scores.ndim != 2:
         raise ValueError("PCA scores must be 2-dimensional")
@@ -66,9 +136,13 @@ def iter_pca_scores_csv_bytes(result: dict[str, Any]) -> Iterator[bytes]:
         row_ids = [str(v) for v in spectrum_ids]
     else:
         row_ids = [str(i) for i in range(scores.shape[0])]
-    yield _csv_bytes(["spectrum_id", *[f"PC{i + 1}" for i in range(scores.shape[1])]])
+    extra_cols = [str(c) for c in (meta_columns or []) if str(c).strip()]
+    meta_map = meta_by_spectrum_id or {}
+    yield _csv_bytes(["spectrum_id", *[f"PC{i + 1}" for i in range(scores.shape[1])], *extra_cols])
     for sid, row in zip(row_ids, scores):
-        yield _csv_bytes([sid, *row.tolist()])
+        meta = meta_map.get(sid) or {}
+        extras = [meta.get(c) for c in extra_cols]
+        yield _csv_bytes([sid, *row.tolist(), *extras])
 
 
 def iter_pca_loadings_csv_bytes(result: dict[str, Any]) -> Iterator[bytes]:

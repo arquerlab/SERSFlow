@@ -18,7 +18,7 @@ from scipy.special import voigt_profile
 
 from sersflow.core.metrics.key_dedupe import dedupe_parallel
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
-from sersflow.core.preprocess.fit_diagnostics import GOF_METRIC_KEYS, diagnostics_as_feature_dict
+from sersflow.core.preprocess.fit_diagnostics import GOF_METRIC_KEYS, FitDiagnostics, diagnostics_as_feature_dict
 from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
 from sersflow.core.preprocess.fitting_specs import (
     AREA_EXPORT_COMPONENT_TYPES,
@@ -264,6 +264,141 @@ def fitting_feature_key_groups_for_pipeline(pipeline: Any) -> dict[int, list[str
         out[sns[i]] = final_keys[key_cursor : key_cursor + step_key_count]
         key_cursor += step_key_count
     return out
+
+
+def _finite_float(v: Any) -> float | None:
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def diagnostics_from_feature_gof(gof: dict[str, float | None]) -> FitDiagnostics | None:
+    """Rebuild FitDiagnostics from stored fit_*_gof_* feature values when present."""
+    rmse = _finite_float(gof.get("rmse"))
+    if rmse is None and gof.get("success") is None and gof.get("n_points") is None:
+        return None
+
+    def f(key: str, default: float = float("nan")) -> float:
+        v = _finite_float(gof.get(key))
+        return default if v is None else v
+
+    def f_opt(key: str) -> float | None:
+        return _finite_float(gof.get(key))
+
+    return FitDiagnostics(
+        rmse=f("rmse"),
+        r2=f("r2"),
+        r2_adj=f("r2_adj"),
+        ssr=f("ssr", float("nan")),
+        aic=f("aic"),
+        bic=f("bic"),
+        aicc=f("aicc"),
+        chi2=f("chi2"),
+        redchi=f("redchi"),
+        resid_mad=f("resid_mad"),
+        max_abs_resid=f("max_abs_resid"),
+        success=f("success", 0.0),
+        n_points=f("n_points", 0.0),
+        n_vary=f("n_vary", 0.0),
+        nfev=f_opt("nfev"),
+        median_rel_stderr=f_opt("median_rel_stderr"),
+    )
+
+
+def p_opt_and_gof_from_features(
+    *,
+    pipeline: Any,
+    fitting_step_num: int,
+    features: dict[str, Any],
+) -> tuple[np.ndarray | None, FitDiagnostics | None, str | None]:
+    """
+    Extract optimized parameter vector and stored GoF for one fitting step_num.
+
+    Returns (p_opt, diagnostics, error). p_opt is None when any required param is missing.
+    """
+    steps = getattr(pipeline, "steps", None) or []
+    sns = assign_pipeline_step_nums(steps)
+    fit_indices = [i for i, s in enumerate(steps) if getattr(s, "enabled", True) and s.name == "fitting"]
+    multi = len(fit_indices) > 1
+    raw, nums = _raw_fitting_keys_and_nums(pipeline)
+    final_keys = dedupe_parallel(raw, nums)
+
+    key_cursor = 0
+    target_i: int | None = None
+    step_final_keys: list[str] = []
+    step_key_groups: list[list[str]] = []
+    gof_final_keys: list[str] = []
+    for i in fit_indices:
+        step = steps[i]
+        params = step.params or {}
+        comps = params.get("components")
+        region = params.get("xps_region")
+        xps_region = str(region).strip() if region is not None and str(region).strip() else None
+        groups: list[list[str]] = []
+        if isinstance(comps, list):
+            for row in comps:
+                if not isinstance(row, dict):
+                    continue
+                ctype = str(row.get("component_type", "")).strip()
+                cid = str(row.get("component_id") or "").strip() or "comp"
+                try:
+                    param_keys = _param_keys_for_component(row)
+                except ValueError:
+                    continue
+                groups.append(
+                    _feature_keys_for_component(i, multi, cid, ctype, param_keys, xps_region=xps_region)
+                )
+        gof_raw = _gof_feature_keys(i, multi, xps_region=xps_region)
+        n_step = sum(len(g) for g in groups) + len(gof_raw)
+        finals = final_keys[key_cursor : key_cursor + n_step]
+        key_cursor += n_step
+        if int(sns[i]) != int(fitting_step_num):
+            continue
+        target_i = i
+        step_final_keys = finals
+        step_key_groups = groups
+        group_cursor = 0
+        for g in groups:
+            group_cursor += len(g)
+        gof_final_keys = finals[group_cursor : group_cursor + len(gof_raw)]
+        break
+
+    if target_i is None:
+        return None, None, f"No enabled fitting step with step_num={fitting_step_num}"
+
+    step = steps[target_i]
+    params = step.params or {}
+    comps = params.get("components")
+    if not isinstance(comps, list) or not comps:
+        return None, None, "fitting step has no components"
+
+    p_vals: list[float] = []
+    group_cursor = 0
+    comp_rows = [row for row in comps if isinstance(row, dict)]
+    for row, group in zip(comp_rows, step_key_groups):
+        try:
+            param_keys = _param_keys_for_component(row)
+        except ValueError as e:
+            return None, None, str(e)
+        final_group = step_final_keys[group_cursor : group_cursor + len(group)]
+        group_cursor += len(group)
+        param_finals = final_group[: len(param_keys)]
+        for pk, fk in zip(param_keys, param_finals):
+            v = _finite_float(features.get(fk))
+            if v is None:
+                return None, None, f"missing stored parameter {fk} ({pk})"
+            p_vals.append(v)
+
+    gof_map: dict[str, float | None] = {}
+    for fk, metric in zip(gof_final_keys, GOF_METRIC_KEYS):
+        gof_map[metric] = _finite_float(features.get(fk))
+    # SSR is not exported as a feature column; leave nan when rebuilding.
+    diag = diagnostics_from_feature_gof(gof_map)
+    return np.asarray(p_vals, dtype=float), diag, None
 
 
 def collect_fitting_features_for_pipeline(

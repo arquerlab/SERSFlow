@@ -183,7 +183,7 @@ The Python step registry currently covers:
 - `cosmic_ray_removal`: cosmic-ray detection and replacement.
 - `baseline`: baseline-corrected output.
 - `baseline_curve`: baseline-only output for routing/visualization.
-- `fitting`: model-based peak/background fitting (pipeline output is always the fitted curve). Analysis runs also export step-level GoF columns (`fit_*_gof_*`: RMSE, R², AIC/BIC, …). Fit+residual plots and curve zips are computed on demand (`POST /analysis/runs/{id}/fitting-preview`, fit-curve jobs); residual curves are not stored on the run.
+- `fitting`: model-based peak/background fitting (pipeline output is always the fitted curve). Analysis runs also export step-level GoF columns (`fit_*_gof_*`: RMSE, R², AIC/BIC, …). Fit+residual plots and curve zips are computed on demand from **stored fit parameters** + pre-fit XY (`POST /analysis/runs/{id}/fitting-preview`, fit-curve jobs); they do **not** re-run the optimizer. Residual curves are not stored on the run.
 - `spectral_intensities`: no-op transform that declares intensity probes for feature extraction.
 - `spectral_integrations`: no-op transform that declares integration windows for feature extraction.
 - `feature_operations`: no-op transform that declares formulas over previously extracted features.

@@ -29,6 +29,10 @@ function applyStacking(data: any[], stackSep: number) {
   });
 }
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
 function styleGhostTrace(tr: any) {
   const line = tr.line && typeof tr.line === "object" ? tr.line : {};
   return {
@@ -40,8 +44,24 @@ function styleGhostTrace(tr: any) {
   };
 }
 
+function constrainPlotDom(el: HTMLDivElement) {
+  el.style.width = "100%";
+  el.style.maxWidth = "100%";
+  const svg = el.querySelector(".svg-container") as HTMLElement | null;
+  if (svg) {
+    svg.style.width = "100%";
+    svg.style.maxWidth = "100%";
+  }
+  const plotRoot = el.querySelector(".js-plotly-plot") as HTMLElement | null;
+  if (plotRoot) {
+    plotRoot.style.width = "100%";
+    plotRoot.style.maxWidth = "100%";
+  }
+}
+
 export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
   ({ figure, previousFigure, plotStyle, ghostOverlayEnabled, className, onPlotClick, onPlotHover }, ref) => {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
   const divRef = useRef<HTMLDivElement | null>(null);
   useImperativeHandle(ref, () => divRef.current as HTMLDivElement);
 
@@ -64,14 +84,78 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
       if (!name && (tr as any).showlegend === undefined) return { ...tr, showlegend: false };
       return tr;
     });
-    // Keep the current spectra legend convention if the author set a bottom-horizontal legend.
+    // Prefer author legend placement. Bottom-horizontal (y < 0) uses the spectra
+    // convention; top-of-plot legends (e.g. older fit figures) must not be remapped
+    // to the default right-side legend, which overlaps titles.
     const legend = (combined.layout as any)?.legend;
-    const wantBottomLegend = legend && legend.orientation === "h" && typeof legend.y === "number" && legend.y < 0;
+    const wantBottomLegend =
+      legend && legend.orientation === "h" && typeof legend.y === "number" && legend.y < 0;
+    const hasAuthorLegend = isPlainObject(legend);
+    const hasTitle =
+      (typeof (combined.layout as any)?.title === "string" && !!(combined.layout as any).title) ||
+      (isPlainObject((combined.layout as any)?.title) &&
+        typeof ((combined.layout as any).title as any).text === "string" &&
+        !!((combined.layout as any).title as any).text);
+    const hasSubplots =
+      isPlainObject((combined.layout as any)?.yaxis2) || isPlainObject((combined.layout as any)?.yaxis3);
     let layout = publicationLayout(combined.layout, {
-      showTitle: false,
+      // Fit/residual figures carry spectrum id + GoF in the title — keep it.
+      showTitle: hasTitle && hasSubplots,
       showLegend: (combined.layout as any)?.showlegend ?? true,
       legendBottomHorizontal: !!wantBottomLegend,
+      margin: hasSubplots
+        ? {
+            l: Number((combined.layout as any)?.margin?.l) || 60,
+            r: Number((combined.layout as any)?.margin?.r) || 20,
+            t: Number((combined.layout as any)?.margin?.t) || 48,
+            b: Number((combined.layout as any)?.margin?.b) || 80,
+          }
+        : undefined,
     });
+    if (hasAuthorLegend && !wantBottomLegend) {
+      const src = legend as Record<string, unknown>;
+      const cur = isPlainObject((layout as any).legend) ? ((layout as any).legend as Record<string, unknown>) : {};
+      (layout as any).legend = { ...cur, ...src };
+    }
+    // publicationLayout only keeps string titles; restore object titles (HTML GoF line).
+    if (hasSubplots && isPlainObject((combined.layout as any).title)) {
+      const src = (combined.layout as any).title as Record<string, unknown>;
+      const cur = isPlainObject((layout as any).title) ? ((layout as any).title as Record<string, unknown>) : {};
+      (layout as any).title = { ...cur, ...src };
+    }
+    // Ensure secondary axes keep domain splits after theme merge.
+    if (hasSubplots && isPlainObject((combined.layout as any).yaxis2)) {
+      const src = (combined.layout as any).yaxis2 as Record<string, unknown>;
+      const cur = isPlainObject((layout as any).yaxis2) ? ((layout as any).yaxis2 as Record<string, unknown>) : {};
+      (layout as any).yaxis2 = {
+        ...cur,
+        ...src,
+        domain: src.domain ?? cur.domain,
+        title: src.title ?? cur.title,
+        zeroline: src.zeroline ?? true,
+        showgrid: false,
+        showline: true,
+        linewidth: 2,
+        linecolor: "black",
+        automargin: true,
+      };
+    }
+    if (hasSubplots && isPlainObject((combined.layout as any).yaxis)) {
+      const src = (combined.layout as any).yaxis as Record<string, unknown>;
+      const cur = isPlainObject((layout as any).yaxis) ? ((layout as any).yaxis as Record<string, unknown>) : {};
+      (layout as any).yaxis = { ...cur, ...src, domain: src.domain ?? cur.domain };
+    }
+    if (hasSubplots && isPlainObject((combined.layout as any).xaxis)) {
+      const src = (combined.layout as any).xaxis as Record<string, unknown>;
+      const cur = isPlainObject((layout as any).xaxis) ? ((layout as any).xaxis as Record<string, unknown>) : {};
+      (layout as any).xaxis = { ...cur, ...src, domain: src.domain ?? cur.domain, anchor: src.anchor ?? cur.anchor };
+    }
+    if (hasSubplots && typeof (combined.layout as any).height === "number") {
+      (layout as any).height = (combined.layout as any).height;
+    }
+    // Always fill the host; drop fixed widths so plots cannot blow past the Analyze right pane.
+    (layout as any).autosize = true;
+    if ((layout as any).width !== undefined) delete (layout as any).width;
     layout = coerceDenseHeatmapAxes(layout, { maxTickLabels: 40 });
     return { data, layout };
   }, [combined]);
@@ -83,23 +167,43 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
       Plotly.purge(el);
       return;
     }
-    Plotly.react(el, themed.data, themed.layout, {
+    const hasSubplots =
+      isPlainObject((themed.layout as any)?.yaxis2) ||
+      isPlainObject((themed.layout as any)?.yaxis3) ||
+      Array.isArray((themed.layout as any)?.grid?.rows);
+    const opts = {
       responsive: true,
       scrollZoom: false,
-    });
+    } as const;
+    // Plotly.react often fails to introduce secondary-axis domains when switching from a
+    // single-panel figure; purge + newPlot is reliable for fit/residual subplots.
+    if (hasSubplots) {
+      Plotly.purge(el);
+      Plotly.newPlot(el, themed.data, themed.layout, opts);
+    } else {
+      Plotly.react(el, themed.data, themed.layout, opts);
+    }
+    constrainPlotDom(el);
+    try {
+      Plotly.Plots.resize(el);
+    } catch {
+      // ignore
+    }
   }, [themed]);
 
   useEffect(() => {
     const el = divRef.current;
-    if (!el) return;
+    const host = wrapRef.current ?? el;
+    if (!el || !host) return;
     const ro = new ResizeObserver(() => {
       try {
+        constrainPlotDom(el);
         Plotly.Plots.resize(el);
       } catch {
         // ignore
       }
     });
-    ro.observe(el);
+    ro.observe(host);
     return () => ro.disconnect();
   }, [themed]);
 
@@ -121,7 +225,11 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
     };
   }, [onPlotHover]);
 
-  return <div ref={divRef} className={className} />;
+  const wrapClass = [className ? `${className}-wrap` : null, "plot-host-wrap"].filter(Boolean).join(" ");
+  return (
+    <div ref={wrapRef} className={wrapClass} style={{ width: "100%", maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
+      <div ref={divRef} className={className} style={{ width: "100%", maxWidth: "100%", minHeight: "inherit" }} />
+    </div>
+  );
 }
 );
-

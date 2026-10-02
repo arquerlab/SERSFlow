@@ -58,6 +58,30 @@ def test_fit_component_curves_sum_to_total() -> None:
     assert np.allclose(s, res.y_hat, rtol=1e-5, atol=1e-4)
 
 
+def test_evaluate_fit_curves_matches_fit_result() -> None:
+    from sersflow.core.preprocess.fitting import evaluate_fit_curves
+
+    rng = np.random.default_rng(2)
+    x = np.linspace(400.0, 700.0, 180)
+    y = 75.0 * np.exp(-((x - 530.0) ** 2) / (11.0**2 / 4.0 / np.log(2.0)))
+    y = y + rng.normal(0.0, 0.4, size=x.shape)
+    problem = FitProblem(
+        x=x,
+        y=y,
+        components=[FitComponent(component_type="gaussian", component_id="a")],
+        p0=[530.0, 70.0, 12.0],
+        bounds_lower=[400.0, 0.0, 1e-6],
+        bounds_upper=[700.0, None, 80.0],
+    )
+    fitted = fit_curve(problem)
+    evaluated = evaluate_fit_curves(problem, fitted.p_opt)
+    assert np.allclose(evaluated.y_hat, fitted.y_hat, rtol=1e-8, atol=1e-8)
+    assert len(evaluated.component_y_hat) == 1
+    assert np.allclose(evaluated.component_y_hat[0], fitted.component_y_hat[0], rtol=1e-8, atol=1e-8)
+    resid = problem.y - evaluated.y_hat
+    assert np.allclose(resid, problem.y - fitted.y_hat, rtol=1e-8, atol=1e-8)
+
+
 def test_interp_y_at_x_unsorted_axis() -> None:
     x = np.array([3.0, 1.0, 2.0])
     y = np.array([30.0, 10.0, 20.0])

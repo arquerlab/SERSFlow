@@ -400,6 +400,30 @@ def count_spectrum_rows(run_id: str) -> int:
     return int(row["c"]) if row else 0
 
 
+def get_spectrum_features_for_ids(*, run_id: str, spectrum_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Return features_json dicts for the given spectrum ids (missing ids omitted)."""
+    ensure_schema()
+    if not spectrum_ids:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    # SQLite variable limit — chunk
+    chunk = 400
+    with connect() as con:
+        for i in range(0, len(spectrum_ids), chunk):
+            part = spectrum_ids[i : i + chunk]
+            placeholders = ",".join("?" for _ in part)
+            rows = con.execute(
+                f"""
+                SELECT spectrum_id, features_json FROM analysis_spectrum_rows
+                WHERE run_id = ? AND spectrum_id IN ({placeholders})
+                """,
+                (run_id, *part),
+            ).fetchall()
+            for r in rows:
+                out[str(r["spectrum_id"])] = json.loads(r["features_json"])
+    return out
+
+
 def prune_unpinned_runs(*, dataset_id: str, max_keep: int | None = None) -> int:
     """
     Keep at most max_keep unpinned runs for dataset_id (newest first). Returns number deleted.

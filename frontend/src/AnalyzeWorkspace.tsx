@@ -45,6 +45,7 @@ import {
   getFitCurveJob,
   getFitCurveJobDownloadUrl,
   getMatrixJobExportUrl,
+  importMatrixJobCsv,
   getObservationUrl,
   getSpectrumAxesPage,
   getAnalysisRun,
@@ -547,6 +548,7 @@ export default function AnalyzeWorkspace() {
   const [selectedMatrixJobId, setSelectedMatrixJobId] = useState<string>(
     () => String((analyzeUiLoaded as any).selectedMatrixJobId ?? "")
   );
+  const matrixImportInputRef = useRef<HTMLInputElement | null>(null);
   const [fpcaN, setFpcaN] = useState<number | "">(() => {
     const n = analyzeUiLoaded.fpcaN;
     if (n === "" || n === undefined) return "";
@@ -612,7 +614,7 @@ export default function AnalyzeWorkspace() {
     typeof analyzeUiLoaded.scoresYpc === "number" && Number.isFinite(analyzeUiLoaded.scoresYpc) ? analyzeUiLoaded.scoresYpc : 3
   );
   const [scoresColorMeta, setScoresColorMeta] = useState<string>(() => String((analyzeUiLoaded as any).scoresColorMeta ?? ""));
-  const [scoresMetaById, setScoresMetaById] = useState<Record<string, Record<string, number | null>>>({});
+  const [scoresMetaById, setScoresMetaById] = useState<Record<string, Record<string, string | number | null>>>({});
   const [pcVsMetaPcs, setPcVsMetaPcs] = useState<number[]>(
     () => (Array.isArray((analyzeUiLoaded as any).pcVsMetaPcs) ? ((analyzeUiLoaded as any).pcVsMetaPcs as any[]) : [2, 3])
       .map((x: any) => Number(x))
@@ -629,9 +631,19 @@ export default function AnalyzeWorkspace() {
   const [loadingsTopN, setLoadingsTopN] = useState(() =>
     typeof analyzeUiLoaded.loadingsTopN === "number" && Number.isFinite(analyzeUiLoaded.loadingsTopN) ? analyzeUiLoaded.loadingsTopN : 20
   );
-  const [selectedPcaPlots, setSelectedPcaPlots] = useState<string[]>(() =>
-    Array.isArray(analyzeUiLoaded.selectedPcaPlots) ? analyzeUiLoaded.selectedPcaPlots : ["scores_scatter", "scree", "cumulative_evr"]
-  );
+  const [selectedPcaPlots, setSelectedPcaPlots] = useState<string[]>(() => {
+    const loaded = Array.isArray(analyzeUiLoaded.selectedPcaPlots)
+      ? [...analyzeUiLoaded.selectedPcaPlots]
+      : ["scores_scatter", "scores_pc_vs_meta", "scree", "cumulative_evr"];
+    // Back-compat: older prefs auto-rendered PC vs metadata whenever X was set.
+    if (
+      String((analyzeUiLoaded as any).pcVsMetaX ?? "").trim() &&
+      !loaded.includes("scores_pc_vs_meta")
+    ) {
+      loaded.push("scores_pc_vs_meta");
+    }
+    return loaded;
+  });
   const [selectedClusterPlots, setSelectedClusterPlots] = useState<string[]>(() =>
     Array.isArray(analyzeUiLoaded.selectedClusterPlots) ? analyzeUiLoaded.selectedClusterPlots : ["cluster_on_scores_scatter", "cluster_sizes"]
   );
@@ -639,6 +651,7 @@ export default function AnalyzeWorkspace() {
   const [corrResult, setCorrResult] = useState<Record<string, unknown> | null>(null);
   const [vifResult, setVifResult] = useState<Record<string, unknown> | null>(null);
   const [pcaResult, setPcaResult] = useState<Record<string, unknown> | null>(null);
+  const [pcaExploreId, setPcaExploreId] = useState<string | null>(null);
   const [clusterResult, setClusterResult] = useState<Record<string, unknown> | null>(null);
   const [fpcaDiscResult, setFpcaDiscResult] = useState<Record<string, unknown> | null>(null);
   const [fpcaDiscExploreId, setFpcaDiscExploreId] = useState<string | null>(null);
@@ -784,11 +797,19 @@ export default function AnalyzeWorkspace() {
     return (runsQ.data ?? []).find((r) => r.run_id === runId);
   }, [runsQ.data, runId]);
 
-  // Load numeric metadata values for PCA score scatter axis/color overrides.
+  const schemaQ = useQuery({
+    queryKey: ["observationSchema", runId],
+    queryFn: () => fetchObservationSchema(runId),
+    enabled: !!runId && selectedRun?.status === "completed",
+  });
+
+  // Load axis/metadata for PCA coloring, PC-vs-meta plots, and scores CSV enrichment.
   useEffect(() => {
     if (!runId || selectedRun?.status !== "completed") return;
-    const cols = [scoresColorMeta, pcVsMetaX].map((s) => String(s || "").trim()).filter(Boolean);
-    const uniq = Array.from(new Set(cols));
+    const selected = [scoresColorMeta, pcVsMetaX].map((s) => String(s || "").trim()).filter(Boolean);
+    const schemaCols = [...(schemaQ.data?.axis_keys ?? []), ...(schemaQ.data?.meta_keys ?? [])];
+    // Prefer full axis+meta when available so scores CSV downloads stay interpretable.
+    const uniq = Array.from(new Set(schemaCols.length ? schemaCols : selected));
     if (!uniq.length) {
       setScoresMetaById({});
       return;
@@ -797,14 +818,17 @@ export default function AnalyzeWorkspace() {
     fetchObservationColumns(runId, uniq, 250_000)
       .then(({ rows }) => {
         if (cancelled) return;
-        const byId: Record<string, Record<string, number | null>> = {};
+        const byId: Record<string, Record<string, string | number | null>> = {};
         for (const r of rows) {
           const sid = String((r as any).spectrum_id ?? "");
           if (!sid) continue;
           const cur = byId[sid] ?? {};
           for (const c of uniq) {
-            const v = cellToNumber((r as any)[c]);
-            cur[c] = v;
+            const raw = (r as any)[c];
+            const asNum = cellToNumber(raw);
+            if (asNum != null) cur[c] = asNum;
+            else if (raw == null || raw === "") cur[c] = null;
+            else cur[c] = String(raw);
           }
           byId[sid] = cur;
         }
@@ -816,13 +840,7 @@ export default function AnalyzeWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [runId, selectedRun?.status, scoresColorMeta, pcVsMetaX]);
-
-  const schemaQ = useQuery({
-    queryKey: ["observationSchema", runId],
-    queryFn: () => fetchObservationSchema(runId),
-    enabled: !!runId && selectedRun?.status === "completed",
-  });
+  }, [runId, selectedRun?.status, scoresColorMeta, pcVsMetaX, schemaQ.data?.axis_keys, schemaQ.data?.meta_keys]);
 
   const fittingStepsQ = useQuery({
     queryKey: ["fittingSteps", runId],
@@ -1490,16 +1508,34 @@ export default function AnalyzeWorkspace() {
       source: PlotCardModel["source"],
       zipFolder: string,
       built: { figure: PlotlyFigure; csvRows: any[]; title: string; defaultName: string } | null,
-      titlePrefix: string
+      titlePrefix: string,
+      opts?: { enrichMeta?: boolean }
     ) {
       if (!built) return;
       const id = `${source}_${built.defaultName}`;
+      let csvRows = built.csvRows;
+      if (opts?.enrichMeta && scoresMetaById && Object.keys(scoresMetaById).length) {
+        const metaKeys = Array.from(
+          new Set(Object.values(scoresMetaById).flatMap((m) => Object.keys(m)))
+        ).sort();
+        if (metaKeys.length) {
+          csvRows = built.csvRows.map((row) => {
+            const sid = String((row as any)?.spectrum_id ?? "");
+            const meta = scoresMetaById[sid] ?? {};
+            const out: Record<string, unknown> = { ...(row as any) };
+            for (const k of metaKeys) {
+              if (!(k in out)) out[k] = meta[k] ?? null;
+            }
+            return out;
+          });
+        }
+      }
       cards.push({
         id,
         title: `${titlePrefix}: ${built.title}`,
         source,
         figure: built.figure,
-        csvRows: built.csvRows,
+        csvRows,
         defaultPngName: `${id}.png`,
         defaultCsvName: `${id}.csv`,
         zipFolder,
@@ -1524,7 +1560,11 @@ export default function AnalyzeWorkspace() {
       if (!ids?.length) return null;
       const c = String(col || "").trim();
       if (!c) return null;
-      return ids.map((sid) => scoresMetaById?.[sid]?.[c] ?? null);
+      return ids.map((sid) => {
+        const v = scoresMetaById?.[sid]?.[c];
+        if (typeof v === "number" && Number.isFinite(v)) return v;
+        return cellToNumber(v);
+      });
     }
 
     const colorBy = scoresColorMeta
@@ -1537,14 +1577,27 @@ export default function AnalyzeWorkspace() {
           "pca",
           "pca",
           buildScoresScatter(pca, { xPc: scoresXpc, yPc: scoresYpc, colorBy }),
-          "PCA"
+          "PCA",
+          { enrichMeta: true }
         );
-      if (pcVsMetaX && pcVsMetaPcs.length) {
+      if (wantP.has("scores_pc_vs_meta") && pcVsMetaX && pcVsMetaPcs.length) {
         const xMeta = { values: metaValuesFor(pca, pcVsMetaX) ?? [], label: pcVsMetaX };
-        pushBuilt("pca", "pca", buildScoresPcVsMetaSubplots(pca, { pcs: pcVsMetaPcs, xMeta, maxPcs: 12 }), "PCA");
+        pushBuilt(
+          "pca",
+          "pca",
+          buildScoresPcVsMetaSubplots(pca, { pcs: pcVsMetaPcs, xMeta, maxPcs: 12 }),
+          "PCA",
+          { enrichMeta: true }
+        );
       }
       if (wantP.has("scores_pairplot"))
-        pushBuilt("pca", "pca", buildScoresPairplot(pca, { pcs: pairplotPcs, maxPcs: 8, colorBy }), "PCA");
+        pushBuilt(
+          "pca",
+          "pca",
+          buildScoresPairplot(pca, { pcs: pairplotPcs, maxPcs: 8, colorBy }),
+          "PCA",
+          { enrichMeta: true }
+        );
       if (wantP.has("scree")) pushBuilt("pca", "pca", buildScree(pca), "PCA");
       if (wantP.has("cumulative_evr")) pushBuilt("pca", "pca", buildCumulativeEvr(pca), "PCA");
       if (wantP.has("loadings_topn")) {
@@ -1562,14 +1615,26 @@ export default function AnalyzeWorkspace() {
           "fpca_discrete",
           "fpca_discrete",
           buildScoresScatter(fpcaD, { xPc: scoresXpc, yPc: scoresYpc, colorBy }),
-          "FPCA discrete"
+          "FPCA discrete",
+          { enrichMeta: true }
         );
+      if (wantP.has("scores_pc_vs_meta") && pcVsMetaX && pcVsMetaPcs.length) {
+        const xMeta = { values: metaValuesFor(fpcaD, pcVsMetaX) ?? [], label: pcVsMetaX };
+        pushBuilt(
+          "fpca_discrete",
+          "fpca_discrete",
+          buildScoresPcVsMetaSubplots(fpcaD, { pcs: pcVsMetaPcs, xMeta, maxPcs: 12 }),
+          "FPCA discrete",
+          { enrichMeta: true }
+        );
+      }
       if (wantP.has("scores_pairplot"))
         pushBuilt(
           "fpca_discrete",
           "fpca_discrete",
           buildScoresPairplot(fpcaD, { pcs: pairplotPcs, maxPcs: 8, colorBy }),
-          "FPCA discrete"
+          "FPCA discrete",
+          { enrichMeta: true }
         );
       if (wantP.has("scree")) pushBuilt("fpca_discrete", "fpca_discrete", buildScree(fpcaD), "FPCA discrete");
       if (wantP.has("cumulative_evr")) pushBuilt("fpca_discrete", "fpca_discrete", buildCumulativeEvr(fpcaD), "FPCA discrete");
@@ -1591,10 +1656,27 @@ export default function AnalyzeWorkspace() {
           "fpca_fda",
           "fpca_fda",
           buildScoresScatter(fpcaF, { xPc: scoresXpc, yPc: scoresYpc, colorBy }),
-          "FPCA fda"
+          "FPCA fda",
+          { enrichMeta: true }
         );
+      if (wantP.has("scores_pc_vs_meta") && pcVsMetaX && pcVsMetaPcs.length) {
+        const xMeta = { values: metaValuesFor(fpcaF, pcVsMetaX) ?? [], label: pcVsMetaX };
+        pushBuilt(
+          "fpca_fda",
+          "fpca_fda",
+          buildScoresPcVsMetaSubplots(fpcaF, { pcs: pcVsMetaPcs, xMeta, maxPcs: 12 }),
+          "FPCA fda",
+          { enrichMeta: true }
+        );
+      }
       if (wantP.has("scores_pairplot"))
-        pushBuilt("fpca_fda", "fpca_fda", buildScoresPairplot(fpcaF, { pcs: pairplotPcs, maxPcs: 8, colorBy }), "FPCA fda");
+        pushBuilt(
+          "fpca_fda",
+          "fpca_fda",
+          buildScoresPairplot(fpcaF, { pcs: pairplotPcs, maxPcs: 8, colorBy }),
+          "FPCA fda",
+          { enrichMeta: true }
+        );
       if (wantP.has("scree")) pushBuilt("fpca_fda", "fpca_fda", buildScree(fpcaF), "FPCA fda");
       if (wantP.has("cumulative_evr")) pushBuilt("fpca_fda", "fpca_fda", buildCumulativeEvr(fpcaF), "FPCA fda");
       if (wantP.has("loadings_topn")) {
@@ -1612,7 +1694,13 @@ export default function AnalyzeWorkspace() {
     if (includeFeaturePca && cl) {
       if (wantC.has("cluster_sizes")) pushBuilt("cluster", "cluster", buildClusterSizesBar(cl), "k-means");
       if (wantC.has("cluster_on_scores_scatter") && pca) {
-        pushBuilt("cluster", "cluster", buildClusterOnScoresScatter(pca, cl, { xPc: scoresXpc, yPc: scoresYpc }), "k-means");
+        pushBuilt(
+          "cluster",
+          "cluster",
+          buildClusterOnScoresScatter(pca, cl, { xPc: scoresXpc, yPc: scoresYpc }),
+          "k-means",
+          { enrichMeta: true }
+        );
       }
     }
     if (includeSpectrumPca && specCl) {
@@ -1622,7 +1710,8 @@ export default function AnalyzeWorkspace() {
           "spectrum_cluster",
           "spectrum_cluster",
           buildClusterOnScoresScatter(fpcaD, specCl, { xPc: scoresXpc, yPc: scoresYpc }),
-          "Spectrum k-means"
+          "Spectrum k-means",
+          { enrichMeta: true }
         );
       }
     }
@@ -1641,16 +1730,20 @@ export default function AnalyzeWorkspace() {
     scoresYpc,
     pairplotPcs,
     loadingsTopN,
+    scoresColorMeta,
+    scoresMetaById,
+    pcVsMetaPcs,
+    pcVsMetaX,
   ]);
 
   function PlotCard({ card }: { card: PlotCardModel }) {
     return (
-      <div className="card" style={{ marginTop: "10px" }}>
-        <div className="row" style={{ justifyContent: "space-between", gap: "10px", alignItems: "center" }}>
-          <div className="hint" style={{ margin: 0 }}>
+      <div className="card" style={{ marginTop: "10px", minWidth: 0, maxWidth: "100%", overflow: "hidden" }}>
+        <div className="row" style={{ justifyContent: "space-between", gap: "10px", alignItems: "center", minWidth: 0, maxWidth: "100%" }}>
+          <div className="hint" style={{ margin: 0, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
             {card.title}
           </div>
-          <div className="row" style={{ gap: "6px", flexWrap: "wrap" }}>
+          <div className="row" style={{ gap: "6px", flexWrap: "wrap", flexShrink: 0 }}>
             <button
               type="button"
               className="mini"
@@ -1914,6 +2007,7 @@ export default function AnalyzeWorkspace() {
     const v = String(value || "").trim();
     if (!v) return "Final (all steps)";
     if (v === "__raw__") return "Raw spectra";
+    if (v === "__imported__") return "Imported CSV";
     return matrixStepOptions.find((o) => o.value === v)?.label ?? v;
   }
 
@@ -2511,6 +2605,7 @@ export default function AnalyzeWorkspace() {
                           spca_ridge_alpha: spcaRidge,
                         });
                         setPcaResult(resp.results as Record<string, unknown>);
+                        setPcaExploreId(resp.explore_id);
                       } catch (e) {
                         setLastError(String((e as Error).message));
                       } finally {
@@ -2598,6 +2693,31 @@ export default function AnalyzeWorkspace() {
                 <div className="hint" style={{ marginTop: "6px" }}>
                   StandardScaler is usually helpful for feature PCA when selected columns use different units or intensity scales.
                 </div>
+                {pcaExploreId ? (
+                  <div className="row" style={{ gap: "8px", flexWrap: "wrap", marginTop: "8px" }}>
+                    {(["scores", "loadings", "variance"] as const).map((kind) => (
+                      <button
+                        key={`pca-export-${kind}`}
+                        type="button"
+                        className="mini"
+                        title={
+                          kind === "scores"
+                            ? "Scores CSV includes relative_path, axis_*, and meta_* columns for interpretation"
+                            : undefined
+                        }
+                        onClick={() =>
+                          safeDownload(
+                            getExplorePcaExportUrl(pcaExploreId, kind),
+                            `pca_${kind}_${pcaExploreId}.csv`,
+                            (m) => setLastError(m)
+                          )
+                        }
+                      >
+                        Download {kind} CSV
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
 
                 <div className="subsection-title" style={{ marginTop: "10px" }}>
                   PC pairplots
@@ -2663,6 +2783,7 @@ export default function AnalyzeWorkspace() {
                   </div>
                   {[
                     ["scores_scatter", "Scores scatter"],
+                    ["scores_pc_vs_meta", "PC vs metadata"],
                     ["scores_pairplot", "Scores pairplot"],
                     ["scree", "Scree"],
                     ["cumulative_evr", "Cumulative EVR"],
@@ -2896,20 +3017,15 @@ export default function AnalyzeWorkspace() {
                       })}
                     </div>
                     {fitDiagError ? <div className="err">{fitDiagError}</div> : null}
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 12 }}>
-                      {fitDiagFigures.map((f) => (
-                        <div key={f.spectrum_id}>
-                          {f.badge ? <div className="hint">{f.badge}</div> : null}
-                          <PlotlyWrapper
-                            figure={{ data: f.data, layout: f.layout }}
-                            previousFigure={null}
-                            plotStyle={{ mode: "overlay", stackSep: 0 }}
-                            ghostOverlayEnabled={false}
-                            className="plot-host"
-                          />
-                        </div>
-                      ))}
-                    </div>
+                    {fitDiagBusy ? <div className="hint" style={{ marginTop: 8 }}>Fitting selected spectra…</div> : null}
+                    {!fitDiagBusy && fitDiagSelectedIds.length > 0 && fitDiagFigures.length === 0 && !fitDiagError ? (
+                      <div className="hint" style={{ marginTop: 8 }}>No figures yet — click Refresh.</div>
+                    ) : null}
+                    {!fitDiagBusy && fitDiagFigures.length > 0 ? (
+                      <div className="hint" style={{ marginTop: 8 }}>
+                        {fitDiagFigures.length} fit plot{fitDiagFigures.length === 1 ? "" : "s"} shown in the right panel.
+                      </div>
+                    ) : null}
                   </>
                 )}
               </>
@@ -3306,16 +3422,14 @@ export default function AnalyzeWorkspace() {
               <code>up_to_step</code> = <code>align_resample</code> (or a later step). Align alone is not enough if spectra
               end up with different surviving wavenumber ranges after crop—then grids can still differ in length.
             </p>
-            {emptyDataset || emptyPipeline || !selectedPipeline ? (
-              <div className="hint">Select dataset and pipeline.</div>
+            {emptyDataset ? (
+              <div className="hint">Select a dataset.</div>
             ) : (
               <>
                 <div className="section-title" style={{ marginTop: "10px" }}>
                   Spectrum matrices
                 </div>
-                {!datasetId ? (
-                  <div className="hint">Select a dataset to load matrices.</div>
-                ) : matrixJobsQ.isLoading ? (
+                {matrixJobsQ.isLoading ? (
                   <div className="hint">Loading matrices…</div>
                 ) : matrixJobsQ.isError ? (
                   <div className="err">
@@ -3399,7 +3513,7 @@ export default function AnalyzeWorkspace() {
                         {!(matrixJobsQ.data?.items ?? []).length ? (
                           <tr>
                             <td colSpan={8} className="hint" style={{ padding: "8px" }}>
-                              No matrices yet. Start a matrix job below.
+                              No matrices yet. Start a matrix job or import a CSV below.
                             </td>
                           </tr>
                         ) : null}
@@ -3408,23 +3522,30 @@ export default function AnalyzeWorkspace() {
                   </div>
                 )}
 
-                <label className="inline">
-                  up_to_step (optional)
-                  <select value={matrixUpTo} onChange={(e) => setMatrixUpTo(e.target.value)}>
-                    <option value="">Final (all steps)</option>
-                    <option value="__raw__">Raw spectra (no XY steps)</option>
-                    {matrixStepOptions.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                {emptyPipeline || !selectedPipeline ? (
+                  <div className="hint" style={{ marginTop: "8px" }}>
+                    Select a pipeline to start a new matrix job, or import a previously exported CSV.
+                  </div>
+                ) : (
+                  <label className="inline">
+                    up_to_step (optional)
+                    <select value={matrixUpTo} onChange={(e) => setMatrixUpTo(e.target.value)}>
+                      <option value="">Final (all steps)</option>
+                      <option value="__raw__">Raw spectra (no XY steps)</option>
+                      {matrixStepOptions.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <div className="row" style={{ marginTop: "8px" }}>
                   <button
                     type="button"
-                    disabled={!!exploreBusy}
+                    disabled={!!exploreBusy || emptyPipeline || !selectedPipeline}
                     onClick={async () => {
+                      if (!selectedPipeline) return;
                       setExploreBusy("matrix");
                       setLastError(null);
                       setFpcaDiscResult(null);
@@ -3470,6 +3591,42 @@ export default function AnalyzeWorkspace() {
                   >
                     Download matrix CSV
                   </button>
+                  <button
+                    type="button"
+                    className="mini"
+                    disabled={!datasetId || !!exploreBusy}
+                    onClick={() => matrixImportInputRef.current?.click()}
+                    title="Import a previously exported spectrum-matrix CSV"
+                  >
+                    {exploreBusy === "matrix_import" ? "Importing…" : "Import matrix CSV"}
+                  </button>
+                  <input
+                    ref={matrixImportInputRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    style={{ display: "none" }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file || !datasetId) return;
+                      setExploreBusy("matrix_import");
+                      setLastError(null);
+                      try {
+                        const resp = await importMatrixJobCsv({
+                          datasetId,
+                          file,
+                          analysisRunId: runId || null,
+                        });
+                        setMatrixJobId(resp.matrix_job_id);
+                        setSelectedMatrixJobId(resp.matrix_job_id);
+                        void matrixJobsQ.refetch();
+                      } catch (err) {
+                        setLastError(String((err as Error).message));
+                      } finally {
+                        setExploreBusy(null);
+                      }
+                    }}
+                  />
                 </div>
                 {effectiveMatrixId && matrixSelectedQ.data ? (
                   <div className="hint" style={{ marginTop: "10px" }}>
@@ -3672,6 +3829,11 @@ export default function AnalyzeWorkspace() {
                         key={`fpca-disc-${kind}`}
                         type="button"
                         className="mini"
+                        title={
+                          kind === "scores"
+                            ? "Scores CSV includes relative_path, axis_*, and meta_* columns for interpretation"
+                            : undefined
+                        }
                         onClick={() =>
                           safeDownload(
                             getExplorePcaExportUrl(fpcaDiscExploreId, kind),
@@ -3727,11 +3889,52 @@ export default function AnalyzeWorkspace() {
                     Pairplot PCs
                     <CommaSeparatedIntListInput value={pairplotPcs} onChange={setPairplotPcs} />
                   </label>
+                  <label className="inline" title="Optional: color the scores scatter/pairplot by a numeric metadata column.">
+                    Color by (metadata)
+                    <select value={scoresColorMeta} onChange={(e) => setScoresColorMeta(String(e.target.value || ""))}>
+                      <option value="">—</option>
+                      {selectableColumns.map((c) => (
+                        <option key={`spec-pca-cmeta-${c}`} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <label className="inline">
                     Loadings topN
                     <input type="number" min={1} max={200} value={loadingsTopN} onChange={(e) => setLoadingsTopN(Number(e.target.value))} />
                   </label>
                 </div>
+
+                <div className="subsection-title" style={{ marginTop: "10px" }}>
+                  Plot settings (PC vs metadata)
+                </div>
+                <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <label className="inline" title="Comma-separated list of PCs. Each PC will produce one plot: PC vs metadata.">
+                    PCs
+                    <CommaSeparatedIntListInput
+                      value={pcVsMetaPcs}
+                      onChange={setPcVsMetaPcs}
+                      placeholder="e.g. 1,2,3"
+                    />
+                  </label>
+                  <label className="inline" title="Metadata column used for X axis in PC vs metadata plots. Requires a completed analysis run.">
+                    Metadata (X axis)
+                    <select value={pcVsMetaX} onChange={(e) => setPcVsMetaX(String(e.target.value || ""))}>
+                      <option value="">—</option>
+                      {selectableColumns.map((c) => (
+                        <option key={`spec-pc-vs-meta-x-${c}`} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {!runId || selectedRun?.status !== "completed" ? (
+                  <div className="hint" style={{ marginTop: "6px" }}>
+                    Select a completed analysis run to enable metadata coloring and PC vs metadata plots.
+                  </div>
+                ) : null}
 
                 <div className="row" style={{ gap: "14px", flexWrap: "wrap", alignItems: "center", marginTop: "8px" }}>
                   <div className="hint" style={{ margin: 0 }}>
@@ -3739,6 +3942,7 @@ export default function AnalyzeWorkspace() {
                   </div>
                   {[
                     ["scores_scatter", "Scores scatter"],
+                    ["scores_pc_vs_meta", "PC vs metadata"],
                     ["scores_pairplot", "Scores pairplot"],
                     ["scree", "Scree"],
                     ["cumulative_evr", "Cumulative EVR"],
@@ -3840,6 +4044,34 @@ export default function AnalyzeWorkspace() {
             ghostOverlayEnabled={false}
             className="plot-host"
           />
+        ) : null}
+        {section === "meta_plot" && plotsSubTab === "fit" ? (
+          fitDiagFigures.length ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
+              {fitDiagFigures.map((f) => (
+                <div key={f.spectrum_id}>
+                  {f.badge ? <div className="hint">{f.badge}</div> : null}
+                  <div style={{ width: "100%", height: 520, minHeight: 520 }}>
+                    <PlotlyWrapper
+                      figure={{ data: f.data, layout: f.layout }}
+                      previousFigure={null}
+                      plotStyle={{ mode: "overlay", stackSep: 0 }}
+                      ghostOverlayEnabled={false}
+                      className="plot-host"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="hint">
+              {fitDiagBusy
+                ? "Fitting…"
+                : emptyRun || selectedRun?.status !== "completed"
+                  ? "Complete an analysis run to view fit diagnostics."
+                  : "Select up to 10 spectra on the left to plot fit + residuals here."}
+            </div>
+          )
         ) : null}
         {section === "correlation" && (corrFigure || vifFigure) ? (
           <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "center", marginTop: "8px" }}>

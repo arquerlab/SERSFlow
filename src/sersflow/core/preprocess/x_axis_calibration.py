@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 import numpy as np
@@ -14,14 +15,26 @@ from sersflow.core.metrics.fitting_features import (
 from sersflow.core.preprocess.fitting import FitResult, fit_curve, fit_problem_from_step_params
 from sersflow.core.spectrum import XY
 
+# Feature-export prefixes (s{N}_) when multiple fittings exist; calibration keys are step-local.
+_LEGACY_MULTI_FIT_POS_PREFIX = re.compile(r"^s\d+_(?=fit_)")
+
+
+def canonicalize_calibration_pos_key(pos_key: str) -> str:
+    """Strip optional ``s{N}_`` feature-export prefix; calibration keys are step-local."""
+    return _LEGACY_MULTI_FIT_POS_PREFIX.sub("", str(pos_key or "").strip())
+
 
 def fitting_pos_keys_for_step(
     step_params: dict[str, Any],
     *,
-    step_index: int,
-    multi_fitting: bool,
+    step_index: int = 0,
+    multi_fitting: bool = False,
 ) -> list[str]:
-    """Return ``*_pos`` feature keys a fitting step would export (same naming as feature export)."""
+    """Return ``*_pos`` feature keys for a fitting step.
+
+    For ``x_axis_calibration``, callers should use ``multi_fitting=False`` (step-local
+    names). ``step_index`` / ``multi_fitting`` remain for feature-export naming helpers.
+    """
     region = step_params.get("xps_region")
     xps_region = str(region).strip() if region is not None and str(region).strip() else None
     comps = step_params.get("components")
@@ -43,6 +56,11 @@ def fitting_pos_keys_for_step(
             if key.endswith("_pos"):
                 out.append(key)
     return out
+
+
+def calibration_pos_keys_for_step(step_params: dict[str, Any]) -> list[str]:
+    """Position keys offered/accepted by ``x_axis_calibration`` (never ``s{N}_``-prefixed)."""
+    return fitting_pos_keys_for_step(step_params, step_index=0, multi_fitting=False)
 
 
 def _pos_values_from_fit_result(
@@ -89,55 +107,32 @@ def measured_pos_from_fitting_xy(
     xy: XY,
     fit_params: dict[str, Any],
     *,
-    step_index: int,
-    multi_fitting: bool,
+    step_index: int = 0,
+    multi_fitting: bool = False,
     pos_key: str,
     technique_family: str | None = None,
 ) -> float:
     """
     Re-fit ``xy`` with ``fit_params`` and return the value for ``pos_key``.
 
+    Calibration always resolves step-local keys (``fit_..._pos``). Legacy feature-export
+    names with an ``s{N}_`` prefix are accepted and canonicalized.
+
+    ``step_index`` / ``multi_fitting`` are ignored for key naming (kept for call-site compat).
+
     Raises ValueError when the fit fails or ``pos_key`` is missing / non-finite.
     """
-    key = str(pos_key or "").strip()
+    del step_index, multi_fitting  # naming is always step-local for calibration
+    key = canonicalize_calibration_pos_key(pos_key)
     if not key:
         raise ValueError("pos_key must be provided for x_axis_calibration method='reference_peak'")
-    expected = fitting_pos_keys_for_step(fit_params, step_index=step_index, multi_fitting=multi_fitting)
+    expected = calibration_pos_keys_for_step(fit_params)
     if key not in expected:
         raise ValueError(
             f"pos_key {key!r} is not a position feature of the selected fitting step "
             f"(expected one of {expected})"
         )
     if xy.x.size == 0 or xy.y.size == 0:
-        # #region agent log
-        try:
-            import json as _dj
-            import time as _dt
-            from pathlib import Path as _dp
-
-            _logp = _dp(__file__).resolve().parents[4] / "debug-7bfc6e.log"
-            with _logp.open("a", encoding="utf-8") as _lf:
-                _lf.write(
-                    _dj.dumps(
-                        {
-                            "sessionId": "7bfc6e",
-                            "hypothesisId": "A,D",
-                            "location": "x_axis_calibration.py:measured_pos_from_fitting_xy",
-                            "message": "empty fitting input — about to raise",
-                            "data": {
-                                "pos_key": str(pos_key or ""),
-                                "step_index": int(step_index),
-                                "x_size": int(xy.x.size),
-                                "y_size": int(xy.y.size),
-                            },
-                            "timestamp": int(_dt.time() * 1000),
-                        }
-                    )
-                    + "\n"
-                )
-        except Exception:
-            pass
-        # #endregion
         raise ValueError("x_axis_calibration reference_peak: fitting input spectrum is empty")
 
     params = dict(fit_params)
@@ -155,7 +150,7 @@ def measured_pos_from_fitting_xy(
         raise ValueError(f"x_axis_calibration reference_peak: fit failed: {e}") from e
 
     values = _pos_values_from_fit_result(
-        res, fit_params, step_index=step_index, multi_fitting=multi_fitting
+        res, fit_params, step_index=0, multi_fitting=False
     )
     measured = values.get(key)
     if measured is None or not math.isfinite(measured):

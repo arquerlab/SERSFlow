@@ -24,6 +24,13 @@ function safeFragment(id: string, fallback: string): string {
   return id.trim().replace(/[^a-zA-Z0-9_]+/g, "_") || fallback;
 }
 
+/** Strip optional feature-export ``s{N}_`` prefix; calibration keys are step-local. */
+export function canonicalizeCalibrationPosKey(posKey: string): string {
+  return String(posKey || "")
+    .trim()
+    .replace(/^s\d+_(?=fit_)/, "");
+}
+
 /** Default params; XPS pipelines should pass target_x=284.8 via defaultXAxisCalibrationParams. */
 export function defaultXAxisCalibrationParams(techniqueFamily: "vibrational" | "xps" = "vibrational"): XAxisCalibrationParams {
   return {
@@ -47,26 +54,21 @@ export function normalizeXAxisCalibrationParams(
     method,
     offset: finiteNumber(p.offset, defaults.offset),
     fitting_step_id: asStr(p.fitting_step_id).trim(),
-    pos_key: asStr(p.pos_key).trim(),
+    pos_key: canonicalizeCalibrationPosKey(asStr(p.pos_key)),
     target_x: finiteNumber(p.target_x, defaults.target_x),
   };
 }
 
 /**
- * Position feature keys for one fitting step, matching backend fitting_features naming
- * (optional s{stepIndex}_ prefix when multiFitting, optional xps_region mid-segment).
+ * Position keys for x_axis_calibration reference_peak (always step-local, never s{N}_-prefixed).
+ * Matches backend ``calibration_pos_keys_for_step``.
  */
-export function fittingPosKeysForStep(
-  step: EditorStep,
-  opts: { stepIndex: number; multiFitting: boolean }
-): string[] {
-  const { stepIndex, multiFitting } = opts;
+export function fittingPosKeysForStep(step: EditorStep): string[] {
   const params = (step.params ?? {}) as Record<string, unknown>;
   const comps = params.components;
   if (!Array.isArray(comps)) return [];
   const regionRaw = asStr(params.xps_region).trim();
   const region = regionRaw ? safeFragment(regionRaw, "") : "";
-  const prefix = multiFitting ? `s${stepIndex}_` : "";
   const mid = region ? `${region}_` : "";
   const keys: string[] = [];
   comps.forEach((row, i) => {
@@ -84,7 +86,7 @@ export function fittingPosKeysForStep(
     }
     for (const pk of paramKeys) {
       if (pk === "pos") {
-        keys.push(`${prefix}fit_${mid}${id}_pos`);
+        keys.push(`fit_${mid}${id}_pos`);
       }
     }
   });
@@ -100,8 +102,4 @@ export function earlierFittingStepOptions(
   return earlier
     .map((step, index) => ({ step, index }))
     .filter(({ step }) => step.enabled !== false && step.name === "fitting");
-}
-
-export function multiFittingInPipeline(steps: EditorStep[]): boolean {
-  return steps.filter((s) => s.enabled !== false && s.name === "fitting").length > 1;
 }

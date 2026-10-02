@@ -49,6 +49,79 @@ def test_fitting_pos_keys_include_xps_region() -> None:
     assert keys == ["fit_C1s_main_pos"]
 
 
+def test_canonicalize_strips_multi_fit_prefix() -> None:
+    from sersflow.core.preprocess.x_axis_calibration import canonicalize_calibration_pos_key
+
+    assert (
+        canonicalize_calibration_pos_key("s1_fit_C1s_C_C_C_H_alkyl_adventitious_pos")
+        == "fit_C1s_C_C_C_H_alkyl_adventitious_pos"
+    )
+    assert canonicalize_calibration_pos_key("fit_g1_pos") == "fit_g1_pos"
+
+
+def test_reference_peak_accepts_legacy_multi_fit_pos_key() -> None:
+    """UI used to save s{N}_-prefixed keys when multiple fittings exist; engine must accept them."""
+    true_pos = 290.0
+    target = 284.8
+    x = np.linspace(270.0, 310.0, 200)
+    y = 80.0 * np.exp(-((x - true_pos) ** 2) / (8.0**2 / 4.0 / np.log(2.0))) + 2.0
+    xy0 = XY(x=x, y=y)
+    fit_c1s = "fit-c1s"
+    fit_o1s = "fit-o1s"
+    steps = [
+        {
+            "name": "fitting",
+            "step_id": fit_c1s,
+            "enabled": True,
+            "params": {
+                "output_mode": "fit",
+                "xps_region": "C1s",
+                "components": [{"component_id": "g1", "component_type": "gaussian"}],
+                "p0": [289.0, 70.0, 10.0],
+                "bounds_lower": [275.0, 0.0, 1e-6],
+                "bounds_upper": [305.0, None, 40.0],
+            },
+        },
+        {
+            "name": "x_axis_calibration",
+            "step_id": "cal-1",
+            "enabled": True,
+            "params": {
+                "method": "reference_peak",
+                "fitting_step_id": fit_c1s,
+                # Legacy multi-fitting feature-export name (UI used s{N}_ when ≥2 fittings).
+                "pos_key": "s1_fit_C1s_g1_pos",
+                "target_x": target,
+            },
+        },
+        {
+            "name": "fitting",
+            "step_id": fit_o1s,
+            "enabled": True,
+            "params": {
+                "output_mode": "fit",
+                "xps_region": "O1s",
+                "components": [{"component_id": "o1", "component_type": "gaussian"}],
+                "p0": [532.0, 1.0, 10.0],
+            },
+        },
+    ]
+    final, _, _ = _run_indexed_steps_for_spectrum(
+        xy_initial=xy0,
+        input_hash="testhash",
+        steps_list=steps,
+        spectrum_id="sid",
+        cache=None,
+        namespace="ns",
+        up_to_step=None,
+        collect_steps=None,
+        technique_family="xps",
+        spectrum_xps_region="C1s",
+    )
+    expected_delta = target - true_pos
+    assert float(final.x[0] - xy0.x[0]) == pytest.approx(expected_delta, abs=0.5)
+
+
 def test_reference_peak_pipeline_shifts_to_target() -> None:
     true_pos = 290.0
     target = 284.8

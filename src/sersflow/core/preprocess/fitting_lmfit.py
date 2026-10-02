@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from sersflow.core.preprocess.fit_diagnostics import compute_fit_diagnostics
+from sersflow.core.preprocess.fit_diagnostics import FitDiagnostics, compute_fit_diagnostics
 from sersflow.core.preprocess.fitting import (
     FitComponent,
     FitProblem,
@@ -137,19 +137,18 @@ def _apply_xps_fit_safeguards(
     return p0, lo, hi, auto_applied
 
 
-def fit_curve_lmfit(problem: FitProblem) -> FitResult:
-    try:
-        from lmfit import Parameters
-    except Exception as e:
-        raise ImportError("XPS fitting requires lmfit (via lmfitxps). Install lmfitxps>=4.2.0.") from e
-
-    if problem.x.ndim != 1 or problem.y.ndim != 1:
-        raise ValueError("x and y must be 1D arrays")
-    if problem.x.shape[0] != problem.y.shape[0]:
-        raise ValueError("x and y length mismatch")
-    if not problem.components:
-        raise ValueError("components must not be empty")
-
+def _assemble_lmfit_model(
+    problem: FitProblem,
+) -> tuple[
+    Any,
+    list[Callable[..., np.ndarray] | None],
+    list[tuple[int, int]],
+    list[dict[str, Any]],
+    list[str],
+    list[list[str]],
+    int,
+    bool,
+]:
     has_active_bg = any(
         c.component_type.strip().lower() in XPS_BACKGROUND_COMPONENT_TYPES for c in problem.components
     )
@@ -193,50 +192,15 @@ def fit_curve_lmfit(problem: FitProblem) -> FitResult:
         model = m if model is None else (model + m)
 
     assert model is not None
-    _validate_vectors(cursor, problem.p0, problem.bounds_lower, problem.bounds_upper)
-
     param_keys_per_comp = [m["param_keys"] for m in mapping]
-    p0_list, lo_list, hi_list, auto_already = _apply_xps_fit_safeguards(
-        problem, slices=slices, param_keys_per_comp=param_keys_per_comp
-    )
-    if str(problem.initial_guess_mode or "default").strip().lower() == "auto" and not auto_already:
-        p0_list = _apply_auto_peak_amplitudes(
-            problem.x,
-            problem.y,
-            p0_list,
-            problem.components,
-            slices,
-            param_keys_per_comp,
-            lo_list,
-            hi_list,
-        )
+    return model, peak_fns, slices, mapping, prefixes, param_keys_per_comp, cursor, has_active_bg
 
-    # Start from model defaults then overwrite with our flattened vector
-    params = model.make_params()
-    flat_names: list[str] = []
-    name_by_comp_key: dict[tuple[str, str], str] = {}
-    for comp, keys, (s, _e), prefix in zip(
-        problem.components, param_keys_per_comp, slices, prefixes
-    ):
-        for j, key in enumerate(keys):
-            idx = s + j
-            name = f"{prefix}{key}"
-            flat_names.append(name)
-            name_by_comp_key[(comp.component_id, key)] = name
-            lo = lo_list[idx]
-            hi = hi_list[idx]
-            vary = True
-            if problem.vary is not None and idx < len(problem.vary):
-                vary = bool(problem.vary[idx])
-            if name not in params:
-                params.add(name)
-            params[name].set(
-                value=float(p0_list[idx]),
-                min=(-np.inf if lo is None else float(lo)),
-                max=(np.inf if hi is None else float(hi)),
-                vary=vary,
-            )
 
+def _apply_param_links(
+    params: Any,
+    problem: FitProblem,
+    name_by_comp_key: dict[tuple[str, str], str],
+) -> None:
     for link in problem.param_links or []:
         src = (str(link.get("source_component_id") or ""), str(link.get("source_key") or ""))
         tgt = (str(link.get("target_component_id") or ""), str(link.get("target_key") or ""))
@@ -263,6 +227,67 @@ def fit_curve_lmfit(problem: FitProblem) -> FitResult:
             raise ValueError(f"Unknown link mode: {mode_l}")
         params[src_name].set(expr=expr, vary=False)
 
+
+def fit_curve_lmfit(problem: FitProblem) -> FitResult:
+    try:
+        from lmfit import Parameters  # noqa: F401
+    except Exception as e:
+        raise ImportError("XPS fitting requires lmfit (via lmfitxps). Install lmfitxps>=4.2.0.") from e
+
+    if problem.x.ndim != 1 or problem.y.ndim != 1:
+        raise ValueError("x and y must be 1D arrays")
+    if problem.x.shape[0] != problem.y.shape[0]:
+        raise ValueError("x and y length mismatch")
+    if not problem.components:
+        raise ValueError("components must not be empty")
+
+    model, peak_fns, slices, mapping, prefixes, param_keys_per_comp, cursor, has_active_bg = (
+        _assemble_lmfit_model(problem)
+    )
+    _validate_vectors(cursor, problem.p0, problem.bounds_lower, problem.bounds_upper)
+
+    p0_list, lo_list, hi_list, auto_already = _apply_xps_fit_safeguards(
+        problem, slices=slices, param_keys_per_comp=param_keys_per_comp
+    )
+    if str(problem.initial_guess_mode or "default").strip().lower() == "auto" and not auto_already:
+        p0_list = _apply_auto_peak_amplitudes(
+            problem.x,
+            problem.y,
+            p0_list,
+            problem.components,
+            slices,
+            param_keys_per_comp,
+            lo_list,
+            hi_list,
+        )
+
+    params = model.make_params()
+    flat_names: list[str] = []
+    name_by_comp_key: dict[tuple[str, str], str] = {}
+    for comp, keys, (s, _e), prefix in zip(
+        problem.components, param_keys_per_comp, slices, prefixes
+    ):
+        for j, key in enumerate(keys):
+            idx = s + j
+            name = f"{prefix}{key}"
+            flat_names.append(name)
+            name_by_comp_key[(comp.component_id, key)] = name
+            lo = lo_list[idx]
+            hi = hi_list[idx]
+            vary = True
+            if problem.vary is not None and idx < len(problem.vary):
+                vary = bool(problem.vary[idx])
+            if name not in params:
+                params.add(name)
+            params[name].set(
+                value=float(p0_list[idx]),
+                min=(-np.inf if lo is None else float(lo)),
+                max=(np.inf if hi is None else float(hi)),
+                vary=vary,
+            )
+
+    _apply_param_links(params, problem, name_by_comp_key)
+
     xf = problem.x.astype(float)
     yf = problem.y.astype(float)
     fit_kws: dict[str, Any] = {"x": xf}
@@ -286,7 +311,7 @@ def fit_curve_lmfit(problem: FitProblem) -> FitResult:
         ev = result.eval_components(**fit_kws)
     except Exception:
         ev = {}
-    for comp, f, keys, (s, e), prefix in zip(
+    for _comp, f, _keys, (s, e), prefix in zip(
         problem.components, peak_fns, param_keys_per_comp, slices, prefixes
     ):
         if f is not None:
@@ -327,4 +352,100 @@ def fit_curve_lmfit(problem: FitProblem) -> FitResult:
         component_y_hat=comp_curves,
         mapping=mapping,
         diagnostics=diag,
+    )
+
+
+def evaluate_curve_lmfit(
+    problem: FitProblem,
+    p_opt: np.ndarray,
+    *,
+    diagnostics: FitDiagnostics | None = None,
+) -> FitResult:
+    """Evaluate XPS model curves from stored parameters (no optimization)."""
+    try:
+        from lmfit import Parameters  # noqa: F401
+    except Exception as e:
+        raise ImportError("XPS fitting requires lmfit (via lmfitxps). Install lmfitxps>=4.2.0.") from e
+
+    if problem.x.ndim != 1 or problem.y.ndim != 1:
+        raise ValueError("x and y must be 1D arrays")
+    if problem.x.shape[0] != problem.y.shape[0]:
+        raise ValueError("x and y length mismatch")
+    if not problem.components:
+        raise ValueError("components must not be empty")
+
+    model, peak_fns, slices, mapping, prefixes, param_keys_per_comp, cursor, has_active_bg = (
+        _assemble_lmfit_model(problem)
+    )
+    p = np.asarray(p_opt, dtype=float).ravel()
+    if p.size != cursor:
+        raise ValueError(f"p_opt length mismatch: expected {cursor}, got {p.size}")
+
+    params = model.make_params()
+    flat_names: list[str] = []
+    name_by_comp_key: dict[tuple[str, str], str] = {}
+    for comp, keys, (s, _e), prefix in zip(
+        problem.components, param_keys_per_comp, slices, prefixes
+    ):
+        for j, key in enumerate(keys):
+            idx = s + j
+            name = f"{prefix}{key}"
+            flat_names.append(name)
+            name_by_comp_key[(comp.component_id, key)] = name
+            if name not in params:
+                params.add(name)
+            params[name].set(value=float(p[idx]), vary=False)
+
+    _apply_param_links(params, problem, name_by_comp_key)
+
+    xf = problem.x.astype(float)
+    yf = problem.y.astype(float)
+    fit_kws: dict[str, Any] = {"x": xf}
+    if has_active_bg:
+        fit_kws["y"] = yf
+    try:
+        y_hat = np.asarray(model.eval(params=params, **fit_kws), dtype=float)
+    except Exception as e:
+        raise ValueError(f"lmfit evaluate failed: {e}") from e
+
+    comp_curves: list[np.ndarray] = []
+    try:
+        ev = model.eval_components(params=params, **fit_kws)
+    except Exception:
+        ev = {}
+    for _comp, f, _keys, (s, e), prefix in zip(
+        problem.components, peak_fns, param_keys_per_comp, slices, prefixes
+    ):
+        if f is not None:
+            comp_curves.append(np.asarray(f(xf, *p[s:e].tolist()), dtype=float))
+            continue
+        matched = None
+        for k, arr in ev.items():
+            if k.startswith(prefix) or prefix.rstrip("_") == k.rstrip("_"):
+                matched = arr
+                break
+        comp_curves.append(np.asarray(matched if matched is not None else np.zeros_like(xf), dtype=float))
+
+    if diagnostics is None:
+        n_vary = 0
+        if problem.vary is not None:
+            n_vary = sum(1 for i, v in enumerate(problem.vary) if i < cursor and v)
+        else:
+            n_vary = cursor
+        diagnostics = compute_fit_diagnostics(
+            yf,
+            y_hat,
+            n_vary=max(0, int(n_vary)),
+            p_cov=None,
+            p_opt=p,
+            nfev=None,
+            success=True,
+        )
+    return FitResult(
+        p_opt=p,
+        p_cov=None,
+        y_hat=y_hat,
+        component_y_hat=comp_curves,
+        mapping=mapping,
+        diagnostics=diagnostics,
     )

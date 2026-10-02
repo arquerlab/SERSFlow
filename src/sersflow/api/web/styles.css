@@ -718,16 +718,21 @@ select {
   display: flex;
   align-items: start;
   gap: 0;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  overflow: hidden;
 }
 
 .resizable-split-stacked {
   flex-direction: column;
   gap: 12px;
+  overflow: visible;
 }
 
 .resizable-split-pane {
   min-width: 0;
+  max-width: 100%;
 }
 
 .resizable-split-left {
@@ -742,8 +747,11 @@ select {
 }
 
 .resizable-split-right {
-  flex: 1 1 auto;
+  /* Use 0 basis so Plotly intrinsic width cannot expand the pane past the flex free space. */
+  flex: 1 1 0;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .column-split-handle {

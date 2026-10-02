@@ -12,14 +12,20 @@ from typing import Any
 from sersflow.api.services.fit_curve_plot import render_fit_residual_png, render_fit_residual_svg
 from sersflow.api.services.fit_diagnostics_public import diagnostics_to_public
 from sersflow.api.services.fitting_preview import (
+    _collect_fit_input_xy,
     _find_fitting_step,
     _resolved_refs_for_run,
 )
 from sersflow.api.services.observation_export import _labels_for_spectrum
-from sersflow.core.pipeline.engine import EngineConfig, fitting_region_applies, run_pipeline_parallel_no_cache
-from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
-from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
-from sersflow.infra.analysis_store import get_fit_curve_job, get_run, update_fit_curve_job
+from sersflow.core.metrics.fitting_features import p_opt_and_gof_from_features
+from sersflow.core.pipeline.engine import fitting_region_applies
+from sersflow.core.preprocess.fitting import evaluate_fit_curves, fit_problem_from_step_params
+from sersflow.infra.analysis_store import (
+    get_fit_curve_job,
+    get_run,
+    get_spectrum_features_for_ids,
+    update_fit_curve_job,
+)
 from sersflow.infra.explore_store import artifacts_root
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
 
@@ -84,49 +90,23 @@ def execute_fit_curve_job(job_id: str) -> None:
         if len(refs) > _max_spectra():
             raise ValueError(f"too many spectra (max {_max_spectra()})")
 
-        _idx, fitting_step = _find_fitting_step(effective_pipeline, rec.fitting_step_num)
+        fitting_idx, fitting_step = _find_fitting_step(effective_pipeline, rec.fitting_step_num)
         step_params = dict(fitting_step.params or {})
         tech = getattr(effective_pipeline, "technique_family", None)
         if tech and "technique_family" not in step_params:
             step_params["technique_family"] = tech
 
-        step_nums = assign_pipeline_step_nums(effective_pipeline.steps)
-        steps = [
-            {
-                "name": s.name,
-                "params": s.params,
-                "enabled": s.enabled,
-                "impl_version": s.impl_version,
-                "step_id": s.step_id,
-                "input_from": s.input_from,
-                "after_step_id": s.after_step_id,
-            }
-            for s in effective_pipeline.steps
-        ]
-        inputs = [
-            {
-                "spectrum_id": r.spectrum_id,
-                "relative_path": r.relative_path,
-                "record_index": r.record_index,
-                "blob_id": r.blob_id,
-                "blob_relative_path": r.blob_relative_path,
-                "original_relative_path": r.original_relative_path,
-            }
-            for r in refs
-        ]
-        packed = run_pipeline_parallel_no_cache(
-            inputs=inputs,
-            pipeline_steps=steps,
-            config=EngineConfig(cache_namespace=ns),
-            up_to_step=None,
-            step_nums=step_nums,
-            collect_step_inputs=True,
-            max_workers=8,
-            technique_family=getattr(effective_pipeline, "technique_family", None),
+        xy_by_id = _collect_fit_input_xy(
+            pipeline=effective_pipeline,
+            refs=refs,
+            ns=ns,
+            fitting_idx=fitting_idx,
+            fitting_step_num=rec.fitting_step_num,
         )
-        if not isinstance(packed, tuple):
-            raise RuntimeError("expected step inputs")
-        _final, per_inputs = packed
+        features_by_id = get_spectrum_features_for_ids(
+            run_id=rec.run_id,
+            spectrum_ids=[str(r.spectrum_id) for r in refs],
+        )
 
         paths = sorted({str(r.relative_path) for r in refs if r.relative_path})
         con = with_connection()
@@ -147,8 +127,7 @@ def execute_fit_curve_job(job_id: str) -> None:
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             for r in refs:
                 sid = str(r.spectrum_id)
-                pin = per_inputs.get(sid) or {}
-                xy = pin.get(int(rec.fitting_step_num))
+                xy = xy_by_id.get(sid)
                 done += 1
                 if xy is None or xy.x.size == 0:
                     if done % 25 == 0 or done == total:
@@ -168,12 +147,24 @@ def execute_fit_curve_job(job_id: str) -> None:
                     if done % 25 == 0 or done == total:
                         update_fit_curve_job(job_id=job_id, progress_done=done, progress_total=total)
                     continue
+
+                feat = features_by_id.get(sid) or {}
+                p_opt, stored_diag, err = p_opt_and_gof_from_features(
+                    pipeline=effective_pipeline,
+                    fitting_step_num=rec.fitting_step_num,
+                    features=feat,
+                )
+                if p_opt is None:
+                    logger.debug("skip %s: %s", sid, err)
+                    if done % 25 == 0 or done == total:
+                        update_fit_curve_job(job_id=job_id, progress_done=done, progress_total=total)
+                    continue
                 try:
                     prob = fit_problem_from_step_params(xy, step_params)
                     if prob is None:
                         continue
-                    res = fit_curve(prob)
-                except (ValueError, RuntimeError):
+                    res = evaluate_fit_curves(prob, p_opt, diagnostics=stored_diag)
+                except (ValueError, RuntimeError, ImportError):
                     if done % 25 == 0 or done == total:
                         update_fit_curve_job(job_id=job_id, progress_done=done, progress_total=total)
                     continue

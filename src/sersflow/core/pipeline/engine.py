@@ -22,7 +22,8 @@ from sersflow.core.pipeline.steps import (
     params_fingerprint,
 )
 from sersflow.core.preprocess.x_axis_calibration import (
-    fitting_pos_keys_for_step,
+    calibration_pos_keys_for_step,
+    canonicalize_calibration_pos_key,
     measured_pos_from_fitting_xy,
 )
 from sersflow.core.spectrum import EMPTY_XY, XY, extract_xy
@@ -395,6 +396,28 @@ def _run_indexed_steps_for_spectrum(
         step = steps_list[j]
         en = _step_enabled_raw(step)
         if not en:
+            # Still record would-be inputs when collecting (e.g. fitting disabled so
+            # Analyze Plots can evaluate stored params without re-running fit_curve).
+            if collect_step_inputs and step_nums is not None:
+                input_from = _step_input_from_raw(step)
+                after_id = _step_after_step_id_raw(step)
+                if input_from == "initial":
+                    inp_xy = xy_initial
+                elif input_from == "after_step" and after_id:
+                    k = id_to_index.get(after_id)
+                    if k is not None and k < j and outputs[k] is not None:
+                        inp_xy = outputs[k]  # type: ignore[assignment]
+                    elif j > 0 and outputs[j - 1] is not None:
+                        inp_xy = outputs[j - 1]  # type: ignore[assignment]
+                    else:
+                        inp_xy = xy_initial
+                else:
+                    if j > 0 and outputs[j - 1] is not None:
+                        inp_xy = outputs[j - 1]  # type: ignore[assignment]
+                    else:
+                        inp_xy = xy_initial
+                per_step_input[step_nums[j]] = inp_xy
+                inputs_for_step[j] = inp_xy
             if j == 0:
                 outputs[0] = xy_initial
                 lineage_after[0] = input_hash
@@ -513,7 +536,6 @@ def _run_indexed_steps_for_spectrum(
         cal_fitting_k: int | None = None
         cal_fitting_input: XY | None = None
         cal_fit_params: dict[str, Any] | None = None
-        cal_multi_fitting = False
         if name == "x_axis_calibration" and str(params.get("method", "fixed_offset")).strip().lower() == "reference_peak":
             fitting_step_id = str(params.get("fitting_step_id") or "").strip()
             if not fitting_step_id:
@@ -531,28 +553,22 @@ def _run_indexed_steps_for_spectrum(
             fitting_input = inputs_for_step[k]
             if fitting_input is None:
                 raise ValueError("selected fitting step has no available input")
-            pos_key = str(params.get("pos_key") or "").strip()
+            pos_key = canonicalize_calibration_pos_key(str(params.get("pos_key") or ""))
             if not pos_key:
                 raise ValueError("pos_key must be provided for x_axis_calibration method='reference_peak'")
             if "target_x" not in params:
                 raise ValueError("target_x must be provided for x_axis_calibration method='reference_peak'")
-            fit_indices = [
-                i
-                for i, s in enumerate(steps_list)
-                if _step_enabled_raw(s) and _step_name_raw(s) == "fitting"
-            ]
-            cal_multi_fitting = len(fit_indices) > 1
             fit_params = dict(_step_params_raw(fitting_step))
             if technique_family:
                 fit_params.setdefault("technique_family", technique_family)
-            expected_pos = fitting_pos_keys_for_step(
-                fit_params, step_index=k, multi_fitting=cal_multi_fitting
-            )
+            # Calibration keys are step-local (never s{N}_ feature-export prefixes).
+            expected_pos = calibration_pos_keys_for_step(fit_params)
             if pos_key not in expected_pos:
                 raise ValueError(
                     f"pos_key {pos_key!r} is not a position feature of the selected fitting step "
                     f"(expected one of {expected_pos})"
                 )
+            params["pos_key"] = pos_key
             cal_fitting_k = k
             cal_fitting_input = fitting_input
             cal_fit_params = fit_params
@@ -598,49 +614,6 @@ def _run_indexed_steps_for_spectrum(
                         and cal_fitting_input is not None
                         and cal_fit_params is not None
                     ):
-                        # #region agent log
-                        try:
-                            import json as _dj
-                            import time as _dt
-                            from pathlib import Path as _dp
-
-                            _logp = _dp(__file__).resolve().parents[4] / "debug-7bfc6e.log"
-                            with _logp.open("a", encoding="utf-8") as _lf:
-                                _lf.write(
-                                    _dj.dumps(
-                                        {
-                                            "sessionId": "7bfc6e",
-                                            "runId": "post-fix",
-                                            "hypothesisId": "A,B,C,E",
-                                            "location": "engine.py:x_axis_calibration",
-                                            "message": "reference_peak pre-measure",
-                                            "data": {
-                                                "spectrum_id": spectrum_id,
-                                                "spectrum_xps_region": spectrum_xps_region,
-                                                "inp_xy_size": int(getattr(inp_xy, "x", []).size)
-                                                if hasattr(inp_xy, "x")
-                                                else -1,
-                                                "fit_input_size": int(cal_fitting_input.x.size),
-                                                "fit_input_y_size": int(cal_fitting_input.y.size),
-                                                "cal_fitting_k": cal_fitting_k,
-                                                "pos_key": str(params.get("pos_key") or ""),
-                                                "fit_xps_region": str(
-                                                    (cal_fit_params or {}).get("xps_region") or ""
-                                                ),
-                                                "step_index": j,
-                                                "skip_empty_fit_input": bool(
-                                                    cal_fitting_input.x.size == 0
-                                                    or cal_fitting_input.y.size == 0
-                                                ),
-                                            },
-                                            "timestamp": int(_dt.time() * 1000),
-                                        }
-                                    )
-                                    + "\n"
-                                )
-                        except Exception:
-                            pass
-                        # #endregion
                         # Masked / wrong-branch spectra: fitting input empty after metadata_filter.
                         # Pass through without measuring (do not hard-fail the session run).
                         if cal_fitting_input.x.size == 0 or cal_fitting_input.y.size == 0:
@@ -649,8 +622,6 @@ def _run_indexed_steps_for_spectrum(
                             params["_measured_pos"] = measured_pos_from_fitting_xy(
                                 cal_fitting_input,
                                 cal_fit_params,
-                                step_index=cal_fitting_k,
-                                multi_fitting=cal_multi_fitting,
                                 pos_key=str(params.get("pos_key") or ""),
                                 technique_family=technique_family,
                             )

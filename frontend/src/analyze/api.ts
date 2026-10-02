@@ -313,6 +313,21 @@ export function getMatrixJobExportUrl(id: string) {
   return `/explore/matrix-jobs/${encodeURIComponent(id)}/export.csv`;
 }
 
+export function importMatrixJobCsv(args: {
+  datasetId: string;
+  file: File;
+  analysisRunId?: string | null;
+}) {
+  const form = new FormData();
+  form.append("dataset_id", args.datasetId);
+  form.append("file", args.file);
+  if (args.analysisRunId) form.append("analysis_run_id", args.analysisRunId);
+  return fetchJson<MatrixExportResponse>(`/explore/matrix-jobs/import`, {
+    method: "POST",
+    body: form,
+  });
+}
+
 export type MatrixJobListItem = {
   matrix_job_id: string;
   dataset_id: string;

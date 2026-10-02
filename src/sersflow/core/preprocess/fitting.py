@@ -212,15 +212,47 @@ def fit_curve(problem: FitProblem) -> FitResult:
     return _fit_curve_scipy(problem)
 
 
-def _fit_curve_scipy(problem: FitProblem) -> FitResult:
-    """Fit a sum of components using bounded SciPy curve_fit."""
-    if problem.x.ndim != 1 or problem.y.ndim != 1:
-        raise ValueError("x and y must be 1D arrays")
-    if problem.x.shape[0] != problem.y.shape[0]:
-        raise ValueError("x and y length mismatch")
-    if not problem.components:
-        raise ValueError("components must not be empty")
+def evaluate_fit_curves(
+    problem: FitProblem,
+    p_opt: np.ndarray | list[float],
+    *,
+    diagnostics: FitDiagnostics | None = None,
+) -> FitResult:
+    """
+    Evaluate component + total curves from an already-optimized parameter vector.
 
+    Does not run an optimizer. Used by Analyze Plots / fit-curve exports so analysis
+    runs are not re-fit when rendering residuals and components.
+    """
+    tech = str(problem.technique_family or "vibrational").strip().lower()
+    if tech not in ("vibrational", "xps"):
+        raise ValueError(
+            f"Invalid technique_family {problem.technique_family!r}; expected 'vibrational' or 'xps'"
+        )
+    p = np.asarray(p_opt, dtype=float).ravel()
+    if tech == "xps":
+        from sersflow.core.preprocess.fitting_lmfit import evaluate_curve_lmfit
+
+        return evaluate_curve_lmfit(problem, p, diagnostics=diagnostics)
+
+    from sersflow.core.preprocess.fitting_specs import XPS_BACKGROUND_COMPONENT_TYPES
+
+    for comp in problem.components:
+        if comp.component_type.strip().lower() in XPS_BACKGROUND_COMPONENT_TYPES:
+            raise ValueError(
+                f"Active XPS background {comp.component_type!r} requires an XPS pipeline (lmfit engine)"
+            )
+    return _evaluate_curve_scipy(problem, p, diagnostics=diagnostics)
+
+
+def _build_scipy_component_model(
+    problem: FitProblem,
+) -> tuple[
+    list[tuple[FitComponent, Any, list[Any]]],
+    list[tuple[int, int]],
+    list[dict[str, Any]],
+    int,
+]:
     funcs = []
     slices: list[tuple[int, int]] = []
     mapping: list[dict[str, Any]] = []
@@ -241,6 +273,74 @@ def _fit_curve_scipy(problem: FitProblem) -> FitResult:
                 "index_range": [start, end],
             }
         )
+    return funcs, slices, mapping, cursor
+
+
+def _evaluate_curve_scipy(
+    problem: FitProblem,
+    p_opt: np.ndarray,
+    *,
+    diagnostics: FitDiagnostics | None = None,
+) -> FitResult:
+    if problem.x.ndim != 1 or problem.y.ndim != 1:
+        raise ValueError("x and y must be 1D arrays")
+    if problem.x.shape[0] != problem.y.shape[0]:
+        raise ValueError("x and y length mismatch")
+    if not problem.components:
+        raise ValueError("components must not be empty")
+
+    funcs, slices, mapping, cursor = _build_scipy_component_model(problem)
+    if p_opt.size != cursor:
+        raise ValueError(f"p_opt length mismatch: expected {cursor}, got {p_opt.size}")
+
+    xf = problem.x.astype(float)
+    yf = problem.y.astype(float)
+    p_list = p_opt.tolist()
+    yhat = np.zeros_like(xf, dtype=float)
+    comp_curves: list[np.ndarray] = []
+    for (_comp, f, _params), (s, e) in zip(funcs, slices):
+        yc = np.asarray(f(xf, *p_list[s:e]), dtype=float)
+        comp_curves.append(yc)
+        yhat = yhat + yc
+
+    if diagnostics is None:
+        if problem.vary is not None and len(problem.vary) >= cursor:
+            n_vary = sum(1 for v in problem.vary[:cursor] if v)
+        else:
+            n_vary = cursor
+            if problem.vary is not None:
+                for i, vflag in enumerate(problem.vary):
+                    if i < cursor and not vflag:
+                        n_vary -= 1
+        diagnostics = compute_fit_diagnostics(
+            yf,
+            yhat,
+            n_vary=max(0, int(n_vary)),
+            p_cov=None,
+            p_opt=p_opt,
+            nfev=None,
+            success=True,
+        )
+    return FitResult(
+        p_opt=p_opt,
+        p_cov=None,
+        y_hat=yhat,
+        component_y_hat=comp_curves,
+        mapping=mapping,
+        diagnostics=diagnostics,
+    )
+
+
+def _fit_curve_scipy(problem: FitProblem) -> FitResult:
+    """Fit a sum of components using bounded SciPy curve_fit."""
+    if problem.x.ndim != 1 or problem.y.ndim != 1:
+        raise ValueError("x and y must be 1D arrays")
+    if problem.x.shape[0] != problem.y.shape[0]:
+        raise ValueError("x and y length mismatch")
+    if not problem.components:
+        raise ValueError("components must not be empty")
+
+    funcs, slices, mapping, cursor = _build_scipy_component_model(problem)
 
     _validate_vectors(cursor, problem.p0, problem.bounds_lower, problem.bounds_upper)
 

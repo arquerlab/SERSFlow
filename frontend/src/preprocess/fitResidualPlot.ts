@@ -192,29 +192,67 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
       ? `RMSE=${fmtDiag(diagnostics.rmse)}  R²=${fmtDiag(diagnostics.r2)}  BIC=${fmtDiag(diagnostics.bic)}`
       : undefined;
 
+  // Layout: title (+ GoF) at top; residual below main panel; legend under residual
+  // so it never shares the top strip with the title.
   const layout: Record<string, unknown> = {
     title: title
-      ? { text: subtitle ? `${title}<br><span style="font-size:12px">${subtitle}</span>` : title }
+      ? {
+          text: subtitle
+            ? `${title}<br><span style="font-size:11px;font-weight:normal">${subtitle}</span>`
+            : title,
+          x: 0.01,
+          xanchor: "left",
+          y: 0.98,
+          yanchor: "top",
+        }
       : subtitle
-        ? { text: subtitle, font: { size: 12 } }
+        ? {
+            text: subtitle,
+            font: { size: 11 },
+            x: 0.01,
+            xanchor: "left",
+            y: 0.98,
+            yanchor: "top",
+          }
         : undefined,
     xaxis: {
       title: { text: xAxisTitle },
       anchor: "y2",
-      domain: [0, 1],
+      domain: [0.0, 1.0],
     },
     yaxis: {
       title: { text: "Intensity" },
-      domain: [0.38, 1],
+      domain: [0.42, 1.0],
+      anchor: "x",
     },
     yaxis2: {
       title: { text: "Residual" },
-      domain: [0, 0.32],
+      domain: [0.12, 0.34],
+      anchor: "x",
       zeroline: true,
+      zerolinewidth: 1,
+      zerolinecolor: "#999",
     },
-    legend: { orientation: "h", yanchor: "top", y: -0.08, xanchor: "center", x: 0.5 },
-    margin: { l: 60, r: 20, t: title || subtitle ? 48 : 20, b: 80 },
-    height: 420,
+    legend: {
+      orientation: "h",
+      yanchor: "top",
+      y: -0.08,
+      xanchor: "center",
+      x: 0.5,
+      font: { size: 11 },
+      bgcolor: "rgba(255,255,255,0.85)",
+      borderwidth: 0,
+      tracegroupgap: 8,
+    },
+    margin: {
+      l: 64,
+      r: 28,
+      t: title || subtitle ? 78 : 40,
+      b: 96,
+    },
+    height: 520,
+    autosize: true,
+    showlegend: true,
   };
 
   return { data: traces, layout };

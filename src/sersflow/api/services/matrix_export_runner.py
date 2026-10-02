@@ -175,6 +175,74 @@ def execute_matrix_export_job(matrix_job_id: str) -> None:
         update_matrix_job(matrix_job_id=matrix_job_id, status="failed", error=str(e), finished=True)
 
 
+def import_matrix_job_from_csv(
+    *,
+    dataset_id: str,
+    csv_bytes: bytes,
+    analysis_run_id: str | None = None,
+    source_filename: str | None = None,
+) -> str:
+    """Create a completed matrix job from an exported spectrum-matrix CSV."""
+    from sersflow.api.services.explore_export import parse_matrix_csv
+    from sersflow.infra.explore_store import create_matrix_job_pending
+
+    y, x, sids = parse_matrix_csv(csv_bytes)
+    if y.shape[0] > _max_spectra():
+        raise ValueError(f"too many spectra (max {_max_spectra()})")
+
+    # Sentinel hashes distinguish imported matrices from pipeline-materialized ones.
+    pipeline_hash = "imported"
+    subset_hash = "imported"
+    jid = create_matrix_job_pending(
+        dataset_id=dataset_id,
+        session_id=None,
+        source_analysis_run_id=analysis_run_id,
+        pipeline_id=None,
+        pipeline_name="Imported CSV",
+        pipeline_hash=pipeline_hash,
+        pipeline_json=None,
+        subset_hash=subset_hash,
+        up_to_step="__imported__",
+    )
+    try:
+        root = artifacts_root()
+        subdir = os.path.join(root, "matrix", jid)
+        os.makedirs(subdir, exist_ok=True)
+        npz_path = os.path.join(subdir, "matrix.npz")
+        np.savez_compressed(
+            npz_path,
+            Y=np.asarray(y, dtype=np.float32),
+            x=np.asarray(x, dtype=np.float64),
+            spectrum_ids=np.array(sids, dtype=object),
+        )
+        manifest: dict[str, Any] = {
+            "matrix_job_id": jid,
+            "dataset_id": dataset_id,
+            "session_id": None,
+            "pipeline_hash": pipeline_hash,
+            "subset_hash": subset_hash,
+            "up_to_step": "__imported__",
+            "shape": [int(y.shape[0]), int(y.shape[1])],
+            "x_len": int(x.shape[0]),
+            "npz_path": npz_path,
+            "imported": True,
+            "source_filename": source_filename,
+        }
+        update_matrix_job(
+            matrix_job_id=jid,
+            status="completed",
+            npz_path=npz_path,
+            manifest_json=json.dumps(manifest, separators=(",", ":"), ensure_ascii=False),
+            error=None,
+            finished=True,
+        )
+        return jid
+    except Exception as e:
+        logger.exception("matrix import failed: %s", jid)
+        update_matrix_job(matrix_job_id=jid, status="failed", error=str(e), finished=True)
+        raise
+
+
 def subset_from_session(session_id: str) -> SubsetStrategy:
     sess = get_session(session_id)
     if sess is None:

@@ -6,7 +6,7 @@ from threading import Thread
 from typing import Any, Iterator
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from sersflow.api.schemas.explore import (
@@ -44,7 +44,8 @@ from sersflow.api.services.explore_stats import (
     save_json,
     variance_inflation_factors,
 )
-from sersflow.api.services.matrix_export_runner import execute_matrix_export_job
+from sersflow.api.services.matrix_export_runner import execute_matrix_export_job, import_matrix_job_from_csv
+from sersflow.api.services.observation_export import load_axis_and_meta_for_spectra
 from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.sessions_service import pipeline_hash, subset_hash
 from sersflow.api.services.technique_guard import (
@@ -308,6 +309,46 @@ def export_matrix_job_csv(matrix_job_id: str, request: Request) -> StreamingResp
         raise HTTPException(status_code=500, detail=f"Matrix export failed: {e}") from e
 
 
+@router.post("/matrix-jobs/import", response_model=MatrixExportResponse)
+async def import_matrix_job_csv(
+    request: Request,
+    dataset_id: str = Form(...),
+    file: UploadFile = File(...),
+    analysis_run_id: str | None = Form(None),
+) -> MatrixExportResponse:
+    """Import a previously exported spectrum-matrix CSV as a completed matrix job."""
+    user_id = current_user_id(request)
+    if get_dataset_for_user(dataset_id, user_id) is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    run_id = (analysis_run_id or "").strip() or None
+    if run_id:
+        rec = get_run_for_user(run_id, user_id)
+        if rec is None:
+            raise HTTPException(status_code=404, detail="Analysis run not found")
+        if rec.dataset_id != dataset_id:
+            raise HTTPException(status_code=400, detail="analysis_run_id does not match dataset_id")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Matrix CSV file is required")
+    try:
+        data = await file.read()
+        if not data:
+            raise ValueError("Matrix CSV file is empty")
+        jid = import_matrix_job_from_csv(
+            dataset_id=dataset_id,
+            csv_bytes=data,
+            analysis_run_id=run_id,
+            source_filename=file.filename,
+        )
+        return MatrixExportResponse(matrix_job_id=jid, status="completed")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    finally:
+        try:
+            await file.close()
+        except Exception:
+            pass
+
+
 @router.delete("/matrix-jobs/{matrix_job_id}")
 def delete_matrix_job_endpoint(matrix_job_id: str, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
@@ -344,7 +385,22 @@ def export_pca_artifact_csv(explore_id: str, export_kind: str, request: Request)
     try:
         result = load_pca_artifact(path)
         if export_kind == "scores":
-            gen = iter_pca_scores_csv_bytes(result)
+            spectrum_ids = result.get("spectrum_ids")
+            row_ids = (
+                [str(v) for v in spectrum_ids]
+                if isinstance(spectrum_ids, list) and spectrum_ids
+                else []
+            )
+            explore_rec = get_explore_run_for_user(explore_id, user_id)
+            meta_cols: list[str] = []
+            meta_by: dict[str, dict[str, Any]] = {}
+            if explore_rec is not None and row_ids:
+                meta_cols, meta_by = load_axis_and_meta_for_spectra(explore_rec.dataset_id, row_ids)
+            gen = iter_pca_scores_csv_bytes(
+                result,
+                meta_columns=meta_cols,
+                meta_by_spectrum_id=meta_by,
+            )
         elif export_kind == "loadings":
             gen = iter_pca_loadings_csv_bytes(result)
         elif export_kind == "variance":

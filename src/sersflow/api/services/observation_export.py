@@ -397,3 +397,53 @@ def list_observation_axis_and_meta_keys_for_dataset(dataset_id: str) -> tuple[li
         join_axes=True,
     )
     return axis_cols, meta_keys
+
+
+def load_axis_and_meta_for_spectra(
+    dataset_id: str,
+    spectrum_ids: list[str],
+) -> tuple[list[str], dict[str, dict[str, Any]]]:
+    """
+    Build axis_* / meta_* columns for the given spectrum IDs from dataset labels.
+
+    Returns ``(column_names, values_by_spectrum_id)``. Column names always start with
+    ``relative_path``, then axis columns, then sorted ``meta_*`` keys.
+    """
+    lookup = spectrum_export_lookup(dataset_id)
+    wanted = [str(sid) for sid in spectrum_ids]
+    paths = list(
+        {
+            str(lookup[sid].get("relative_path", ""))
+            for sid in wanted
+            if sid in lookup and lookup[sid].get("relative_path")
+        }
+    )
+    labels_by_path: dict[str, dict[str, Any]] = {}
+    if paths:
+        with connect() as con:
+            labels_by_path = fetch_upload_labels_for_paths(con, paths)
+    axis_cols, meta_keys, _ = _prepare_observation_wide(
+        labels_by_path=labels_by_path,
+        join_labels=True,
+        join_axes=True,
+    )
+    columns = ["relative_path", *axis_cols, *meta_keys]
+    by_id: dict[str, dict[str, Any]] = {}
+    for sid in wanted:
+        info = lookup.get(sid, {})
+        row: dict[str, Any] = {"relative_path": info.get("relative_path")}
+        for col in axis_cols:
+            row[col] = info.get(col)
+        rel = str(info.get("relative_path", "") or "")
+        if rel:
+            ri = info.get("record_index")
+            ri_int = int(ri) if ri is not None and str(ri).strip() != "" else None
+            lab = _labels_for_spectrum(labels_by_path.get(rel, {}), record_index=ri_int)
+            flat = _flatten_labels(lab)
+            for mk in meta_keys:
+                row[mk] = flat.get(mk)
+        else:
+            for mk in meta_keys:
+                row[mk] = None
+        by_id[sid] = row
+    return columns, by_id

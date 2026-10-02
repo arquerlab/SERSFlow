@@ -39,6 +39,16 @@ def test_matrix_csv_exports_spectrum_rows_and_wavenumber_columns(tmp_path: Path)
     assert rows[2][1:] == ["3.5", "4.5"]
 
 
+def test_matrix_csv_roundtrip_parse() -> None:
+    from sersflow.api.services.explore_export import parse_matrix_csv
+
+    csv_text = "spectrum_id,100,101.5\ns1,1.0,2.0\ns2,3.5,4.5\n"
+    y, x, sids = parse_matrix_csv(csv_text)
+    assert sids == ["s1", "s2"]
+    assert np.allclose(x, [100.0, 101.5])
+    assert np.allclose(y, [[1.0, 2.0], [3.5, 4.5]])
+
+
 def test_pca_csv_exports_scores_loadings_variance_and_mean(tmp_path: Path) -> None:
     artifact = {
         "n_components": 2,
@@ -59,3 +69,23 @@ def test_pca_csv_exports_scores_loadings_variance_and_mean(tmp_path: Path) -> No
     assert _rows(iter_pca_loadings_csv_bytes(loaded))[1] == ["100", "0.1", "0.4"]
     assert _rows(iter_pca_variance_csv_bytes(loaded))[1] == ["PC1", "0.75"]
     assert _rows(iter_pca_mean_csv_bytes(loaded))[1] == ["100", "10.0"]
+
+
+def test_pca_scores_csv_includes_metadata_columns() -> None:
+    artifact = {
+        "scores": [[1.0, 2.0], [3.0, 4.0]],
+        "spectrum_ids": ["s1", "s2"],
+    }
+    rows = _rows(
+        iter_pca_scores_csv_bytes(
+            artifact,
+            meta_columns=["relative_path", "meta_batch"],
+            meta_by_spectrum_id={
+                "s1": {"relative_path": "a.txt", "meta_batch": "A"},
+                "s2": {"relative_path": "b.txt", "meta_batch": "B"},
+            },
+        )
+    )
+    assert rows[0] == ["spectrum_id", "PC1", "PC2", "relative_path", "meta_batch"]
+    assert rows[1] == ["s1", "1.0", "2.0", "a.txt", "A"]
+    assert rows[2] == ["s2", "3.0", "4.0", "b.txt", "B"]
