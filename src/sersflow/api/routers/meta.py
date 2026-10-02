@@ -66,14 +66,14 @@ def preprocess() -> HTMLResponse:
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>SERSFlow • Preprocessing</title>
+    <title>SpecFlow • Preprocessing</title>
     <link rel="stylesheet" href="/static/styles.css" />
 {css_links}
   </head>
   <body>
     <div class="wrap">
       <header>
-        <h1>SERSFlow</h1>
+        <h1>SpecFlow</h1>
         <div class="links">
           <a href="/">Legacy UI</a>
           <a href="/docs">Docs</a>

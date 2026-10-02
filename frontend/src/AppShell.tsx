@@ -47,7 +47,7 @@ export default function AppShell() {
         <div className="card" style={{ marginBottom: "10px" }}>
           <div className="row" style={{ alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
             <div className="section-title" style={{ margin: 0 }}>
-              SERSFlow
+              SpecFlow
             </div>
             <nav className="row" style={{ gap: "8px" }}>
               <NavLink

@@ -854,7 +854,7 @@ export default function PreprocessingWorkspace() {
     const name = libraryPipelineName.trim() || "current_pipeline";
     const pkg: PipelineExportPackage = {
       schema_version: "sersflow.pipeline.v1",
-      created_by: "SERSFlow",
+      created_by: "SpecFlow",
       exported_at: new Date().toISOString(),
       name,
       pipeline: buildPipeline(),

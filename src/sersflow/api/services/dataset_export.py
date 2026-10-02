@@ -105,7 +105,7 @@ def export_dataset_package(dataset_id: str, *, owner_user_id: str) -> tuple[byte
 
     manifest = {
         "schema_version": DATASET_SCHEMA_VERSION,
-        "created_by": "SERSFlow",
+        "created_by": "SpecFlow",
         "exported_at": _utc_now_iso(),
         "dataset": {
             "source_dataset_id": dataset_id,
@@ -122,7 +122,7 @@ def export_dataset_package(dataset_id: str, *, owner_user_id: str) -> tuple[byte
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
         zf.writestr(
             "README.txt",
-            "SERSFlow dataset package. Inspect manifest.json for metadata and import this zip through SERSFlow.\n",
+            "SpecFlow dataset package. Inspect manifest.json for metadata and import this zip through SpecFlow.\n",
         )
         for arcname, path in sorted(blob_payloads.items()):
             zf.write(path, arcname)

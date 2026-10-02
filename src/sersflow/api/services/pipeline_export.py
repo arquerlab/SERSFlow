@@ -16,7 +16,7 @@ def _utc_now_iso() -> str:
 def export_pipeline_package(record: PipelineLibraryRecord) -> PipelineExportPackage:
     return PipelineExportPackage(
         schema_version=PIPELINE_SCHEMA_VERSION,
-        created_by="SERSFlow",
+        created_by="SpecFlow",
         exported_at=_utc_now_iso(),
         name=record.name,
         pipeline=record.pipeline,

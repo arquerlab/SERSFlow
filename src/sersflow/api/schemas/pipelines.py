@@ -75,7 +75,7 @@ class PipelineUpdateResponse(BaseModel):
 
 class PipelineExportPackage(BaseModel):
     schema_version: str = "sersflow.pipeline.v1"
-    created_by: str = "SERSFlow"
+    created_by: str = "SpecFlow"
     exported_at: str
     name: str
     pipeline: Pipeline
