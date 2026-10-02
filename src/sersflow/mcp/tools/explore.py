@@ -125,6 +125,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
         Requires analysis_run_id OR dataset_id+(session_id|inline pipeline).
         pipeline_id/pipeline_name are labels only.
+        Dataset and pipeline technique_family must match when a pipeline is supplied.
         """
 
         def _run():
@@ -264,5 +265,111 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 spca_ridge_alpha=spca_ridge_alpha,
             )
             return summarize.explore_result(ctx.get_client().explore.fpca_discrete(req))
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="get_explore_matrix_jobs_list")
+    async def get_explore_matrix_jobs_list(
+        dataset_id: str,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> str:
+        """GET /explore/matrix-jobs — list matrix jobs for a dataset."""
+
+        def _run():
+            data = ctx.get_client().explore.list_matrix_jobs(
+                dataset_id, limit=limit, offset=offset
+            )
+            items = data.get("items") or []
+            compact = []
+            for it in items if isinstance(items, list) else []:
+                if isinstance(it, dict):
+                    compact.append(summarize.matrix_job_summary(it))
+            return {"ok": True, "count": data.get("count", len(compact)), "items": compact}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_explore_matrix_jobs_import")
+    async def post_explore_matrix_jobs_import(
+        dataset_id: str,
+        path: str,
+        analysis_run_id: str | None = None,
+    ) -> str:
+        """POST /explore/matrix-jobs/import — import a spectrum-matrix CSV as a completed job."""
+
+        def _run():
+            from pathlib import Path
+
+            p = Path(path).expanduser()
+            if not p.is_file():
+                raise FileNotFoundError(f"Not a file: {p}")
+            resp = ctx.get_client().explore.import_matrix_job(
+                dataset_id, p, analysis_run_id=analysis_run_id
+            )
+            return {
+                "ok": True,
+                "matrix_job_id": resp.matrix_job_id,
+                "status": resp.status,
+                "dataset_id": dataset_id,
+            }
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_explore_cluster")
+    async def post_explore_cluster(
+        analysis_run_id: str,
+        feature_columns: list[str] | None = None,
+        n_clusters: int = 3,
+        seed: int = 0,
+    ) -> str:
+        """POST /explore/cluster (compact summary)."""
+
+        def _run():
+            from sersflow.api.schemas.explore import ClusterRequest
+
+            req = ClusterRequest(
+                analysis_run_id=analysis_run_id,
+                n_clusters=n_clusters,
+                feature_columns=feature_columns,
+                seed=seed,
+            )
+            return summarize.explore_result(ctx.get_client().explore.cluster(req))
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_explore_spectrum_cluster")
+    async def post_explore_spectrum_cluster(
+        matrix_job_id: str,
+        n_clusters: int = 3,
+        seed: int = 0,
+        n_pc_embedding: int = 10,
+    ) -> str:
+        """POST /explore/spectrum-cluster (compact summary)."""
+
+        def _run():
+            from sersflow.api.schemas.explore import SpectrumClusterRequest
+
+            req = SpectrumClusterRequest(
+                matrix_job_id=matrix_job_id,
+                n_clusters=n_clusters,
+                seed=seed,
+                n_pc_embedding=n_pc_embedding,
+            )
+            return summarize.explore_result(ctx.get_client().explore.spectrum_cluster(req))
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_explore_fpca_fda")
+    async def post_explore_fpca_fda(
+        matrix_job_id: str,
+        n_components: int | None = None,
+    ) -> str:
+        """POST /explore/fpca-fda (compact summary)."""
+
+        def _run():
+            from sersflow.api.schemas.explore import FPCAFDARequest
+
+            req = FPCAFDARequest(matrix_job_id=matrix_job_id, n_components=n_components)
+            return summarize.explore_result(ctx.get_client().explore.fpca_fda(req))
 
         return await tool_call(ctx, _run)

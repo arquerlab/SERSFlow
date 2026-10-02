@@ -41,6 +41,8 @@ def dataset_list_item(item: Any) -> dict[str, Any]:
         "dataset_id": d.get("dataset_id"),
         "name": meta.get("name") if isinstance(meta, dict) else None,
         "count": d.get("count"),
+        "technique_family": meta.get("technique_family") if isinstance(meta, dict) else None,
+        "capabilities": meta.get("capabilities") if isinstance(meta, dict) else None,
     }
 
 
@@ -57,6 +59,8 @@ def dataset_get(resp: Any) -> dict[str, Any]:
         "ok": True,
         "dataset_id": ds.get("dataset_id"),
         "name": meta.get("name") if isinstance(meta, dict) else None,
+        "technique_family": meta.get("technique_family") if isinstance(meta, dict) else None,
+        "capabilities": meta.get("capabilities") if isinstance(meta, dict) else None,
         "n_spectra": len(spectra),
         "sample_paths": paths,
         "skipped_files": d.get("skipped_files") or [],
@@ -68,11 +72,15 @@ def pipeline_list_item(item: Any) -> dict[str, Any]:
     pipe = d.get("pipeline") or {}
     steps = pipe.get("steps") if isinstance(pipe, dict) else None
     n_steps = len(steps) if isinstance(steps, list) else None
+    fam = d.get("technique_family")
+    if fam is None and isinstance(pipe, dict):
+        fam = pipe.get("technique_family")
     return {
         "pipeline_id": d.get("pipeline_id"),
         "name": d.get("name"),
         "updated_at": d.get("updated_at"),
         "n_steps": n_steps,
+        "technique_family": fam,
     }
 
 
@@ -82,11 +90,13 @@ def session_summary(session: Any) -> dict[str, Any]:
         d = d["session"]
     pipe = d.get("pipeline") or {}
     steps = pipe.get("steps") if isinstance(pipe, dict) else []
+    fam = pipe.get("technique_family") if isinstance(pipe, dict) else None
     return {
         "ok": True,
         "session_id": d.get("session_id"),
         "dataset_id": d.get("dataset_id"),
         "n_steps": len(steps) if isinstance(steps, list) else 0,
+        "technique_family": fam,
         "subset": d.get("subset"),
         "created_at": d.get("created_at"),
         "updated_at": d.get("updated_at"),
@@ -101,9 +111,11 @@ def analysis_run_summary(run: Any) -> dict[str, Any]:
         "ok": True,
         "run_id": d.get("run_id"),
         "dataset_id": d.get("dataset_id"),
+        "dataset_name": d.get("dataset_name"),
         "session_id": d.get("session_id"),
         "pipeline_id": d.get("pipeline_id"),
         "pipeline_name": d.get("pipeline_name"),
+        "pipeline_summary": d.get("pipeline_summary"),
         "status": d.get("status"),
         "error": d.get("error"),
         "feature_columns": d.get("feature_columns"),
@@ -115,7 +127,7 @@ def analysis_run_summary(run: Any) -> dict[str, Any]:
 
 def job_summary(job: Any) -> dict[str, Any]:
     d = _dump(job)
-    return {
+    out = {
         "ok": True,
         "job_id": d.get("job_id"),
         "run_id": d.get("run_id"),
@@ -124,6 +136,17 @@ def job_summary(job: Any) -> dict[str, Any]:
         "progress_total": d.get("progress_total"),
         "error": d.get("error"),
     }
+    if d.get("fitting_step_num") is not None:
+        out["fitting_step_num"] = d.get("fitting_step_num")
+    if d.get("content") is not None:
+        out["content"] = d.get("content")
+    if d.get("format") is not None:
+        out["format"] = d.get("format")
+    if d.get("created_at") is not None:
+        out["created_at"] = d.get("created_at")
+    if d.get("finished_at") is not None:
+        out["finished_at"] = d.get("finished_at")
+    return out
 
 
 def matrix_job_summary(job: Any) -> dict[str, Any]:
@@ -202,4 +225,7 @@ def upload_list_item(item: Any) -> dict[str, Any]:
         "filename": d.get("filename") or d.get("name"),
         "size_bytes": d.get("size_bytes") or d.get("size"),
         "batch_id": d.get("batch_id"),
+        "technique_family": d.get("technique_family"),
+        "xps_regions": d.get("xps_regions"),
+        "spectrum_count": d.get("spectrum_count"),
     }

@@ -33,7 +33,7 @@ class McpConfig:
     api_health_timeout_s: float = 60.0
     api_health_poll_s: float = 0.5
     upload_confirm_bytes: int = 104_857_600
-    fitting_confirm_max_components: int = 6
+    fitting_confirm_max_components: int = 20
     tabular_max_rows: int = 50
     tabular_max_cols: int = 30
     analysis_async_default: bool = True

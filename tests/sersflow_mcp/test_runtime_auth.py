@@ -26,7 +26,7 @@ def test_authenticate_cookie(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
                 headers={"set-cookie": "sersflow_session=tok"},
             )
         if request.url.path == "/openapi.json":
-            return httpx.Response(200, json={"info": {"version": "0.1.0", "title": "SpecFlow API"}})
+            return httpx.Response(200, json={"info": {"version": "0.2.0", "title": "SpecFlow API"}})
         if request.url.path == "/health":
             return httpx.Response(200, json={"status": "ok"})
         return httpx.Response(404, json={"detail": "nope"})

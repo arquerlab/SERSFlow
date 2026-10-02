@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sersflow"
-version = "0.1.0"
+version = "0.2.0"
 description = "SERSFlow: loaders and API for vibrational (SERS/Raman/FTIR) and XPS datasets"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -32,7 +32,7 @@ def test_pipelines_resource_async_offload(tmp_path: Path) -> None:
     ctx.client = MagicMock()
     ctx.client.pipelines.list.return_value = resp
     ctx.auth_mode = "open_or_disabled"
-    ctx.server_openapi_version = "0.1.0"
+    ctx.server_openapi_version = "0.2.0"
     ctx._ready = True
 
     mcp = create_server(ctx)
@@ -57,7 +57,7 @@ def test_resource_errors_are_structured_json(tmp_path: Path) -> None:
     ctx.client = MagicMock()
     ctx.client.pipelines.list.side_effect = RuntimeError("boom")
     ctx.auth_mode = "open_or_disabled"
-    ctx.server_openapi_version = "0.1.0"
+    ctx.server_openapi_version = "0.2.0"
     ctx._ready = True
 
     mcp = create_server(ctx)

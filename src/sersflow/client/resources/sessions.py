@@ -13,6 +13,7 @@ from sersflow.api.schemas.sessions import (
     SessionSubsetUpdateResponse,
     SubsetStrategy,
 )
+from sersflow.api.schemas.sessions_qc import SessionQcPreviewRequest, SessionQcPreviewResponse
 from sersflow.client.http import request_json
 from sersflow.client.resources._common import _Base, dump_json
 
@@ -43,6 +44,15 @@ class SessionsResource(_Base):
     def update_subset(self, session_id: str, subset: SubsetStrategy) -> SessionSubsetUpdateResponse:
         data = request_json(self._root.http, "POST", f"/sessions/{session_id}/subset", json_body=dump_json(subset))
         return SessionSubsetUpdateResponse.model_validate(data)
+
+    def qc_preview(self, session_id: str, payload: SessionQcPreviewRequest) -> SessionQcPreviewResponse:
+        data = request_json(
+            self._root.http,
+            "POST",
+            f"/sessions/{session_id}/qc/preview",
+            json_body=dump_json(payload),
+        )
+        return SessionQcPreviewResponse.model_validate(data)
 
     def run(self, session_id: str, payload: SessionRunRequest) -> dict[str, Any]:
         data = request_json(self._root.http, "POST", f"/sessions/{session_id}/run", json_body=dump_json(payload))

@@ -50,11 +50,20 @@ def matrix_job_terminal_statuses() -> frozenset[str]:
     return frozenset({"completed", "failed"})
 
 
+def fit_curve_job_terminal_statuses() -> frozenset[str]:
+    return frozenset({"completed", "failed"})
+
+
 def ensure_analysis_job_ok(status: str, *, job_id: str, error: str | None) -> None:
     if status == "failed":
         raise TerminalJobFailedError(job_id=job_id, status=status, error=error)
 
 
 def ensure_matrix_job_ok(status: str, *, job_id: str, error: str | None) -> None:
+    if status == "failed":
+        raise TerminalJobFailedError(job_id=job_id, status=status, error=error)
+
+
+def ensure_fit_curve_job_ok(status: str, *, job_id: str, error: str | None) -> None:
     if status == "failed":
         raise TerminalJobFailedError(job_id=job_id, status=status, error=error)

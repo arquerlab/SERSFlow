@@ -16,11 +16,12 @@ from sersflow.client.resources.pipelines_lib import PipelinesLibResource
 from sersflow.client.resources.plot import PlotResource
 from sersflow.client.resources.raw import RawResource
 from sersflow.client.resources.sessions import SessionsResource
+from sersflow.client.resources.xps import XpsResource
 
 
 class SersflowClient:
     """
-    Synchronous HTTP client for the SERSFlow FastAPI service.
+    Synchronous HTTP client for the SpecFlow FastAPI service.
 
     Install the optional dependency: ``pip install "sersflow[client]"``.
     """
@@ -54,6 +55,7 @@ class SersflowClient:
         self.plot = PlotResource(self)
         self.analysis = AnalysisResource(self)
         self.explore = ExploreResource(self)
+        self.xps = XpsResource(self)
         self.raw = RawResource(self)
 
     def close(self) -> None:

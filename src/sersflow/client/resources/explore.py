@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from sersflow.api.schemas.explore import (
@@ -14,7 +15,7 @@ from sersflow.api.schemas.explore import (
     SpectrumClusterRequest,
     VIFRequest,
 )
-from sersflow.client.http import request_json, stream_response_to_file
+from sersflow.client.http import raise_for_response, request_json, stream_response_to_file
 from sersflow.client.polling import (
     ensure_matrix_job_ok,
     matrix_job_terminal_statuses,
@@ -37,6 +38,41 @@ class ExploreResource(_Base):
     def get_matrix_job(self, matrix_job_id: str) -> dict[str, Any]:
         data = request_json(self._root.http, "GET", f"/explore/matrix-jobs/{matrix_job_id}")
         return dict(data) if isinstance(data, dict) else {}
+
+    def list_matrix_jobs(
+        self,
+        dataset_id: str,
+        *,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        data = request_json(
+            self._root.http,
+            "GET",
+            "/explore/matrix-jobs",
+            params={"dataset_id": dataset_id, "limit": limit, "offset": offset},
+        )
+        return dict(data) if isinstance(data, dict) else {}
+
+    def import_matrix_job(
+        self,
+        dataset_id: str,
+        csv_path: Path | str,
+        *,
+        analysis_run_id: str | None = None,
+    ) -> MatrixExportResponse:
+        p = Path(csv_path)
+        data_fields: dict[str, Any] = {"dataset_id": dataset_id}
+        if analysis_run_id:
+            data_fields["analysis_run_id"] = analysis_run_id
+        with p.open("rb") as fh:
+            r = self._root.http.post(
+                "/explore/matrix-jobs/import",
+                data=data_fields,
+                files={"file": (p.name, fh, "text/csv")},
+            )
+        raise_for_response(r)
+        return MatrixExportResponse.model_validate(r.json())
 
     def wait_for_matrix_job(
         self,

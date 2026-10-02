@@ -186,3 +186,89 @@ def test_export_pca_csv_streams_to_file() -> None:
         with SersflowClient("http://test", transport=transport) as c:
             c.explore.export_pca_csv_to_file("exp1", "scores", out)
         assert out.read_bytes() == payload
+
+
+def test_pipelines_list_technique_family_param() -> None:
+    seen: dict[str, str] = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/pipelines"
+        seen.update(dict(request.url.params))
+        return httpx.Response(200, json={"items": [], "count": 0})
+
+    transport = httpx.MockTransport(handle)
+    from sersflow.client import SersflowClient
+
+    with SersflowClient("http://test", transport=transport) as c:
+        c.pipelines.list(technique_family="xps")
+    assert seen.get("technique_family") == "xps"
+
+
+def test_xps_apply_and_chemical_states() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/xps/chemical-states":
+            return httpx.Response(
+                200, json={"source": {}, "entries": [], "entry_count": 0, "sections": []}
+            )
+        if request.url.path.endswith("/apply"):
+            return httpx.Response(
+                200,
+                json={
+                    "recipe_id": "r1",
+                    "recipe_pass_energy": 20,
+                    "xps_region": "C1s",
+                    "components": [],
+                    "p0": [],
+                    "bounds_lower": [],
+                    "bounds_upper": [],
+                    "vary": [],
+                    "param_links": [],
+                    "warnings": [],
+                },
+            )
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handle)
+    from sersflow.client import SersflowClient
+
+    with SersflowClient("http://test", transport=transport) as c:
+        assert c.xps.chemical_states(element="C")["entry_count"] == 0
+        applied = c.xps.apply_fitting_recipe("r1", pass_energy=20)
+        assert applied["xps_region"] == "C1s"
+
+
+def test_meta_formats_and_pipeline_steps() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/meta/formats":
+            return httpx.Response(200, json={"items": [{"id": "vamas", "technique_family": "xps"}]})
+        if request.url.path == "/meta/pipeline-steps":
+            assert "technique_family" in dict(request.url.params)
+            return httpx.Response(200, json={"items": [{"id": "fitting"}]})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handle)
+    from sersflow.client import SersflowClient
+
+    with SersflowClient("http://test", transport=transport) as c:
+        assert c.meta.formats()["items"][0]["id"] == "vamas"
+        assert c.meta.pipeline_steps(technique_family="xps")["items"][0]["id"] == "fitting"
+
+
+def test_plot_series_value_and_matrix_import() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/plot/series-value":
+            assert dict(request.url.params) == {"relative_path": "a.txt", "index": "3"}
+            return httpx.Response(200, json={"index": 3, "value": 1.2})
+        if request.url.path == "/explore/matrix-jobs/import":
+            return httpx.Response(200, json={"matrix_job_id": "mj1", "status": "completed"})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handle)
+    from sersflow.client import SersflowClient
+
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = Path(tmp) / "m.csv"
+        csv_path.write_text("id,x\n1,2\n", encoding="utf-8")
+        with SersflowClient("http://test", transport=transport) as c:
+            assert c.plot.series_value("a.txt", 3)["value"] == 1.2
+            assert c.explore.import_matrix_job("ds1", csv_path).matrix_job_id == "mj1"

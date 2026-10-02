@@ -9,7 +9,7 @@ from sersflow.client.resources._common import _Base
 if TYPE_CHECKING:
     from sersflow.client.client import SersflowClient
 
-OPENAPI_VERSION_EXPECTED = "0.1.0"
+OPENAPI_VERSION_EXPECTED = "0.2.0"
 
 
 class MetaResource(_Base):
@@ -32,8 +32,34 @@ class MetaResource(_Base):
         ver = info.get("version")
         if isinstance(ver, str) and ver != exp:
             warnings.warn(
-                f"SERSFlow OpenAPI version is {ver!r}; Python client was built against {exp!r}.",
+                f"SpecFlow OpenAPI version is {ver!r}; Python client was built against {exp!r}.",
                 UserWarning,
                 stacklevel=2,
             )
         return spec
+
+    def formats(self) -> dict[str, Any]:
+        data = request_json(self._root.http, "GET", "/meta/formats")
+        return dict(data) if isinstance(data, dict) else {}
+
+    def format_by_id(self, format_id: str) -> dict[str, Any]:
+        data = request_json(self._root.http, "GET", f"/meta/formats/{format_id}")
+        return dict(data) if isinstance(data, dict) else {}
+
+    def pipeline_steps(
+        self,
+        *,
+        technique_family: str | None = None,
+        capabilities: list[str] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if technique_family is not None:
+            params["technique_family"] = technique_family
+        if capabilities:
+            params["capability"] = list(capabilities)
+        data = request_json(self._root.http, "GET", "/meta/pipeline-steps", params=params or None)
+        return dict(data) if isinstance(data, dict) else {}
+
+    def pipeline_step_by_id(self, step_id: str) -> dict[str, Any]:
+        data = request_json(self._root.http, "GET", f"/meta/pipeline-steps/{step_id}")
+        return dict(data) if isinstance(data, dict) else {}

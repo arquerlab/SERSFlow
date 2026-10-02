@@ -35,7 +35,7 @@ async def _safe_thread(fn: Callable[[], T]) -> str:
 def register_resources(mcp: FastMCP, ctx: RuntimeContext) -> None:
     @mcp.resource("sersflow://pipelines")
     async def pipelines_catalog() -> str:
-        """Saved pipeline catalog (id, name, n_steps)."""
+        """Saved pipeline catalog (id, name, n_steps, technique_family)."""
 
         def _run() -> str:
             client = ctx.ensure_ready()
@@ -71,10 +71,13 @@ def register_resources(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 "tags": tag_names,
                 "path_count": len(paths) if isinstance(paths, dict) else 0,
                 "capability_blurb": (
-                    "SERSFlow MCP covers io, datasets, sessions, pipelines (create/list), "
-                    "analysis runs/exports, and explore correlation/VIF/PCA/sPCA/matrix jobs. "
-                    "Explore tools return compact summaries; use export + read_tabular_file for tables. "
-                    "No delete or library overwrite tools."
+                    "SpecFlow MCP covers io (upload/unload/purge/labels), datasets (incl. VAMAS/XPS "
+                    "create options + package import/export), sessions (pipeline/subset/QC/run), "
+                    "pipelines (create/list/import/export), XPS libraries (chemical-states + fitting "
+                    "recipes index/apply-to-session), analysis (runs/exports/fit-curve jobs), "
+                    "explore (correlation/VIF/PCA/sPCA/matrix/cluster/fpca), and plot tools that "
+                    "write figure paths under export_dir. Explore tools return compact summaries; "
+                    "use export + read_tabular_file for tables. No delete tools."
                 ),
             }
             return json.dumps(payload, default=str)
@@ -94,5 +97,69 @@ def register_resources(mcp: FastMCP, ctx: RuntimeContext) -> None:
             data = man.model_dump() if hasattr(man, "model_dump") else man
             cached = ctx.export_paths.get(f"analysis:{run_id}", [])
             return json.dumps({"manifest": data, "local_export_paths": cached}, default=str)
+
+        return await _safe_thread(_run)
+
+    @mcp.resource("sersflow://meta/formats")
+    async def meta_formats() -> str:
+        """File format catalog (id + technique_family)."""
+
+        def _run() -> str:
+            client = ctx.ensure_ready()
+            bad = ctx.require_compatible()
+            if bad is not None:
+                return json.dumps(bad, default=str)
+            data = client.meta.formats()
+            items = []
+            for it in data.get("items") or []:
+                if isinstance(it, dict):
+                    items.append(
+                        {
+                            "id": it.get("id"),
+                            "technique_family": it.get("technique_family"),
+                            "suffixes": it.get("suffixes"),
+                            "capabilities": it.get("capabilities"),
+                        }
+                    )
+            return json.dumps({"items": items, "count": len(items)}, default=str)
+
+        return await _safe_thread(_run)
+
+    @mcp.resource("sersflow://xps/fitting-recipes/index")
+    async def xps_recipes_index() -> str:
+        """Compact XPS fitting-recipe index snapshot (capped)."""
+
+        def _run() -> str:
+            client = ctx.ensure_ready()
+            bad = ctx.require_compatible()
+            if bad is not None:
+                return json.dumps(bad, default=str)
+            data = client.xps.fitting_recipes_index(limit=100)
+            return json.dumps(data, default=str)
+
+        return await _safe_thread(_run)
+
+    @mcp.resource("sersflow://xps/chemical-states/summary")
+    async def xps_chemical_states_summary() -> str:
+        """Chemical-states catalog source metadata (no entry dump)."""
+
+        def _run() -> str:
+            client = ctx.ensure_ready()
+            bad = ctx.require_compatible()
+            if bad is not None:
+                return json.dumps(bad, default=str)
+            # Tiny filtered probe for source metadata only
+            data = client.xps.chemical_states(element="Ag", line="3d", include_sections=False)
+            return json.dumps(
+                {
+                    "source": data.get("source"),
+                    "probe": {"element": "Ag", "line": "3d", "entry_count": data.get("entry_count")},
+                    "hint": (
+                        "Use get_xps_chemical_states with element/line/q/provenance; "
+                        "never request the full catalog."
+                    ),
+                },
+                default=str,
+            )
 
         return await _safe_thread(_run)

@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sersflow.api.schemas.datasets import (
     DatasetCreateRequest,
     DatasetCreateResponse,
     DatasetGetResponse,
+    DatasetImportResponse,
     DatasetListResponse,
+    DatasetRestoreUploadsRequest,
+    DatasetRestoreUploadsResponse,
 )
 from sersflow.api.schemas.metrics import DatasetMetricsRequest, DatasetMetricsResponse
-from sersflow.client.http import request_json
+from sersflow.client.http import request_json, stream_response_to_file
 from sersflow.client.resources._common import _Base, dump_json
 
 if TYPE_CHECKING:
@@ -46,6 +50,48 @@ class DatasetsResource(_Base):
             params={"limit": limit, "offset": offset},
         )
         return dict(data) if isinstance(data, dict) else {}
+
+    def xps_regions(self, dataset_id: str) -> dict[str, Any]:
+        data = request_json(self._root.http, "GET", f"/datasets/{dataset_id}/xps-regions")
+        return dict(data) if isinstance(data, dict) else {}
+
+    def filter_fields(self, dataset_id: str) -> dict[str, Any]:
+        data = request_json(self._root.http, "GET", f"/datasets/{dataset_id}/filter-fields")
+        return dict(data) if isinstance(data, dict) else {}
+
+    def export_to_file(self, dataset_id: str, dest: Path | str) -> None:
+        stream_response_to_file(
+            self._root.http,
+            "GET",
+            f"/datasets/{dataset_id}/export",
+            dest,
+        )
+
+    def import_package(self, path: Path | str) -> DatasetImportResponse:
+        p = Path(path)
+        with p.open("rb") as fh:
+            r = self._root.http.post(
+                "/datasets/import",
+                files={"file": (p.name, fh, "application/octet-stream")},
+            )
+        from sersflow.client.http import raise_for_response
+
+        raise_for_response(r)
+        return DatasetImportResponse.model_validate(r.json())
+
+    def restore_uploads(
+        self,
+        dataset_id: str,
+        payload: DatasetRestoreUploadsRequest | None = None,
+    ) -> DatasetRestoreUploadsResponse:
+        body = dump_json(payload) if payload is not None else {}
+        data = request_json(
+            self._root.http,
+            "POST",
+            f"/datasets/{dataset_id}/restore-uploads",
+            json_body=body,
+        )
+        return DatasetRestoreUploadsResponse.model_validate(data)
 
     def delete(self, dataset_id: str) -> dict[str, Any]:
         data = request_json(self._root.http, "DELETE", f"/datasets/{dataset_id}")

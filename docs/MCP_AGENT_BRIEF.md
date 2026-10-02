@@ -1,11 +1,12 @@
-# SERSFlow MCP — agent brief
+# SpecFlow MCP — agent brief
 
-Living notes for designing an MCP over the SERSFlow programmatic API / Python client.
+Living notes for designing an MCP over the SpecFlow programmatic API / Python client.
 Update this file as product decisions are made; it is the source of truth for MCP scope.
+OpenAPI / MCP version: **0.2.0**.
 
 ## Goals
 
-- Enable an LLM agent to drive SERSFlow without the UI for spectral analysis workflows.
+- Enable an LLM agent to drive SpecFlow without the UI for spectral analysis workflows.
 - Agent inputs: spectral data, metadata, and context (experiment type + analysis objective).
 - Agent can upload data, create or reuse datasets and pipelines, run analysis/explore, and export CSV for humans or other agents (including the same agent in a later step).
 
@@ -68,33 +69,30 @@ Update this file as product decisions are made; it is the source of truth for MC
 - MCP tools call the existing Python client (`sersflow[client]`), not raw OpenAPI codegen.
 - Benefits: shared polling, parsing, and error handling with `examples/` and scripts.
 
-### Domains in v1 vs later
+### Domains in scope vs still out
 
-**In v1 (natural agent path + post-run explore):**
+**In scope (agent path + post-run explore + XPS libraries):**
 
-- `io` — upload / resolve files
-- `datasets` — create, list, get (no delete via MCP)
-- `sessions` — create/bind working context as needed
-- `pipelines` / pipeline run — list, reuse, create new named pipelines (no in-place edit/delete of existing)
-- `fitting` — read-only catalog / enough to choose fit models when building pipelines
-- `analysis` — start runs, wait/status, export CSV / observation tables
-- `explore` — post-run procedures including at least:
-  - correlation (pairwise and/or correlation matrix)
-  - VIF
-  - PCA / sparse PCA (feature-table)
-  - matrix PCA / sPCA (spectrum-matrix path)
-  - related matrix / explore jobs needed for those workflows
+- `io` — upload / unload / purge (confirm) / labels
+- `datasets` — create (technique + VAMAS options), list, get, package import/export (no delete via MCP)
+- `sessions` — create/bind, pipeline/subset, QC preview, run
+- `pipelines` — list/create/import/export (no in-place overwrite/delete via MCP)
+- `fitting` — catalog + interactive fit
+- `xps` — chemical-states + fitting-recipes index/catalog/apply + apply-to-session
+- `analysis` — runs, wait/status, observation schema/columns, feature/observation/bundle export, fit-curve jobs
+- `explore` — correlation, VIF, PCA/sPCA, matrix jobs (+ import/list), fpca-discrete, cluster, spectrum-cluster, fpca-fda
+- `plot` — info/points tools that write figure paths under `export_dir`
+- `meta` — formats, pipeline-steps, baseline-methods
 
-**Later / out of v1 unless needed:**
+**Still out of MCP:**
 
-- `plot` and binary blobs (images, heavy `.npz`/plotly payloads) — prefer CSV/JSON summaries and file paths
-- niche metrics helpers, refined FPCA, UI-only endpoints
-- delete / mutate-other-user operations (blocked by product policy)
+- Delete tools (datasets, pipelines, matrix jobs, analysis runs)
+- Dumping full Plotly / chemical-states catalogs into model context
 
 ### Tool style: hybrid
 
 - **Thin tools** for checkpointed control: list/create/reuse assets, start job, poll status, export CSV, call individual explore ops.
-- **Optional recipe tools** for common end-to-end outcomes once autonomy increases (e.g. “correlation from named peaks after analysis”), without replacing thin tools.
+- **XPS recipe merge tools** (`post_xps_apply_recipe_to_session` / `…_pipeline_draft`) for applying packaged libraries without hand-editing param blobs.
 
 ## Decisions (auth, tenancy, deployment)
 
@@ -199,7 +197,7 @@ Update this file as product decisions are made; it is the source of truth for MC
 
 ### Ship form
 
-- **Bundled with the SERSFlow API** in this repository (not a separate repo): install/run alongside `sersflow-api` (package entrypoint / extra next to the API distribution).
+- **Bundled with the SpecFlow API** in this repository (not a separate repo): install/run alongside `sersflow-api` (package entrypoint / extra next to the API distribution).
 
 ### Target clients
 
@@ -261,48 +259,51 @@ Update this file as product decisions are made; it is the source of truth for MC
 
 ### v1 tool style
 
-- **Thin tools only** for first ship (no multi-step recipe tools yet). Recipes remain a later/autonomy enhancement.
+- Thin HTTP-mirrored tools plus XPS library apply-to-session helpers.
 
 ## Status
 
-**Implemented (v1):** package `sersflow.mcp`, entrypoint `sersflow-mcp`, setup docs in [MCP_SETUP.md](MCP_SETUP.md).
+**Implemented:** package `sersflow.mcp`, entrypoint `sersflow-mcp`, OpenAPI/MCP **0.2.0**, setup docs in [MCP_SETUP.md](MCP_SETUP.md).
 
-## v1 MCP tools (HTTP-mirrored)
+## MCP tools (HTTP-mirrored, SpecFlow 0.2)
 
 | Tool | Purpose |
 |------|---------|
-| `get_health` | API health |
-| `get_mcp_meta` | Versions, auth mode, warnings, non-secret config |
-| `post_io_upload` | Upload files/folder (`confirm` if >100MB) |
-| `get_io_uploads` | List uploads |
-| `post_datasets` / `get_datasets` / `get_datasets_by_id` / `get_datasets_spectrum_axes` | Datasets |
-| `post_sessions` / `get_sessions` / `get_sessions_by_id` | Sessions |
-| `put_sessions_pipeline` / `put_sessions_subset` | Session working pipeline/subset |
-| `get_pipelines` / `get_pipelines_by_id` / `post_pipelines` | Library pipelines (no overwrite) |
-| `get_fitting_models` | Fitting catalog |
-| `post_analysis_runs` / `get_analysis_runs` / `get_analysis_runs_by_id` | Analysis runs |
-| `get_analysis_jobs` / `post_analysis_jobs_wait` | Job poll / wait |
-| `get_analysis_runs_export_manifest` / `get_analysis_runs_export` / `get_analysis_runs_observation` | Exports → file paths |
-| `post_explore_correlation` / `post_explore_vif` / `post_explore_pca` | Feature-table explore (**compact summaries**, not full matrices) |
-| `get_explore_runs_export` | PCA CSV export path |
-| `post_explore_matrix_jobs` / `get_explore_matrix_jobs` / `post_explore_matrix_jobs_wait` / `get_explore_matrix_jobs_export` | Matrix jobs (validate args; fitting confirm when pipeline/session used) |
-| `post_explore_fpca_discrete` | Spectrum-matrix PCA/sPCA (compact summary) |
-| `read_tabular_file` | Explicit CSV/Parquet slice (allowlisted paths) |
+| `get_health` / `get_mcp_meta` | Health + versions (expect OpenAPI 0.2.0) |
+| `get_meta_formats` / `get_meta_formats_by_id` / `get_meta_pipeline_steps` / `get_meta_pipeline_steps_by_id` / `get_pipeline_baseline_methods` | Catalogs |
+| `post_io_upload` / `get_io_uploads` / `get_io_unloaded` / `post_io_unload` / `post_io_purge_preview` / `post_io_purge` / `post_io_labels_auto` / `post_io_labels_update` | IO lifecycle |
+| `post_datasets` (+ technique / VAMAS) / list / get / spectrum-axes / xps-regions / filter-fields / export / import | Datasets |
+| `post_sessions` / list / get / `put_sessions_pipeline` / `put_sessions_subset` / `post_sessions_qc_preview` / `post_sessions_run` | Sessions |
+| `get_pipelines` (+ technique filter) / get / `post_pipelines` / export / import | Library pipelines |
+| `get_fitting_models` / `post_fitting_fit` | Fitting |
+| `get_xps_chemical_states` / `get_xps_fitting_recipes_index` / `get_xps_fitting_recipes` / `apply_xps_fitting_recipe` / `post_xps_apply_recipe_to_session` / `post_xps_apply_recipe_to_pipeline_draft` | XPS libraries |
+| Analysis runs / jobs / observation schema+columns / exports / fit-curve jobs | Analysis |
+| Explore correlation/VIF/PCA/fpca/cluster/matrix (+ list/import) | Explore |
+| Plot kinds/info/points/heatmap/map-preview/`get_plot_series_value` (paths under export_dir) | Plot |
+| `read_tabular_file` | Explicit CSV/Parquet slice |
 
-## v1 MCP resources
+### XPS library loop
+
+search chemical states (optional) → recipe index → recipes/methods if needed → apply → merge into session → analysis / fit-curve / explore.
+
+## MCP resources
 
 | URI | Content |
 |-----|---------|
 | `sersflow://pipelines` | Saved pipeline catalog |
 | `sersflow://openapi/summary` | Capability sheet |
 | `sersflow://analysis/runs/{run_id}/export/manifest` | Manifest + local export paths |
+| `sersflow://meta/formats` | Format id + technique_family |
+| `sersflow://xps/fitting-recipes/index` | Capped recipe index |
+| `sersflow://xps/chemical-states/summary` | Catalog source hint |
 
 ## Open decisions (later)
 
 - Exact checkpoint UX text (chat wording before `confirm=true`)
-- v2 prompt templates and recipe tools
+- v2 prompt templates for multi-step objectives
 
 ## Later sections (TBD)
 
 - HTTP/SSE transport for remote agents
 - API key auth when the platform adds it
+- Python package rename away from `sersflow` (separate migration)

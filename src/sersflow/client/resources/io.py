@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 from sersflow.api.schemas.io import (
     AutoLabelsRequest,
+    PurgePreviewRequest,
+    PurgePreviewResponse,
     PurgeRequest,
     PurgeResponse,
     UnloadRequest,
@@ -28,7 +30,7 @@ class IoResource(_Base):
         self,
         folder: Path | str,
         *,
-        pattern: str = "*.txt",
+        pattern: str = "*",
         recursive: bool = True,
         base_dir: Path | str | None = None,
     ) -> UploadResult:
@@ -83,6 +85,15 @@ class IoResource(_Base):
     def unload(self, payload: UnloadRequest) -> str:
         body = payload.model_dump(mode="json", exclude_none=True)
         return request_text(self._root.http, "POST", "/io/unload", json_body=body)
+
+    def purge_preview(self, payload: PurgePreviewRequest | None = None) -> PurgePreviewResponse:
+        body = (
+            payload.model_dump(mode="json", exclude_none=True)
+            if payload is not None
+            else {}
+        )
+        data = request_json(self._root.http, "POST", "/io/purge/preview", json_body=body)
+        return PurgePreviewResponse.model_validate(data)
 
     def purge(self, payload: PurgeRequest) -> PurgeResponse:
         body = payload.model_dump(mode="json", exclude_none=True)

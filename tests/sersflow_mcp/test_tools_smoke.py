@@ -26,7 +26,7 @@ def test_analysis_export_smoke(tmp_path: Path) -> None:
         if path == "/datasets" and request.method == "GET":
             return httpx.Response(200, json={"items": [], "count": 0})
         if path == "/openapi.json":
-            return httpx.Response(200, json={"info": {"version": "0.1.0", "title": "SpecFlow API"}})
+            return httpx.Response(200, json={"info": {"version": "0.2.0", "title": "SpecFlow API"}})
         if path == "/io/upload":
             return httpx.Response(200, text="Uploaded 1 file(s) to batch abc123 (0.001 MB).")
         if path == "/datasets" and request.method == "POST":
@@ -78,7 +78,7 @@ def test_analysis_export_smoke(tmp_path: Path) -> None:
     client = SersflowClient("http://test", transport=transport)
     ctx.client = client
     ctx.auth_mode = "open_or_disabled"
-    ctx.server_openapi_version = "0.1.0"
+    ctx.server_openapi_version = "0.2.0"
     ctx._ready = True
 
     sample = tmp_path / "a.txt"

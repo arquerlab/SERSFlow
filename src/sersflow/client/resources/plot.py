@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 from sersflow.api.schemas.plot import (
     MapInfoResponse,
     MapPointsPlotRequest,
+    MultiInfoResponse,
+    MultiPointsPlotRequest,
     PlotFigureResponse,
     PlotKindsResponse,
     SeriesHeatmapRequest,
@@ -76,4 +78,17 @@ class PlotResource(_Base):
 
     def map_points(self, payload: MapPointsPlotRequest) -> PlotFigureResponse:
         data = request_json(self._root.http, "POST", "/plot/map-points", json_body=dump_json(payload))
+        return PlotFigureResponse.model_validate(data)
+
+    def multi_info(self, relative_path: str) -> MultiInfoResponse:
+        data = request_json(
+            self._root.http,
+            "GET",
+            "/plot/multi-info",
+            params={"relative_path": relative_path},
+        )
+        return MultiInfoResponse.model_validate(data)
+
+    def multi_points(self, payload: MultiPointsPlotRequest) -> PlotFigureResponse:
+        data = request_json(self._root.http, "POST", "/plot/multi-points", json_body=dump_json(payload))
         return PlotFigureResponse.model_validate(data)

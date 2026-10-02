@@ -23,7 +23,7 @@ from sersflow.api.routers.explore import router as explore_router
 from sersflow.api.routers.xps import router as xps_router
 
 
-app = FastAPI(title="SpecFlow API", version="0.1.0")
+app = FastAPI(title="SpecFlow API", version="0.2.0")
 app.add_middleware(DataScopeMiddleware)
 app.add_middleware(AuthMiddleware)
 

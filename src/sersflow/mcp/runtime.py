@@ -156,7 +156,7 @@ class RuntimeContext:
             return
         if not self.config.api_start_enabled:
             raise RuntimeError(
-                f"SERSFlow API not reachable at {self.config.base_url}. "
+                f"SpecFlow API not reachable at {self.config.base_url}. "
                 "Start sersflow-api or set api_start_enabled=true in MCP TOML."
             )
         # Re-check before spawn (race with another process).
@@ -190,7 +190,7 @@ class RuntimeContext:
         }
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
-        logger.info("Starting SERSFlow API: %s", " ".join(cmd))
+        logger.info("Starting SpecFlow API: %s", " ".join(cmd))
         self._proc = subprocess.Popen(cmd, **kwargs)
         self.spawned_by_mcp = True
         self._register_cleanup()
@@ -214,7 +214,7 @@ class RuntimeContext:
                     f"sersflow-api exited early (code={self._proc.returncode}). See {log_path}"
                 )
             if self.health_ok():
-                logger.info("SERSFlow API is healthy at %s", self.config.base_url)
+                logger.info("SpecFlow API is healthy at %s", self.config.base_url)
                 return
             time.sleep(self.config.api_health_poll_s)
         raise RuntimeError(

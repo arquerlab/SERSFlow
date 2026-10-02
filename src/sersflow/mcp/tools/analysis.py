@@ -49,6 +49,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
         Provide session_id OR (pipeline + subset). pipeline_id/pipeline_name are labels unless
         used for fitting confirm resolution; they do not alone load a pipeline for the run.
+        Dataset and pipeline technique_family must match (vibrational or xps).
         """
 
         def _run():
@@ -243,5 +244,196 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
             )
             ctx.record_export(f"analysis:{run_id}", dest)
             return summarize.export_result(path=dest, run_id=run_id, kind="observation")
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="get_analysis_runs_observation_schema")
+    async def get_analysis_runs_observation_schema(run_id: str) -> str:
+        """GET /analysis/runs/{run_id}/observation-schema."""
+
+        def _run():
+            schema = ctx.get_client().analysis.observation_schema(run_id)
+            data = schema.model_dump() if hasattr(schema, "model_dump") else schema
+            return {"ok": True, **data}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="get_analysis_runs_observation_columns")
+    async def get_analysis_runs_observation_columns(
+        run_id: str,
+        cols: str,
+        max_rows: int | None = 500,
+    ) -> str:
+        """GET observation column slice (keep max_rows modest for context size)."""
+
+        def _run():
+            data = ctx.get_client().analysis.observation_columns(
+                run_id, cols, max_rows=max_rows
+            )
+            return {"ok": True, **data}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="get_analysis_runs_export_bundle")
+    async def get_analysis_runs_export_bundle(
+        run_id: str,
+        output_path: str | None = None,
+        confirm: bool = False,
+    ) -> str:
+        """Download analysis export bundle ZIP to export_dir."""
+
+        def _run():
+            dest = ctx.resolve_export_path(
+                output_path, f"analysis_{run_id}_bundle.zip", confirm=confirm
+            )
+            ctx.get_client().analysis.export_bundle_to_file(run_id, dest)
+            ctx.record_export(f"analysis:{run_id}", dest)
+            return summarize.export_result(path=dest, run_id=run_id, kind="bundle")
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="get_analysis_runs_fitting_steps")
+    async def get_analysis_runs_fitting_steps(run_id: str) -> str:
+        """GET /analysis/runs/{run_id}/fitting-steps."""
+
+        def _run():
+            data = ctx.get_client().analysis.fitting_steps(run_id)
+            return {"ok": True, **data}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_analysis_runs_fitting_preview")
+    async def post_analysis_runs_fitting_preview(
+        run_id: str,
+        spectrum_ids: list[str],
+        fitting_step_num: int,
+        return_curve: bool = False,
+    ) -> str:
+        """POST fitting preview (compact; default return_curve=false)."""
+
+        def _run():
+            from sersflow.api.schemas.analysis import FittingPreviewRequest
+
+            req = FittingPreviewRequest(
+                spectrum_ids=spectrum_ids,
+                fitting_step_num=fitting_step_num,
+                return_curve=return_curve,
+            )
+            data = ctx.get_client().analysis.fitting_preview(run_id, req)
+            # Compact: drop large curve arrays unless explicitly requested
+            if not return_curve and isinstance(data, dict):
+                items = data.get("items") or data.get("previews") or []
+                if isinstance(items, list):
+                    compact_items = []
+                    for it in items:
+                        if not isinstance(it, dict):
+                            continue
+                        compact_items.append(
+                            {
+                                k: v
+                                for k, v in it.items()
+                                if k
+                                not in {
+                                    "x",
+                                    "y",
+                                    "y_fit",
+                                    "residual",
+                                    "components",
+                                    "curve",
+                                }
+                            }
+                        )
+                    data = {**data, "items": compact_items}
+            return {"ok": True, "data": data}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_analysis_fit_curve_jobs")
+    async def post_analysis_fit_curve_jobs(
+        run_id: str,
+        fitting_step_num: int,
+        content: Literal["data_fit_resid", "data_fit_components_resid"] = "data_fit_components_resid",
+        format: Literal["csv", "png", "svg"] = "csv",
+    ) -> str:
+        """POST /analysis/runs/{run_id}/fit-curve-jobs."""
+
+        def _run():
+            from sersflow.api.schemas.analysis import FitCurveJobCreateRequest
+
+            req = FitCurveJobCreateRequest(
+                fitting_step_num=fitting_step_num, content=content, format=format
+            )
+            resp = ctx.get_client().analysis.create_fit_curve_job(run_id, req)
+            return {
+                "ok": True,
+                "job_id": resp.job_id,
+                "status": resp.status,
+                "run_id": run_id,
+            }
+
+        return await tool_call(
+            ctx,
+            _run,
+            status_tool="get_analysis_fit_curve_jobs",
+            wait_tool="post_analysis_fit_curve_jobs_wait",
+        )
+
+    @mcp.tool(name="get_analysis_fit_curve_jobs")
+    async def get_analysis_fit_curve_jobs(job_id: str) -> str:
+        """GET /analysis/fit-curve-jobs/{job_id}."""
+
+        def _run():
+            job = ctx.get_client().analysis.get_fit_curve_job(job_id)
+            return summarize.job_summary(job)
+
+        return await tool_call(
+            ctx,
+            _run,
+            status_tool="get_analysis_fit_curve_jobs",
+            wait_tool="post_analysis_fit_curve_jobs_wait",
+        )
+
+    @mcp.tool(name="post_analysis_fit_curve_jobs_wait")
+    async def post_analysis_fit_curve_jobs_wait(
+        job_id: str,
+        timeout_s: float | None = None,
+        poll_interval_s: float | None = None,
+    ) -> str:
+        """Wait for a fit-curve export job."""
+
+        def _run():
+            job = ctx.get_client().analysis.wait_for_fit_curve_job(
+                job_id,
+                timeout_s=timeout_s if timeout_s is not None else ctx.config.job_wait_timeout_s,
+                poll_interval_s=(
+                    poll_interval_s
+                    if poll_interval_s is not None
+                    else ctx.config.job_poll_interval_s
+                ),
+            )
+            return summarize.job_summary(job)
+
+        return await tool_call(
+            ctx,
+            _run,
+            status_tool="get_analysis_fit_curve_jobs",
+            wait_tool="post_analysis_fit_curve_jobs_wait",
+        )
+
+    @mcp.tool(name="get_analysis_fit_curve_jobs_download")
+    async def get_analysis_fit_curve_jobs_download(
+        job_id: str,
+        output_path: str | None = None,
+        confirm: bool = False,
+    ) -> str:
+        """Download completed fit-curve job ZIP to export_dir."""
+
+        def _run():
+            dest = ctx.resolve_export_path(
+                output_path, f"fit_curves_{job_id}.zip", confirm=confirm
+            )
+            ctx.get_client().analysis.export_fit_curve_job_to_file(job_id, dest)
+            ctx.record_export(f"fit_curve:{job_id}", dest)
+            return summarize.export_result(path=dest, job_id=job_id, kind="fit_curves")
 
         return await tool_call(ctx, _run)

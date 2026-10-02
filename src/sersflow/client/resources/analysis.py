@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from sersflow.api.schemas.analysis import (
@@ -10,12 +11,18 @@ from sersflow.api.schemas.analysis import (
     AnalysisRunCreateResponse,
     AnalysisRunDetailResponse,
     AnalysisRunSummary,
+    FitCurveJobCreateRequest,
+    FitCurveJobCreateResponse,
+    FitCurveJobStatusResponse,
+    FittingPreviewRequest,
     ObservationSchemaResponse,
 )
 from sersflow.client.http import raise_for_response, request_bytes, request_json, stream_response_to_file
 from sersflow.client.polling import (
     analysis_job_terminal_statuses,
     ensure_analysis_job_ok,
+    ensure_fit_curve_job_ok,
+    fit_curve_job_terminal_statuses,
     poll_until,
 )
 from sersflow.client.resources._common import _Base, dump_json
@@ -91,7 +98,6 @@ class AnalysisResource(_Base):
         timeout_s: float = 3600.0,
         poll_interval_s: float = 0.25,
     ) -> AnalysisJobStatusResponse:
-        """Alias for :meth:`wait_for_job` (same behavior; name matches API docs)."""
         return self.wait_for_job(job_id, timeout_s=timeout_s, poll_interval_s=poll_interval_s)
 
     def observation_schema(self, run_id: str) -> ObservationSchemaResponse:
@@ -111,12 +117,81 @@ class AnalysisResource(_Base):
         data = request_json(self._root.http, "GET", f"/analysis/runs/{run_id}/observation-columns", params=params)
         return dict(data) if isinstance(data, dict) else {}
 
+    def fitting_steps(self, run_id: str) -> dict[str, Any]:
+        data = request_json(self._root.http, "GET", f"/analysis/runs/{run_id}/fitting-steps")
+        return dict(data) if isinstance(data, dict) else {}
+
+    def fitting_preview(self, run_id: str, payload: FittingPreviewRequest) -> dict[str, Any]:
+        data = request_json(
+            self._root.http,
+            "POST",
+            f"/analysis/runs/{run_id}/fitting-preview",
+            json_body=dump_json(payload),
+        )
+        return dict(data) if isinstance(data, dict) else {}
+
+    def create_fit_curve_job(
+        self, run_id: str, payload: FitCurveJobCreateRequest
+    ) -> FitCurveJobCreateResponse:
+        data = request_json(
+            self._root.http,
+            "POST",
+            f"/analysis/runs/{run_id}/fit-curve-jobs",
+            json_body=dump_json(payload),
+        )
+        return FitCurveJobCreateResponse.model_validate(data)
+
+    def get_fit_curve_job(self, job_id: str) -> FitCurveJobStatusResponse:
+        data = request_json(self._root.http, "GET", f"/analysis/fit-curve-jobs/{job_id}")
+        return FitCurveJobStatusResponse.model_validate(data)
+
+    def wait_for_fit_curve_job(
+        self,
+        job_id: str,
+        *,
+        timeout_s: float = 3600.0,
+        poll_interval_s: float = 0.25,
+    ) -> FitCurveJobStatusResponse:
+        terminals = fit_curve_job_terminal_statuses()
+
+        def fetch() -> FitCurveJobStatusResponse:
+            return self.get_fit_curve_job(job_id)
+
+        def terminal(j: FitCurveJobStatusResponse) -> bool:
+            return j.status in terminals
+
+        last = poll_until(
+            fetch,
+            job_id=job_id,
+            is_terminal=terminal,
+            timeout_s=timeout_s,
+            initial_interval_s=poll_interval_s,
+        )
+        ensure_fit_curve_job_ok(last.status, job_id=job_id, error=last.error)
+        return last
+
+    def export_fit_curve_job_to_file(self, job_id: str, dest: Path | str) -> None:
+        stream_response_to_file(
+            self._root.http,
+            "GET",
+            f"/analysis/fit-curve-jobs/{job_id}/download",
+            dest,
+        )
+
     def export_manifest(self, run_id: str) -> AnalysisExportManifest:
         data = request_json(self._root.http, "GET", f"/analysis/runs/{run_id}/export/manifest")
         return AnalysisExportManifest.model_validate(data)
 
     def export_bundle_bytes(self, run_id: str) -> bytes:
         return request_bytes(self._root.http, "GET", f"/analysis/runs/{run_id}/export/bundle")
+
+    def export_bundle_to_file(self, run_id: str, dest: Path | str) -> None:
+        stream_response_to_file(
+            self._root.http,
+            "GET",
+            f"/analysis/runs/{run_id}/export/bundle",
+            dest,
+        )
 
     def export_observation_to_file(
         self,
@@ -165,7 +240,6 @@ class AnalysisResource(_Base):
         layout: Literal["wide", "long"] = "wide",
         max_rows: int | None = None,
     ) -> Iterator[bytes]:
-        """Yield response body chunks for ``GET /analysis/runs/{run_id}/export`` (streaming CSV)."""
         params: dict[str, Any] = {"layout": layout}
         if max_rows is not None:
             params["max_rows"] = max_rows
@@ -182,7 +256,6 @@ class AnalysisResource(_Base):
         join: str = "labels,axes",
         max_rows: int | None = None,
     ) -> Iterator[bytes]:
-        """Yield response chunks for ``GET /analysis/runs/{run_id}/observation``."""
         params: dict[str, Any] = {"layout": layout, "format": format, "join": join}
         if max_rows is not None:
             params["max_rows"] = max_rows
