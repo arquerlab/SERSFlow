@@ -67,19 +67,22 @@ def preprocess() -> HTMLResponse:
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SpecFlow • Preprocessing</title>
+    <link rel="icon" type="image/png" href="/static/SpecFlow.png" />
     <link rel="stylesheet" href="/static/styles.css" />
 {css_links}
   </head>
   <body>
     <div class="wrap">
       <header>
-        <h1>SpecFlow</h1>
-        <div class="links">
-          <a href="/">Legacy UI</a>
-          <a href="/docs">Docs</a>
-          <a href="/openapi.json">OpenAPI</a>
-          <a href="/health">Health</a>
+        <div class="app-header-left">
+          <div class="links">
+            <a href="/">Legacy UI</a>
+            <a href="/docs">Docs</a>
+            <a href="/openapi.json">OpenAPI</a>
+            <a href="/health">Health</a>
+          </div>
         </div>
+        <img class="specflow-logo specflow-logo--header" src="/static/SpecFlow.png" alt="SpecFlow" />
       </header>
       <div id="preprocess-root"></div>
     </div>

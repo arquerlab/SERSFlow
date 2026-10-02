@@ -25,14 +25,23 @@ body {
 .wrap {
   max-width: min(var(--page-max-width), calc(100vw - 36px));
   margin: 0 auto;
-  padding: 28px 18px 60px;
+  padding: 12px 18px 48px;
 }
 
 header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.app-header-left {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 h1 {
@@ -41,10 +50,41 @@ h1 {
   letter-spacing: 0.2px;
 }
 
+.specflow-logo {
+  display: block;
+  width: auto;
+  height: 40px;
+  object-fit: contain;
+}
+
+.specflow-logo--header {
+  flex: 0 0 auto;
+  width: auto;
+  height: clamp(56px, 12vw, 96px);
+  max-width: min(52vw, 420px);
+  margin-left: auto;
+  object-fit: contain;
+  object-position: right center;
+}
+
+.specflow-logo--login {
+  height: 72px;
+  margin: 0 auto 14px;
+}
+
+.links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
 .links a {
   color: var(--muted);
   text-decoration: none;
-  margin-left: 12px;
+  margin-left: 0;
 }
 
 .links a:hover {
@@ -52,7 +92,7 @@ h1 {
 }
 
 .act-as-wrap {
-  margin-right: 12px;
+  margin-right: 4px;
 }
 
 .act-as-wrap label {
@@ -67,9 +107,9 @@ h1 {
 }
 
 .tabs {
-  margin-top: 16px;
+  margin-top: 0;
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -78,7 +118,7 @@ h1 {
   border: 1px solid rgba(124, 92, 255, 0.55);
   background: rgba(124, 92, 255, 0.12);
   color: var(--text);
-  padding: 10px 14px;
+  padding: 7px 14px;
   border-radius: 12px;
   font-weight: 700;
 }

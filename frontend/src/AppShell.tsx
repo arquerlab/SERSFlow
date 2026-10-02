@@ -45,42 +45,54 @@ export default function AppShell() {
     <div className="preprocess-scope">
       {!embedded ? (
         <div className="card" style={{ marginBottom: "10px" }}>
-          <div className="row" style={{ alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-            <div className="section-title" style={{ margin: 0 }}>
-              SpecFlow
+          <div
+            className="row"
+            style={{
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "16px",
+              flexWrap: "nowrap",
+            }}
+          >
+            <div style={{ flex: "0 1 auto", minWidth: 0 }}>
+              <nav className="row" style={{ gap: "8px", flexWrap: "wrap" }}>
+                <NavLink
+                  to="/"
+                  end
+                  className={({ isActive }) => (isActive ? "mini primary" : "mini")}
+                  style={({ isActive }) => ({ fontWeight: isActive ? 600 : 400 })}
+                >
+                  Pipeline &amp; preview
+                </NavLink>
+                <NavLink
+                  to="/analyze"
+                  className={({ isActive }) => (isActive ? "mini primary" : "mini")}
+                  style={({ isActive }) => ({ fontWeight: isActive ? 600 : 400 })}
+                >
+                  Features &amp; statistics
+                </NavLink>
+                {username ? (
+                  <>
+                    <UserScopeSelect />
+                    <span className="hint" style={{ margin: 0 }}>
+                      {username}
+                    </span>
+                    <button type="button" className="mini" onClick={() => void logout()}>
+                      Log out
+                    </button>
+                  </>
+                ) : null}
+              </nav>
+              <p className="hint" style={{ margin: "8px 0 0", fontSize: "12px" }}>
+                Workflow: (1) Save pipeline → (2) Run feature extraction on the <b>full dataset</b> in Features &amp;
+                statistics → (3) Export observation table or run PCA / correlation.
+              </p>
             </div>
-            <nav className="row" style={{ gap: "8px" }}>
-              <NavLink
-                to="/"
-                end
-                className={({ isActive }) => (isActive ? "mini primary" : "mini")}
-                style={({ isActive }) => ({ fontWeight: isActive ? 600 : 400 })}
-              >
-                Pipeline &amp; preview
-              </NavLink>
-              <NavLink
-                to="/analyze"
-                className={({ isActive }) => (isActive ? "mini primary" : "mini")}
-                style={({ isActive }) => ({ fontWeight: isActive ? 600 : 400 })}
-              >
-                Features &amp; statistics
-              </NavLink>
-              {username ? (
-                <>
-                  <UserScopeSelect />
-                  <span className="hint" style={{ margin: 0 }}>
-                    {username}
-                  </span>
-                  <button type="button" className="mini" onClick={() => void logout()}>
-                    Log out
-                  </button>
-                </>
-              ) : null}
-            </nav>
-            <p className="hint" style={{ margin: "8px 0 0", fontSize: "12px" }}>
-              Workflow: (1) Save pipeline → (2) Run feature extraction on the <b>full dataset</b> in Features &amp; statistics →
-              (3) Export observation table or run PCA / correlation.
-            </p>
+            <img
+              className="specflow-logo specflow-logo--header"
+              src={`${import.meta.env.BASE_URL}SpecFlow.png`}
+              alt="SpecFlow"
+            />
           </div>
         </div>
       ) : null}

@@ -1,5 +1,20 @@
 /* Embedded mode: keep preprocess visually consistent with the legacy dark UI.
    Avoid global resets and avoid full-page layout assumptions. */
+.preprocess-scope .specflow-logo {
+  display: block;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.preprocess-scope .specflow-logo--header {
+  flex: 1 1 auto;
+  height: clamp(56px, 12vw, 96px);
+  max-width: min(52vw, 420px);
+  margin-left: auto;
+  object-position: right center;
+}
+
 .preprocess-scope {
   font: inherit;
   letter-spacing: normal;

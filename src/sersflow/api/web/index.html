@@ -4,13 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SpecFlow</title>
+    <link rel="icon" type="image/png" href="/static/SpecFlow.png" />
     <link rel="stylesheet" href="/static/styles.css" />
     <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
   </head>
   <body>
     <div id="loginOverlay" class="login-overlay" hidden>
       <div class="login-card card">
-        <div class="section-title">Sign in to SpecFlow</div>
+        <img class="specflow-logo specflow-logo--login" src="/static/SpecFlow.png" alt="SpecFlow" />
+        <div class="section-title">Sign in</div>
         <form id="loginForm">
           <label class="inline">Username <input id="loginUsername" type="text" autocomplete="username" required /></label>
           <label class="inline">Password <input id="loginPassword" type="password" autocomplete="current-password" required /></label>
@@ -22,28 +24,29 @@
 
     <div id="appContent" class="wrap" hidden>
       <header>
-        <h1>SpecFlow</h1>
-        <div class="links">
-          <span id="actAsWrap" class="act-as-wrap" hidden>
-            <label class="hint">
-              View as
-              <select id="actAsSelect" class="mini"></select>
-            </label>
-          </span>
-          <span id="authUserLabel" class="hint"></span>
-          <button id="logoutBtn" type="button" class="mini">Log out</button>
-          <a href="/docs">Docs</a>
-          <a href="/openapi.json">OpenAPI</a>
-          <a href="/health">Health</a>
+        <div class="app-header-left">
+          <div class="links">
+            <span id="actAsWrap" class="act-as-wrap" hidden>
+              <label class="hint">
+                View as
+                <select id="actAsSelect" class="mini"></select>
+              </label>
+            </span>
+            <span id="authUserLabel" class="hint"></span>
+            <button id="logoutBtn" type="button" class="mini">Log out</button>
+            <a href="/docs">Docs</a>
+            <a href="/openapi.json">OpenAPI</a>
+            <a href="/health">Health</a>
+          </div>
+          <nav class="tabs" id="tabs">
+            <button class="tab active" data-tab="uploads" type="button">Uploads</button>
+            <button class="tab" data-tab="raw" type="button">Raw visualization</button>
+            <button class="tab" data-tab="prepare" type="button" title="Prepare spectra and pipelines">Prepare</button>
+            <button class="tab" data-tab="analyze" type="button" title="Batch analysis and exploration">Analyze</button>
+          </nav>
         </div>
+        <img class="specflow-logo specflow-logo--header" src="/static/SpecFlow.png" alt="SpecFlow" />
       </header>
-
-      <nav class="tabs" id="tabs">
-        <button class="tab active" data-tab="uploads" type="button">Uploads</button>
-        <button class="tab" data-tab="raw" type="button">Raw visualization</button>
-        <button class="tab" data-tab="prepare" type="button" title="Prepare spectra and pipelines">Prepare</button>
-        <button class="tab" data-tab="analyze" type="button" title="Batch analysis and exploration">Analyze</button>
-      </nav>
 
       <section class="panel active" id="tab-uploads">
         <div class="card">
