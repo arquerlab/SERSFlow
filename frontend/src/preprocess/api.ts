@@ -546,7 +546,7 @@ export type FittingRecipesIndexResponse = {
 
 export type FittingRecipeApplyResponse = {
   recipe_id: string;
-  recipe_pass_energy: number;
+  recipe_pass_energy: number | null;
   xps_region: string;
   components: Array<{ component_id: string; component_type: string; degree?: number | null }>;
   p0: number[];

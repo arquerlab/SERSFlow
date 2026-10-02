@@ -97,6 +97,25 @@ export const XPS_SPECIAL_TYPE_LABELS: Record<FittingXpsSpecialType, string> = {
 
 export const XPS_REGION_PRESETS = ["O1s", "C1s", "N1s", "S2p", "Ir4f", "Au4f", "Ag3d", "Pt4f", "VB"] as const;
 
+/** Fitting step region sentinel: apply to every region whose name contains valence, fermi, or vb. */
+export const ALL_VALENCE_BANDS_REGION = "all valence bands";
+
+export function isValenceBandRegionName(name: string | null | undefined): boolean {
+  const s = String(name ?? "").trim().toLowerCase();
+  if (!s) return false;
+  return s.includes("valence") || s.includes("fermi") || s.includes("vb");
+}
+
+/** Match fitting step ``xps_region`` against a spectrum region label (same rules as backend). */
+export function fittingRegionMatches(wanted: string | null | undefined, spectrumRegion: string | null | undefined): boolean {
+  const w = String(wanted ?? "").trim();
+  const s = String(spectrumRegion ?? "").trim();
+  if (!w) return true;
+  if (!s) return true;
+  if (w.toLowerCase() === ALL_VALENCE_BANDS_REGION) return isValenceBandRegionName(s);
+  return w.toLowerCase() === s.toLowerCase();
+}
+
 export type FittingParamLink = {
   source_component_id: string;
   source_key: string;
@@ -142,11 +161,20 @@ export type FittingParamRow = {
   /** When false, parameter is held fixed (XPS/lmfit). Default true. */
   vary?: boolean;
   /**
-   * When true (Fermi-edge amplitude), initial guess is auto-estimated at fit time
+   * When true (peak / Fermi-edge amplitude), initial guess is auto-estimated at fit time
    * (p0 stored as 0 sentinel).
    */
   auto?: boolean;
 };
+
+/** Amplitude params that support per-component Auto initial guess. */
+export function isAutoAmplitudeParam(componentType: string, key: string): boolean {
+  const ct = String(componentType ?? "").trim().toLowerCase();
+  const k = String(key ?? "").trim().toLowerCase();
+  if (ct === "fermi_edge" && k === "amplitude") return true;
+  if (isPeakComponentType(ct) && k === "amp") return true;
+  return false;
+}
 
 export type FittingComponentEditor = {
   component_id: string;
@@ -162,8 +190,8 @@ export type FittingEditorParams = {
   /** Plot overlay only (ignored by backend transform). */
   fill_opacity: number;
   /**
-   * default: use table p0 for all parameters.
-   * auto: backend sets peak initial amplitude to spectrum intensity at the initial center (pos).
+   * Legacy global flag (kept for older pipelines). Prefer per-row `auto` on amplitude.
+   * "auto" still forces all peak amps on the backend.
    */
   initial_guess_mode: "default" | "auto";
   components: FittingComponentEditor[];
@@ -305,7 +333,7 @@ export function defaultRowsForComponent(
       p0 = 0;
     }
     const varyDefault = ui.vary_default === false ? false : true;
-    const autoDefault = ui.auto_default === true;
+    const autoDefault = ui.auto_default === true || isAutoAmplitudeParam(componentType, k);
     return {
       key: k,
       label: labels.get(k) ?? k,
@@ -447,7 +475,7 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
       ...(c.component_type === "polynomial_background" ? { degree: c.degree } : {}),
     });
     for (const r of c.rows) {
-      // Auto amplitude: send ≤0 sentinel so the XPS engine estimates step height.
+      // Auto amplitude: send ≤0 sentinel so the engine estimates height at fit time.
       p0.push(r.auto ? 0 : r.p0);
       bounds_lower.push(r.lower);
       bounds_upper.push(r.upper);
@@ -459,7 +487,8 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
   const out: Record<string, unknown> = {
     output_mode: fp.output_mode,
     fill_opacity: fp.fill_opacity,
-    initial_guess_mode: fp.initial_guess_mode,
+    // Per-peak Auto uses amp ≤0 sentinels; keep legacy field as default.
+    initial_guess_mode: "default",
     components,
     p0,
     bounds_lower,
@@ -482,9 +511,10 @@ export function migrateFittingParamsToEditor(
 ): FittingEditorParams {
   if (isStructuredFittingParams(raw)) {
     const r = raw as FittingEditorParams;
+    const legacyGlobalAuto = r.initial_guess_mode === "auto";
     return {
       ...r,
-      initial_guess_mode: r.initial_guess_mode === "auto" ? "auto" : "default",
+      initial_guess_mode: "default",
       xps_region: typeof r.xps_region === "string" ? r.xps_region : "",
       param_links: normalizeParamLinks(r.param_links),
       recipe_id: typeof r.recipe_id === "string" ? r.recipe_id : "",
@@ -498,10 +528,14 @@ export function migrateFittingParamsToEditor(
         component_id: stripLegacyFittingComponentId(c.component_id),
         rows: c.rows.map((row) => {
           const base = { ...row, vary: row.key === "temperature_K" ? false : row.vary !== false };
+          const ct = parseFittingComponentType(c.component_type);
           if (
-            parseFittingComponentType(c.component_type) === "fermi_edge" &&
-            row.key === "amplitude" &&
-            (row.auto || !(typeof row.p0 === "number") || !Number.isFinite(row.p0) || row.p0 <= 0)
+            isAutoAmplitudeParam(ct, row.key) &&
+            (row.auto ||
+              legacyGlobalAuto ||
+              !(typeof row.p0 === "number") ||
+              !Number.isFinite(row.p0) ||
+              row.p0 <= 0)
           ) {
             return { ...base, auto: true, p0: 0 };
           }
@@ -513,7 +547,8 @@ export function migrateFittingParamsToEditor(
   const p = raw ?? {};
   const output_mode = "fit" as const;
   const fill_opacity = typeof p.fill_opacity === "number" && Number.isFinite(p.fill_opacity) ? p.fill_opacity : 0.15;
-  const initial_guess_mode = p.initial_guess_mode === "auto" ? "auto" : "default";
+  const legacyGlobalAuto = p.initial_guess_mode === "auto";
+  const initial_guess_mode = "default" as const;
   const xps_region = typeof p.xps_region === "string" ? p.xps_region : "";
   const param_links = normalizeParamLinks(p.param_links);
   const recipe_id = typeof p.recipe_id === "string" ? p.recipe_id : "";
@@ -549,16 +584,18 @@ export function migrateFittingParamsToEditor(
       const lv = lo[off + i];
       const uv = hi[off + i];
       const vv = Array.isArray(varyRaw) ? varyRaw[off + i] : true;
+      const p0Val = typeof pv === "number" && Number.isFinite(pv) ? pv : 0;
+      const wantAuto =
+        isAutoAmplitudeParam(component_type, k) &&
+        (legacyGlobalAuto || !(typeof pv === "number") || !Number.isFinite(pv) || pv <= 0);
       rows.push({
         key: k,
         label: labels.get(k) ?? k,
-        p0: typeof pv === "number" && Number.isFinite(pv) ? pv : 0,
+        p0: wantAuto ? 0 : p0Val,
         lower: lv === null || lv === undefined ? null : (typeof lv === "number" && Number.isFinite(lv) ? lv : null),
         upper: uv === null || uv === undefined ? null : (typeof uv === "number" && Number.isFinite(uv) ? uv : null),
         vary: k === "temperature_K" ? false : vv !== false,
-        ...(component_type === "fermi_edge" && k === "amplitude" && (!(typeof pv === "number") || !Number.isFinite(pv) || pv <= 0)
-          ? { auto: true, p0: 0 }
-          : {}),
+        ...(wantAuto ? { auto: true } : {}),
       });
     }
     off += n;

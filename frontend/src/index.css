@@ -80,13 +80,58 @@
   overflow: hidden;
 }
 
+/* Card / step headings (also defined in /static/styles.css; kept here so Vite bundle is self-sufficient). */
+.section-title {
+  color: var(--text, inherit);
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  margin: 0 0 10px;
+}
+
+.subsection-title {
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--text, inherit);
+  opacity: 0.95;
+  margin: 0 0 8px;
+}
+
 .preprocess-grid.analyze-layout .section-title {
-  /* Inherited from global .section-title; keep selector for layout-specific tweaks. */
   margin: 0 0 10px;
 }
 
 .preprocess-grid.analyze-layout .subsection-title {
   margin: 0 0 8px;
+}
+
+button.pipeline-step-title-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text, inherit);
+  padding: 2px 4px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  text-align: left;
+  max-width: 100%;
+}
+
+button.pipeline-step-title-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+button.pipeline-step-title-btn.is-selected {
+  background: rgba(124, 92, 255, 0.14);
+}
+
+.pipeline-step-title-text {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .preprocess-grid.analyze-layout .hint {

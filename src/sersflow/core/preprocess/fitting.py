@@ -33,10 +33,8 @@ class FitProblem:
     param_links: list[dict[str, Any]] | None = None
     xps_region: str | None = None
     """
-    default: use client p0 as-is.
-    auto: for each peak component (gaussian / lorentzian / pseudo_voigt / gl / voigt /
-    ds / gds / la / lf / apv / asymmetric_voigt), set initial amplitude to the spectrum
-    intensity linearly interpolated at the initial center position (p0 pos), per spectrum.
+    default: use client p0; amp ≤ 0 on peaks is auto-estimated (intensity at center).
+    auto (legacy): force auto amplitude for every peak component.
     """
 
 
@@ -75,7 +73,16 @@ def _apply_auto_peak_amplitudes(
     param_keys_per_comp: list[list[str]],
     bounds_lower: list[float | None] | None = None,
     bounds_upper: list[float | None] | None = None,
+    *,
+    only_nonpositive: bool = False,
 ) -> list[float]:
+    """
+    Set peak amplitudes from spectrum intensity at the center (pos).
+
+    When ``only_nonpositive`` is True (default path for per-peak Auto checkboxes),
+    only amplitudes with seed ≤ 0 are replaced. When False, all peak amplitudes
+    are replaced (legacy ``initial_guess_mode="auto"``).
+    """
     out = list(p0)
     for comp, (s, _e), keys in zip(components, slices, param_keys_per_comp):
         if comp.component_type.strip().lower() not in PEAK_COMPONENT_TYPES:
@@ -87,6 +94,8 @@ def _apply_auto_peak_amplitudes(
             continue
         gpos = s + pos_i
         gamp = s + amp_i
+        if only_nonpositive and float(out[gamp]) > 0:
+            continue
         pos_val = float(out[gpos])
         amp = _interp_y_at_x(x, y, pos_val)
         if bounds_lower is not None and bounds_lower[gamp] is not None:
@@ -355,17 +364,18 @@ def _fit_curve_scipy(problem: FitProblem) -> FitResult:
 
     param_keys_per_comp = [m["param_keys"] for m in mapping]
     mode = str(problem.initial_guess_mode or "default").strip().lower()
-    if mode == "auto":
-        p0_list = _apply_auto_peak_amplitudes(
-            problem.x,
-            problem.y,
-            p0_list,
-            problem.components,
-            slices,
-            param_keys_per_comp,
-            lo_list,
-            hi_list,
-        )
+    # Per-peak Auto (UI) sends amp ≤ 0; legacy initial_guess_mode="auto" forces all.
+    p0_list = _apply_auto_peak_amplitudes(
+        problem.x,
+        problem.y,
+        p0_list,
+        problem.components,
+        slices,
+        param_keys_per_comp,
+        lo_list,
+        hi_list,
+        only_nonpositive=(mode != "auto"),
+    )
 
     n_data = int(problem.x.shape[0])
     if n_data < cursor + 1:

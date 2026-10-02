@@ -65,11 +65,12 @@ import {
 import {
   PEAK_COMPONENT_TYPES,
   PEAK_TYPE_LABELS,
+  ALL_VALENCE_BANDS_REGION,
   XPS_REGION_PRESETS,
   defaultFittingEditorParams,
   defaultRowsForComponent,
   findParamLink,
-  isPeakComponentType,
+  isAutoAmplitudeParam,
   migrateFittingParamsToEditor,
   parseFittingComponentType,
   upsertParamLink,
@@ -146,10 +147,10 @@ import {
 } from "./preprocess/referenceTransformUtils";
 import {
   defaultXAxisCalibrationParams,
-  earlierFittingStepOptions,
-  fittingPosKeysForStep,
+  isCohortCalibrationMethod,
   normalizeXAxisCalibrationParams,
 } from "./preprocess/xAxisCalibrationUtils";
+import { XAxisCalibrationEditor } from "./preprocess/XAxisCalibrationEditor";
 import { runExplorePlot as runExplorePlotCore } from "./preprocess/explorePlotRunner";
 import { LowSignalFilterEditor } from "./preprocess/LowSignalFilterEditor";
 import { OutlierDetectionEditor } from "./preprocess/OutlierDetectionEditor";
@@ -984,6 +985,14 @@ export default function PreprocessingWorkspace() {
         label: it.label,
         description: it.description || "",
       }));
+  }, [pipelineStepsQ.data?.items]);
+
+  const stepLabelsByName = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const it of pipelineStepsQ.data?.items ?? []) {
+      if (it.id && it.label) out[it.id] = it.label;
+    }
+    return out;
   }, [pipelineStepsQ.data?.items]);
 
   function addStepTemplate(name: string) {
@@ -1832,6 +1841,7 @@ export default function PreprocessingWorkspace() {
             <PipelineStepList
               steps={steps}
               selectedStepId={selectedStepId}
+              stepLabels={stepLabelsByName}
               onSelectStep={setSelectedStepId}
               onStepsChange={setSteps}
               onPipelineVersionBump={() => setPipelineVersion((v) => v + 1)}
@@ -1841,7 +1851,9 @@ export default function PreprocessingWorkspace() {
           paramsPanel={
             selectedStep ? (
           <div className="card-inner" style={{ display: "grid", gap: "8px" }}>
-            <div className="hint">Selected: {selectedStep.name}</div>
+            <div className="section-title" style={{ margin: 0 }}>
+              {stepLabelsByName[selectedStep.name] ?? selectedStep.name}
+            </div>
             {selectedStep.name === "fitting" ? (
               <div className="hint" style={{ marginTop: "-2px" }}>
                 Fitting preview for <b>View → After: fitting</b> refreshes when you change the view, subset, or click{" "}
@@ -1876,6 +1888,7 @@ export default function PreprocessingWorkspace() {
                             <select
                               value={(() => {
                                 const opts = [
+                                  ALL_VALENCE_BANDS_REGION,
                                   ...(xpsRegionsQ.data?.regions?.map((r) => r.region) ?? []),
                                   ...(fp.xps_region ? [fp.xps_region] : []),
                                   ...XPS_REGION_PRESETS,
@@ -1887,10 +1900,11 @@ export default function PreprocessingWorkspace() {
                                 const v = e.target.value;
                                 updateSelectedFittingParams({ ...fp, xps_region: v });
                               }}
-                              style={{ width: "100px" }}
-                              title="Dataset XPS regions (fallback: presets)"
+                              style={{ width: "140px" }}
+                              title="Dataset XPS regions (fallback: presets). 'all valence bands' matches any region with valence, fermi, or vb in the name."
                             >
                               <option value="">Custom…</option>
+                              <option value={ALL_VALENCE_BANDS_REGION}>all valence bands</option>
                               {(xpsRegionsQ.data?.regions?.length
                                 ? xpsRegionsQ.data.regions.map((r) => r.region)
                                 : [...XPS_REGION_PRESETS]
@@ -1900,6 +1914,7 @@ export default function PreprocessingWorkspace() {
                                 </option>
                               ))}
                               {fp.xps_region &&
+                              fp.xps_region !== ALL_VALENCE_BANDS_REGION &&
                               !(xpsRegionsQ.data?.regions ?? []).some((r) => r.region === fp.xps_region) &&
                               !(XPS_REGION_PRESETS as readonly string[]).includes(fp.xps_region) ? (
                                 <option value={fp.xps_region}>{fp.xps_region}</option>
@@ -1915,6 +1930,7 @@ export default function PreprocessingWorkspace() {
                               title="Core-level / region label for feature column prefixes"
                             />
                             <datalist id="xps-region-presets">
+                              <option value={ALL_VALENCE_BANDS_REGION} />
                               {(xpsRegionsQ.data?.regions?.length
                                 ? xpsRegionsQ.data.regions.map((r) => r.region)
                                 : [...XPS_REGION_PRESETS]
@@ -1926,21 +1942,6 @@ export default function PreprocessingWorkspace() {
                         </label>
                         </div>
                       ) : null}
-                      <label className="inline" style={{ justifyContent: "space-between" }}>
-                        Peak amplitude (initial guess)
-                        <select
-                          value={fp.initial_guess_mode}
-                          onChange={(e) => {
-                            const initial_guess_mode = e.target.value === "auto" ? "auto" : "default";
-                            updateSelectedFittingParams({ ...fp, initial_guess_mode });
-                          }}
-                        >
-                          <option value="default">Default — use Initial Guess column (amplitude)</option>
-                          <option value="auto">
-                            Auto — amplitude = spectrum intensity at center position (backend, per spectrum)
-                          </option>
-                        </select>
-                      </label>
                       <label className="inline" style={{ justifyContent: "space-between" }}>
                         Peak fill opacity (area from peak down to y = 0)
                         <DraftNumberInput
@@ -2079,12 +2080,8 @@ export default function PreprocessingWorkspace() {
                             {comp.rows.map((row, ri) => {
                               const existingLink = findParamLink(fp.param_links, comp.component_id, row.key);
                               const isTempK = row.key === "temperature_K";
-                              const isFermiAmp = comp.component_type === "fermi_edge" && row.key === "amplitude";
-                              const ampAuto = Boolean(isFermiAmp && row.auto);
-                              const peakAmpAuto =
-                                fp.initial_guess_mode === "auto" &&
-                                isPeakComponentType(comp.component_type) &&
-                                row.key === "amp";
+                              const canAutoAmp = isAutoAmplitudeParam(comp.component_type, row.key);
+                              const ampAuto = Boolean(canAutoAmp && row.auto);
                               return (
                               <div
                                 key={row.key}
@@ -2098,9 +2095,17 @@ export default function PreprocessingWorkspace() {
                                 }}
                               >
                                 <span>{row.label}{isTempK ? " (K)" : ""}</span>
-                                {isFermiAmp ? (
+                                {canAutoAmp ? (
                                   <div className="row" style={{ gap: "4px", alignItems: "center" }}>
-                                    <label className="inline" style={{ margin: 0, gap: "4px" }} title="Estimate step height from the spectrum at fit time">
+                                    <label
+                                      className="inline"
+                                      style={{ margin: 0, gap: "4px" }}
+                                      title={
+                                        comp.component_type === "fermi_edge"
+                                          ? "Estimate step height from the spectrum at fit time"
+                                          : "Estimate amplitude from spectrum intensity at the center position at fit time"
+                                      }
+                                    >
                                       <input
                                         type="checkbox"
                                         checked={ampAuto}
@@ -2120,7 +2125,6 @@ export default function PreprocessingWorkspace() {
                                     {!ampAuto ? (
                                       <DraftNumberInput
                                         min={0}
-                                        max={1e7}
                                         value={row.p0}
                                         onChange={(n) => {
                                           if (n == null) return;
@@ -2136,13 +2140,10 @@ export default function PreprocessingWorkspace() {
                                   </div>
                                 ) : (
                                 <DraftNumberInput
-                                  disabled={peakAmpAuto}
                                   title={
-                                    peakAmpAuto
-                                      ? "Auto mode: backend uses intensity at the center (pos) as initial amplitude."
-                                      : isTempK
-                                        ? "Sample temperature in Kelvin (converted to kt = kB·T for the Fermi–Dirac edge). Fixed during fit."
-                                        : undefined
+                                    isTempK
+                                      ? "Sample temperature in Kelvin (converted to kt = kB·T for the Fermi–Dirac edge). Fixed during fit."
+                                      : undefined
                                   }
                                   value={row.p0}
                                   onChange={(n) => {
@@ -2649,25 +2650,6 @@ export default function PreprocessingWorkspace() {
                   selectedBaselineStepId !== "" &&
                   !baselineStepOptions.some(({ step }) => step.id === selectedBaselineStepId);
 
-                const fittingStepOptions =
-                  selectedStep.name === "x_axis_calibration" && method === "reference_peak"
-                    ? earlierFittingStepOptions(steps, selectedStep.id)
-                    : [];
-                const selectedFittingStepId = String((p as any).fitting_step_id ?? "");
-                const fittingStepIsInvalid =
-                  selectedStep.name === "x_axis_calibration" &&
-                  method === "reference_peak" &&
-                  selectedFittingStepId !== "" &&
-                  !fittingStepOptions.some(({ step }) => step.id === selectedFittingStepId);
-                const selectedFittingOpt = fittingStepOptions.find(({ step }) => step.id === selectedFittingStepId);
-                const posKeyOptions = selectedFittingOpt ? fittingPosKeysForStep(selectedFittingOpt.step) : [];
-                const selectedPosKey = String((p as any).pos_key ?? "");
-                const posKeyIsInvalid =
-                  selectedStep.name === "x_axis_calibration" &&
-                  method === "reference_peak" &&
-                  selectedPosKey !== "" &&
-                  !posKeyOptions.includes(selectedPosKey);
-
                 return (
                   <>
                     <label className="inline" style={{ justifyContent: "space-between" }}>
@@ -2679,12 +2661,22 @@ export default function PreprocessingWorkspace() {
                           const mm = spec.methods.find((x) => x.id === nextMethod) ?? spec.methods[0];
                           if (selectedStep.name === "x_axis_calibration") {
                             const base = defaultXAxisCalibrationParams(effectiveTechniqueFamily);
+                            const current = normalizeXAxisCalibrationParams(
+                              selectedStep.params as Record<string, unknown>,
+                              effectiveTechniqueFamily
+                            );
                             setSelectedStepParams({
                               ...base,
                               ...(mm?.defaults ?? {}),
                               method: nextMethod,
+                              fitting_step_id: current.fitting_step_id,
+                              pos_key: current.pos_key,
+                              reference_filters: current.reference_filters,
+                              group_by: current.group_by,
+                              reference_mode: current.reference_mode,
+                              reference_region: current.reference_region,
                               target_x:
-                                nextMethod === "reference_peak" && effectiveTechniqueFamily === "xps"
+                                isCohortCalibrationMethod(nextMethod) && effectiveTechniqueFamily === "xps"
                                   ? 284.8
                                   : Number((mm?.defaults as any)?.target_x ?? base.target_x),
                             });
@@ -2729,73 +2721,29 @@ export default function PreprocessingWorkspace() {
                       </>
                     ) : null}
 
-                    {selectedStep.name === "x_axis_calibration" && method === "reference_peak" ? (
-                      <>
-                        <label className="inline" style={{ justifyContent: "space-between" }}>
-                          fitting step
-                          <select
-                            value={selectedFittingStepId}
-                            onChange={(e) => {
-                              const nextId = String(e.target.value || "");
-                              const opt = fittingStepOptions.find(({ step }) => step.id === nextId);
-                              const nextKeys = opt ? fittingPosKeysForStep(opt.step) : [];
-                              setSelectedStepParams({
-                                ...normalizeXAxisCalibrationParams(
-                                  selectedStep.params as Record<string, unknown>,
-                                  effectiveTechniqueFamily
-                                ),
-                                method: "reference_peak",
-                                fitting_step_id: nextId,
-                                pos_key: nextKeys.includes(selectedPosKey) ? selectedPosKey : nextKeys[0] ?? "",
-                              });
-                            }}
-                          >
-                            <option value="">Select fitting step…</option>
-                            {fittingStepOptions.map(({ step, index }) => {
-                              const region = String((step.params as any)?.xps_region || "").trim();
-                              const nComp = Array.isArray((step.params as any)?.components)
-                                ? (step.params as any).components.length
-                                : 0;
-                              const suffix = region ? ` (${region})` : nComp ? ` (${nComp} component${nComp === 1 ? "" : "s"})` : "";
-                              return (
-                                <option key={step.id} value={step.id}>
-                                  Step {index + 1}: fitting{suffix}
-                                </option>
-                              );
-                            })}
-                          </select>
-                        </label>
-                        {!fittingStepOptions.length ? (
-                          <div className="hint">Add or move an enabled fitting step before this calibration step.</div>
-                        ) : null}
-                        {fittingStepIsInvalid ? (
-                          <div className="err">Selected fitting step is no longer an earlier enabled fitting step.</div>
-                        ) : null}
-                        <label className="inline" style={{ justifyContent: "space-between" }}>
-                          position key
-                          <select
-                            value={selectedPosKey}
-                            onChange={(e) => updateSelectedStepParam("pos_key", String(e.target.value || ""))}
-                            disabled={!selectedFittingStepId || !posKeyOptions.length}
-                          >
-                            <option value="">Select pos key…</option>
-                            {posKeyOptions.map((key) => (
-                              <option key={key} value={key}>
-                                {key}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        {selectedFittingStepId && !posKeyOptions.length ? (
-                          <div className="hint">Selected fitting step has no peak position parameters.</div>
-                        ) : null}
-                        {posKeyIsInvalid ? (
-                          <div className="err">Selected position key is not available on the chosen fitting step.</div>
-                        ) : null}
-                      </>
+                    {selectedStep.name === "x_axis_calibration" && isCohortCalibrationMethod(method) ? (
+                      <XAxisCalibrationEditor
+                        datasetId={datasetId}
+                        techniqueFamily={effectiveTechniqueFamily}
+                        steps={steps}
+                        selectedStep={selectedStep}
+                        params={normalizeXAxisCalibrationParams(
+                          selectedStep.params as Record<string, unknown>,
+                          effectiveTechniqueFamily
+                        )}
+                        onChange={(next) => setSelectedStepParams(next as unknown as Record<string, unknown>)}
+                      />
                     ) : null}
 
                     {fields.map((f) => {
+                      // Cohort editor owns target_x / fitting fields.
+                      if (
+                        selectedStep.name === "x_axis_calibration" &&
+                        isCohortCalibrationMethod(method) &&
+                        f.key === "target_x"
+                      ) {
+                        return null;
+                      }
                       const v = (p as any)[f.key];
                       if (f.kind === "select") {
                         return (

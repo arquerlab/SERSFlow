@@ -22,9 +22,12 @@ from sersflow.core.pipeline.steps import (
     params_fingerprint,
 )
 from sersflow.core.preprocess.x_axis_calibration import (
+    calibration_method_needs_cohort,
     calibration_pos_keys_for_step,
     canonicalize_calibration_pos_key,
+    compute_all_calibration_deltas,
     measured_pos_from_fitting_xy,
+    pipeline_needs_calibration_cohort,
 )
 from sersflow.core.spectrum import EMPTY_XY, XY, extract_xy
 from sersflow.infra.blob_store import resolve_blob_path
@@ -67,19 +70,37 @@ def _merged_spectrum_labels(ref: Any, ds: Any) -> dict[str, Any]:
     return labels
 
 
+ALL_VALENCE_BANDS_REGION = "all valence bands"
+
+
+def is_valence_band_region_name(name: str | None) -> bool:
+    """True when a region label looks like valence-band / Fermi-edge."""
+    s = str(name or "").strip().lower()
+    if not s:
+        return False
+    return "valence" in s or "fermi" in s or "vb" in s
+
+
 def fitting_region_applies(*, step_params: dict[str, Any], spectrum_xps_region: str | None) -> bool:
     """
     Whether a fitting step should transform this spectrum.
 
     When the step declares ``xps_region`` and the spectrum has a known region, they must match
-    (case-insensitive). Missing step region or missing spectrum region → apply (compat).
+    (case-insensitive). The special value ``all valence bands`` matches any region whose name
+    contains ``valence``, ``fermi``, or ``vb``. Missing step region or missing spectrum region → apply
+    (compat).
     """
     wanted = step_params.get("xps_region")
     if wanted is None or not str(wanted).strip():
         return True
     if spectrum_xps_region is None or not str(spectrum_xps_region).strip():
         return True
-    return str(wanted).strip().lower() == str(spectrum_xps_region).strip().lower()
+    w = str(wanted).strip().lower()
+    s = str(spectrum_xps_region).strip().lower()
+    if w == ALL_VALENCE_BANDS_REGION:
+        return is_valence_band_region_name(s)
+    return w == s
+
 
 # Cohort QC filters (session-only). They do not transform XY; treat as passthrough so
 # raw /pipeline/run and metric-subset paths never fail with "Unknown pipeline step".
@@ -290,6 +311,43 @@ def _step_id_raw(step: Any) -> str | None:
     return t or None
 
 
+def _steps_as_dicts(steps_list: Sequence[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for s in steps_list:
+        if isinstance(s, dict):
+            out.append(dict(s))
+            continue
+        out.append(
+            {
+                "name": getattr(s, "name", None),
+                "step_id": getattr(s, "step_id", None) or getattr(s, "id", None),
+                "enabled": getattr(s, "enabled", True),
+                "params": dict(getattr(s, "params", None) or {}),
+                "input_from": getattr(s, "input_from", None),
+                "after_step_id": getattr(s, "after_step_id", None),
+            }
+        )
+    return out
+
+
+def _refs_as_dicts(inputs: Iterable[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for ref in inputs:
+        if isinstance(ref, dict):
+            out.append(dict(ref))
+            continue
+        out.append(
+            {
+                "spectrum_id": getattr(ref, "spectrum_id", None),
+                "relative_path": getattr(ref, "relative_path", None),
+                "upload_id": getattr(ref, "upload_id", None),
+                "record_index": getattr(ref, "record_index", None),
+                "spectrum_labels": getattr(ref, "spectrum_labels", None),
+            }
+        )
+    return out
+
+
 def _input_tag(input_from: str, after_step_id: str | None) -> str:
     return sha256_hex(f"{input_from}|{after_step_id or ''}")
 
@@ -350,6 +408,7 @@ def _run_indexed_steps_for_spectrum(
     technique_family: str | None = None,
     spectrum_xps_region: str | None = None,
     spectrum_labels: dict[str, Any] | None = None,
+    calibration_deltas_by_step: dict[str, dict[str, float]] | None = None,
 ) -> tuple[XY, dict[str, XY], dict[int, XY]]:
     """
     Execute pipeline steps in list order with per-step input resolution (previous / initial / after_step).
@@ -536,43 +595,54 @@ def _run_indexed_steps_for_spectrum(
         cal_fitting_k: int | None = None
         cal_fitting_input: XY | None = None
         cal_fit_params: dict[str, Any] | None = None
-        if name == "x_axis_calibration" and str(params.get("method", "fixed_offset")).strip().lower() == "reference_peak":
-            fitting_step_id = str(params.get("fitting_step_id") or "").strip()
-            if not fitting_step_id:
-                raise ValueError("fitting_step_id must be provided for x_axis_calibration method='reference_peak'")
-            k = id_to_index.get(fitting_step_id)
-            if k is None:
-                raise ValueError(f"fitting_step_id {fitting_step_id!r} does not match any pipeline step")
-            if k >= j:
-                raise ValueError("fitting_step_id must refer to an earlier pipeline step")
-            fitting_step = steps_list[k]
-            if not _step_enabled_raw(fitting_step):
-                raise ValueError("fitting_step_id must refer to an enabled fitting step")
-            if _step_name_raw(fitting_step) != "fitting":
-                raise ValueError("fitting_step_id must refer to a fitting step")
-            fitting_input = inputs_for_step[k]
-            if fitting_input is None:
-                raise ValueError("selected fitting step has no available input")
-            pos_key = canonicalize_calibration_pos_key(str(params.get("pos_key") or ""))
-            if not pos_key:
-                raise ValueError("pos_key must be provided for x_axis_calibration method='reference_peak'")
-            if "target_x" not in params:
-                raise ValueError("target_x must be provided for x_axis_calibration method='reference_peak'")
-            fit_params = dict(_step_params_raw(fitting_step))
-            if technique_family:
-                fit_params.setdefault("technique_family", technique_family)
-            # Calibration keys are step-local (never s{N}_ feature-export prefixes).
-            expected_pos = calibration_pos_keys_for_step(fit_params)
-            if pos_key not in expected_pos:
-                raise ValueError(
-                    f"pos_key {pos_key!r} is not a position feature of the selected fitting step "
-                    f"(expected one of {expected_pos})"
-                )
-            params["pos_key"] = pos_key
-            cal_fitting_k = k
-            cal_fitting_input = fitting_input
-            cal_fit_params = fit_params
-            fit_ref_tag = lineage_after[k] or lineage_in_for_transform
+        cal_method = str(params.get("method", "fixed_offset")).strip().lower()
+        if name == "x_axis_calibration" and calibration_method_needs_cohort(cal_method):
+            cal_step_id = _step_id_raw(step) or f"cal@{j}"
+            precomputed = None
+            if calibration_deltas_by_step is not None:
+                precomputed = (calibration_deltas_by_step.get(cal_step_id) or {}).get(spectrum_id)
+            if precomputed is not None:
+                params["_delta"] = float(precomputed)
+                fit_ref_tag = f"cohort_delta={params['_delta']}"
+            else:
+                # Legacy / single-spectrum fallback: measure this spectrum only.
+                fitting_step_id = str(params.get("fitting_step_id") or "").strip()
+                if not fitting_step_id:
+                    raise ValueError(
+                        "fitting_step_id must be provided for x_axis_calibration reference methods"
+                    )
+                k = id_to_index.get(fitting_step_id)
+                if k is None:
+                    raise ValueError(f"fitting_step_id {fitting_step_id!r} does not match any pipeline step")
+                if k >= j:
+                    raise ValueError("fitting_step_id must refer to an earlier pipeline step")
+                fitting_step = steps_list[k]
+                if not _step_enabled_raw(fitting_step):
+                    raise ValueError("fitting_step_id must refer to an enabled fitting step")
+                if _step_name_raw(fitting_step) != "fitting":
+                    raise ValueError("fitting_step_id must refer to a fitting step")
+                fitting_input = inputs_for_step[k]
+                if fitting_input is None:
+                    raise ValueError("selected fitting step has no available input")
+                pos_key = canonicalize_calibration_pos_key(str(params.get("pos_key") or ""))
+                if not pos_key:
+                    raise ValueError("pos_key must be provided for x_axis_calibration reference methods")
+                fit_params = dict(_step_params_raw(fitting_step))
+                if technique_family:
+                    fit_params.setdefault("technique_family", technique_family)
+                expected_pos = calibration_pos_keys_for_step(fit_params)
+                if pos_key not in expected_pos:
+                    raise ValueError(
+                        f"pos_key {pos_key!r} is not a position feature of the selected fitting step "
+                        f"(expected one of {expected_pos})"
+                    )
+                params["pos_key"] = pos_key
+                params["_fitting_xps_region"] = str(fit_params.get("xps_region") or "") or None
+                params["_spectrum_xps_region"] = spectrum_xps_region
+                cal_fitting_k = k
+                cal_fitting_input = fitting_input
+                cal_fit_params = fit_params
+                fit_ref_tag = lineage_after[k] or lineage_in_for_transform
 
         params_hash = sha256_hex(
             f"{base_fp}|in={itag_decl}|baseline_ref={baseline_ref_tag}|fit_ref={fit_ref_tag}"
@@ -673,6 +743,113 @@ def _run_indexed_steps_for_spectrum(
     return final_xy, per_spec, per_step_input if collect_step_inputs else {}
 
 
+def _measure_fitting_pos_for_ref(
+    ref: dict[str, Any],
+    steps: list[dict[str, Any]],
+    *,
+    fitting_step_id: str,
+    fit_params: dict[str, Any],
+    pos_key: str,
+    technique_family: str | None,
+    namespace: str,
+) -> float:
+    """Run steps up to the fitting step and measure pos_key on that spectrum's fitting input."""
+    from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
+
+    p = _resolve_ref_path(ref)
+    ds = load_dataset(Path(p))
+    xy_initial = extract_xy(ds, record_index=ref.get("record_index"))
+    input_hash = _file_input_hash(Path(p))
+    labels = _merged_spectrum_labels(ref, ds)
+    region = str(labels.get("xps_region") or "").strip() or None
+    step_nums = assign_pipeline_step_nums(steps)
+    fit_idx = None
+    for i, step in enumerate(steps):
+        if _step_id_raw(step) == fitting_step_id and _step_name_raw(step) == "fitting":
+            fit_idx = i
+            break
+    if fit_idx is None:
+        raise ValueError(f"fitting_step_id {fitting_step_id!r} not found")
+
+    _, _, per_in = _run_indexed_steps_for_spectrum(
+        xy_initial=xy_initial,
+        input_hash=input_hash,
+        steps_list=steps,
+        spectrum_id=str(ref.get("spectrum_id") or "unknown"),
+        cache=None,
+        namespace=namespace,
+        up_to_step=fitting_step_id,
+        collect_steps=None,
+        step_nums=step_nums,
+        collect_step_inputs=True,
+        technique_family=technique_family,
+        spectrum_xps_region=region,
+        spectrum_labels=labels,
+    )
+    fit_input = per_in.get(step_nums[fit_idx])
+    if fit_input is None:
+        fit_input = xy_initial
+    return measured_pos_from_fitting_xy(
+        fit_input,
+        fit_params,
+        pos_key=pos_key,
+        technique_family=technique_family,
+    )
+
+
+def _prepare_calibration_cohort(
+    input_refs: list[dict[str, Any]],
+    steps: list[dict[str, Any]],
+    *,
+    technique_family: str | None,
+    namespace: str,
+) -> dict[str, dict[str, float]]:
+    """Precompute per-step, per-spectrum calibration deltas for the cohort."""
+    if not pipeline_needs_calibration_cohort(steps):
+        return {}
+
+    labels_by_id: dict[str, dict[str, Any]] = {}
+    for ref in input_refs:
+        sid = str(ref.get("spectrum_id") or "")
+        if not sid:
+            continue
+        try:
+            p = _resolve_ref_path(ref)
+            ds = load_dataset(Path(p))
+            labels_by_id[sid] = _merged_spectrum_labels(ref, ds)
+        except (FileNotFoundError, OSError, ValueError, IndexError) as e:
+            logger.info("calibration cohort: skip labels for %s: %s", sid, e)
+            labels_by_id[sid] = dict(ref.get("spectrum_labels") or {})
+
+    spectrum_ids = [str(r.get("spectrum_id")) for r in input_refs if r.get("spectrum_id")]
+    ref_by_id = {str(r.get("spectrum_id")): r for r in input_refs if r.get("spectrum_id")}
+
+    def measure(spectrum_id: str, fitting_step_id: str, fit_params: dict[str, Any], pos_key: str) -> float:
+        ref = ref_by_id.get(spectrum_id)
+        if ref is None:
+            raise ValueError(f"unknown spectrum_id {spectrum_id!r}")
+        return _measure_fitting_pos_for_ref(
+            ref,
+            steps,
+            fitting_step_id=fitting_step_id,
+            fit_params=fit_params,
+            pos_key=pos_key,
+            technique_family=technique_family,
+            namespace=namespace,
+        )
+
+    deltas, warnings = compute_all_calibration_deltas(
+        steps=steps,
+        spectrum_ids=spectrum_ids,
+        labels_by_id=labels_by_id,
+        measure_for_fitting_step=measure,
+        technique_family=technique_family,
+    )
+    for w in warnings:
+        logger.info("x_axis_calibration: %s", w)
+    return deltas
+
+
 def _run_one_no_cache(
     ref: dict[str, Any],
     steps: list[dict[str, Any]],
@@ -690,6 +867,7 @@ def _run_one_no_cache(
     - Does not use cross-process cache (InProcessLRUCache is not shared).
     - Uses only primitive ref/step specs to avoid pickling issues.
     - Missing uploads or unrecoverable per-spectrum failures return EMPTY_XY so batch runs do not abort.
+    - Optional ``ref["_x_cal_deltas_by_step"]`` injects cohort calibration deltas.
     """
     sid = str(ref.get("spectrum_id") or "unknown")
     try:
@@ -699,6 +877,9 @@ def _run_one_no_cache(
         input_hash = _file_input_hash(Path(p))
         labels = _merged_spectrum_labels(ref, ds)
         region = str(labels.get("xps_region") or "").strip() or None
+        cal_deltas = ref.get("_x_cal_deltas_by_step")
+        if not isinstance(cal_deltas, dict):
+            cal_deltas = None
 
         xy, _, per_in = _run_indexed_steps_for_spectrum(
             xy_initial=xy_initial,
@@ -714,6 +895,7 @@ def _run_one_no_cache(
             technique_family=technique_family,
             spectrum_xps_region=region,
             spectrum_labels=labels,
+            calibration_deltas_by_step=cal_deltas,
         )
         return xy, per_in
     except (FileNotFoundError, OSError, ValueError, IndexError) as e:
@@ -751,9 +933,21 @@ def run_pipeline_parallel_no_cache(
     nums = step_nums or [0] * len(steps)
     _validate_baseline_point_references(steps)
 
+    tech = technique_family
+    input_refs = [dict(r) for r in inputs]
+    cal_deltas = _prepare_calibration_cohort(
+        input_refs,
+        steps,
+        technique_family=tech,
+        namespace=cfg.cache_namespace,
+    )
+    if cal_deltas:
+        for ref in input_refs:
+            ref["_x_cal_deltas_by_step"] = cal_deltas
+
     # One spectrum: avoid process-pool round-trip.
-    if len(inputs) == 1:
-        ref = dict(inputs[0])
+    if len(input_refs) == 1:
+        ref = input_refs[0]
         sid = str(ref["spectrum_id"])
         xy_res, pin = _run_one_no_cache(
             ref,
@@ -775,7 +969,7 @@ def run_pipeline_parallel_no_cache(
     def _submit_all(ex: ProcessPoolExecutor) -> None:
         nonlocal out, per_in, pool_broken
         fut_to_sid = {}
-        for ref in inputs:
+        for ref in input_refs:
             sid = str(ref["spectrum_id"])
             ref_payload = dict(ref)
             fut = ex.submit(
@@ -815,7 +1009,7 @@ def run_pipeline_parallel_no_cache(
         _reset_pipeline_pool()
         out = {}
         per_in = {} if collect_step_inputs else {}
-        for ref in inputs:
+        for ref in input_refs:
             ref_payload = dict(ref)
             xy_res, pin = _run_one_no_cache(
                 ref_payload,
@@ -859,8 +1053,17 @@ def run_pipeline(
     out: dict[str, XY] = {}
     steps_list = list(pipeline.steps)
     _validate_baseline_point_references(steps_list)
+    tech = getattr(pipeline, "technique_family", None)
 
-    for ref in inputs:
+    input_list = list(inputs)
+    cal_deltas = _prepare_calibration_cohort(
+        _refs_as_dicts(input_list),
+        _steps_as_dicts(steps_list),
+        technique_family=tech,
+        namespace=cfg.cache_namespace,
+    )
+
+    for ref in input_list:
         sid = ref.spectrum_id
         try:
             p = _resolve_ref_path(ref)
@@ -879,9 +1082,10 @@ def run_pipeline(
                 namespace=cfg.cache_namespace,
                 up_to_step=up_to_step,
                 collect_steps=None,
-                technique_family=getattr(pipeline, "technique_family", None),
+                technique_family=tech,
                 spectrum_xps_region=region,
                 spectrum_labels=labels,
+                calibration_deltas_by_step=cal_deltas or None,
             )
             out[sid] = xy
         except (FileNotFoundError, OSError, ValueError, IndexError) as e:
@@ -921,8 +1125,16 @@ def run_pipeline_with_intermediates(
     from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 
     step_nums = assign_pipeline_step_nums(steps_list)
+    tech = getattr(pipeline, "technique_family", None)
+    input_list = list(inputs)
+    cal_deltas = _prepare_calibration_cohort(
+        _refs_as_dicts(input_list),
+        _steps_as_dicts(steps_list),
+        technique_family=tech,
+        namespace=cfg.cache_namespace,
+    )
 
-    for ref in inputs:
+    for ref in input_list:
         sid = ref.spectrum_id
         try:
             p = _resolve_ref_path(ref)
@@ -942,9 +1154,10 @@ def run_pipeline_with_intermediates(
                 up_to_step=up_to_step,
                 collect_steps=collect_steps,
                 step_nums=step_nums,
-                technique_family=getattr(pipeline, "technique_family", None),
+                technique_family=tech,
                 spectrum_xps_region=region,
                 spectrum_labels=labels,
+                calibration_deltas_by_step=cal_deltas or None,
             )
             finals[sid] = xy
             inter[sid] = per_spec

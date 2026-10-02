@@ -317,20 +317,23 @@ def fit_curve_lmfit(problem: FitProblem) -> FitResult:
     )
     _validate_vectors(cursor, problem.p0, problem.bounds_lower, problem.bounds_upper)
 
-    p0_list, lo_list, hi_list, auto_already = _apply_xps_fit_safeguards(
+    p0_list, lo_list, hi_list, _auto_already = _apply_xps_fit_safeguards(
         problem, slices=slices, param_keys_per_comp=param_keys_per_comp
     )
-    if str(problem.initial_guess_mode or "default").strip().lower() == "auto" and not auto_already:
-        p0_list = _apply_auto_peak_amplitudes(
-            problem.x,
-            problem.y,
-            p0_list,
-            problem.components,
-            slices,
-            param_keys_per_comp,
-            lo_list,
-            hi_list,
-        )
+    mode = str(problem.initial_guess_mode or "default").strip().lower()
+    # Per-peak Auto (UI) sends amp ≤ 0; legacy initial_guess_mode="auto" forces all.
+    # XPS safeguard may already have scaled tiny relative amps; re-applying is safe.
+    p0_list = _apply_auto_peak_amplitudes(
+        problem.x,
+        problem.y,
+        p0_list,
+        problem.components,
+        slices,
+        param_keys_per_comp,
+        lo_list,
+        hi_list,
+        only_nonpositive=(mode != "auto"),
+    )
     p0_list = _apply_auto_fermi_amplitudes(
         problem.y,
         p0_list,

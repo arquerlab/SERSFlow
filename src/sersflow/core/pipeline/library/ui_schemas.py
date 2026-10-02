@@ -195,7 +195,16 @@ X_AXIS_CALIBRATION = StepUiSchema(
         StepMethodUi(
             id="fixed_offset",
             label="fixed offset",
-            defaults={"offset": 0, "fitting_step_id": "", "pos_key": "", "target_x": 0},
+            defaults={
+                "offset": 0,
+                "fitting_step_id": "",
+                "pos_key": "",
+                "target_x": 0,
+                "reference_filters": [],
+                "group_by": "",
+                "reference_mode": "core_level",
+                "reference_region": "",
+            },
             fields=(
                 _F(
                     "offset",
@@ -206,9 +215,63 @@ X_AXIS_CALIBRATION = StepUiSchema(
             ),
         ),
         StepMethodUi(
+            id="single_reference_band",
+            label="single reference band",
+            defaults={
+                "offset": 0,
+                "fitting_step_id": "",
+                "pos_key": "",
+                "target_x": 0,
+                "reference_filters": [],
+                "group_by": "",
+                "reference_mode": "core_level",
+                "reference_region": "",
+            },
+            fields=(
+                _F(
+                    "target_x",
+                    "number",
+                    "target_x",
+                    "Desired position after calibration (ignored for valence/Fermi → 0 eV).",
+                ),
+            ),
+        ),
+        StepMethodUi(
+            id="grouped_reference_band",
+            label="grouped reference band",
+            defaults={
+                "offset": 0,
+                "fitting_step_id": "",
+                "pos_key": "",
+                "target_x": 0,
+                "reference_filters": [],
+                "group_by": "",
+                "reference_mode": "core_level",
+                "reference_region": "",
+            },
+            fields=(
+                _F(
+                    "target_x",
+                    "number",
+                    "target_x",
+                    "Desired core-level position after calibration (valence mode uses 0 eV).",
+                ),
+            ),
+        ),
+        # Legacy alias kept for older pipelines; UI prefers single_reference_band.
+        StepMethodUi(
             id="reference_peak",
-            label="reference peak",
-            defaults={"offset": 0, "fitting_step_id": "", "pos_key": "", "target_x": 0},
+            label="reference peak (legacy)",
+            defaults={
+                "offset": 0,
+                "fitting_step_id": "",
+                "pos_key": "",
+                "target_x": 0,
+                "reference_filters": [],
+                "group_by": "",
+                "reference_mode": "core_level",
+                "reference_region": "",
+            },
             fields=(
                 _F(
                     "target_x",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from sersflow.core.preprocess.fitting import (
     FitComponent,
@@ -117,6 +118,29 @@ def test_fit_auto_gaussian_amplitude_clamps_to_bounds() -> None:
     )
 
     assert 0.0 <= float(res.p_opt[1]) <= 10.0
+
+
+def test_fit_amp_sentinel_auto_without_global_mode() -> None:
+    """Per-peak Auto sends amp≤0; engine estimates even when initial_guess_mode=default."""
+    x = np.linspace(0.0, 10.0, 80)
+    y = np.ones_like(x) * 42.0
+    components = [FitComponent(component_type="gaussian", component_id="a")]
+
+    res = fit_curve(
+        FitProblem(
+            x=x,
+            y=y,
+            components=components,
+            p0=[5.0, 0.0, 1.0],
+            bounds_lower=[0.0, 0.0, 0.1],
+            bounds_upper=[10.0, 10.0, 5.0],
+            initial_guess_mode="default",
+        )
+    )
+
+    assert 0.0 <= float(res.p_opt[1]) <= 10.0
+    # Flat spectrum → auto seed ≈ 42, fit should stay near that within amp bound.
+    assert float(res.p_opt[1]) == pytest.approx(10.0, abs=0.5)
 
 
 def test_fit_single_gaussian_with_bounds_smoke() -> None:

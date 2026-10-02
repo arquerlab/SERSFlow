@@ -78,6 +78,7 @@ def test_apply_fermi_edge_valence_recipe() -> None:
     assert out["bounds_upper"] == [1.0e7, 3.0, 0.4, None]
     assert out["vary"] == [True, True, True, False]
     assert out.get("param_links") == []
+    assert out.get("recipe_pass_energy") is None
     assert "shirley_bg" not in [c["component_type"] for c in out["components"]]
 
 

@@ -99,7 +99,8 @@ class FittingParamLinkPublic(BaseModel):
 
 class FittingRecipeApplyResponse(BaseModel):
     recipe_id: str
-    recipe_pass_energy: int
+    # Null for recipes without pass-energy tables (e.g. Fermi edge).
+    recipe_pass_energy: int | None = None
     xps_region: str = ""
     components: list[FittingComponentPublic] = Field(default_factory=list)
     p0: list[float] = Field(default_factory=list)

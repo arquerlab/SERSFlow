@@ -106,7 +106,8 @@ def _peak_pos_amp_params() -> list[ParamSpec]:
             lower_default=0.0,
             upper_default=None,
             unit="a.u.",
-            ui={"step": 1.0},
+            # Auto initial guess (≤0 sentinel) on by default; user can override per peak.
+            ui={"step": 1.0, "auto_default": True, "auto_sentinel": True},
         ),
     ]
 

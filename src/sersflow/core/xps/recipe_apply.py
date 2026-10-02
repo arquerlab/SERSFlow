@@ -304,6 +304,7 @@ def _apply_fermi_edge_recipe(
         "vary": vary,
         "param_links": [],
         "recipe_id": fit.id,
+        "recipe_pass_energy": None,
         "warnings": warnings,
     }
     return out

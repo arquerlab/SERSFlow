@@ -214,7 +214,7 @@ def _fitting(xy: XY, params: dict[str, Any]) -> XY:
     - components: list of {component_id, component_type, degree?}
     - p0: list[float]
     - bounds_lower, bounds_upper: list[float | null] (null = unbounded)
-    - initial_guess_mode: "default" | "auto" (peak amp from y at pos in auto mode)
+    - initial_guess_mode: "default" | "auto" (legacy; prefer per-peak amp ≤0 sentinel for Auto)
     """
     try:
         prob = fit_problem_from_step_params(xy, params)

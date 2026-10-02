@@ -31,7 +31,7 @@ def test_fixed_offset_empty_passthrough() -> None:
 
 def test_reference_peak_requires_measured_pos() -> None:
     xy = XY(x=np.array([1.0, 2.0]), y=np.array([1.0, 2.0]))
-    with pytest.raises(ValueError, match="fitting_step_id context"):
+    with pytest.raises(ValueError, match="cohort precompute|_measured_pos"):
         apply_x_axis_calibration(
             xy, {"method": "reference_peak", "target_x": 284.8, "pos_key": "fit_g1_pos"}
         )
@@ -283,6 +283,152 @@ def test_reference_peak_fitting_must_be_earlier() -> None:
         )
 
 
+
+def test_normalize_region_and_vb_partner() -> None:
+    from sersflow.core.preprocess.x_axis_calibration import (
+        is_valence_band_region_name,
+        is_valence_partner_for_region,
+        normalize_region_token,
+        regions_match,
+    )
+
+    assert normalize_region_token("O 1s") == "o1s"
+    assert normalize_region_token("O_1s") == "o1s"
+    assert regions_match("C1s", "c 1s")
+    assert is_valence_band_region_name("VB")
+    assert is_valence_partner_for_region("vb-O1s", "O 1s")
+    assert is_valence_partner_for_region("fermi_O1s", "O1s")
+    assert not is_valence_partner_for_region("vb-C1s", "O1s")
+
+
+def test_single_reference_band_averages_and_applies_to_all() -> None:
+    from sersflow.core.preprocess.x_axis_calibration import compute_calibration_deltas_for_step
+
+    measured = {"a": 290.0, "b": 292.0, "c": 500.0}
+    labels = {
+        "a": {"xps_region": "C1s", "sample": "1"},
+        "b": {"xps_region": "C1s", "sample": "1"},
+        "c": {"xps_region": "O1s", "sample": "1"},
+    }
+
+    def measure(sid: str, _fp: dict, _pk: str) -> float:
+        return measured[sid]
+
+    out = compute_calibration_deltas_for_step(
+        spectrum_ids=["a", "b", "c"],
+        labels_by_id=labels,
+        cal_params={
+            "method": "single_reference_band",
+            "pos_key": "fit_g1_pos",
+            "target_x": 284.8,
+            "reference_filters": [{"field": "xps_region", "op": "in", "values": ["C1s"]}],
+        },
+        fit_params={"xps_region": "C1s", "components": [{"component_id": "g1", "component_type": "gaussian"}]},
+        measure=measure,
+    )
+    # mean measured = 291.0 → delta = 284.8 - 291 = -6.2 for everyone
+    assert out.deltas["a"] == pytest.approx(-6.2)
+    assert out.deltas["b"] == pytest.approx(-6.2)
+    assert out.deltas["c"] == pytest.approx(-6.2)
+    assert any("averaging" in w for w in out.warnings)
+
+
+def test_grouped_core_level_per_group_offset() -> None:
+    from sersflow.core.preprocess.x_axis_calibration import compute_calibration_deltas_for_step
+
+    measured = {"c1s_a": 290.0, "o1s_a": 532.0, "c1s_b": 288.0, "o1s_b": 531.0}
+    labels = {
+        "c1s_a": {"xps_region": "C1s", "run": "A"},
+        "o1s_a": {"xps_region": "O1s", "run": "A"},
+        "c1s_b": {"xps_region": "C1s", "run": "B"},
+        "o1s_b": {"xps_region": "O1s", "run": "B"},
+    }
+
+    def measure(sid: str, _fp: dict, _pk: str) -> float:
+        return measured[sid]
+
+    out = compute_calibration_deltas_for_step(
+        spectrum_ids=list(labels),
+        labels_by_id=labels,
+        cal_params={
+            "method": "grouped_reference_band",
+            "group_by": "run",
+            "reference_mode": "core_level",
+            "reference_region": "C1s",
+            "pos_key": "fit_g1_pos",
+            "target_x": 284.8,
+        },
+        fit_params={"xps_region": "C1s", "components": [{"component_id": "g1", "component_type": "gaussian"}]},
+        measure=measure,
+    )
+    assert out.deltas["o1s_a"] == pytest.approx(284.8 - 290.0)
+    assert out.deltas["c1s_a"] == pytest.approx(284.8 - 290.0)
+    assert out.deltas["o1s_b"] == pytest.approx(284.8 - 288.0)
+
+
+def test_grouped_valence_pairs_and_warns_unpaired() -> None:
+    from sersflow.core.preprocess.x_axis_calibration import compute_calibration_deltas_for_step
+
+    measured = {"vb_o": 0.4, "o1s": 532.0, "n1s": 400.0}
+    labels = {
+        "vb_o": {"xps_region": "vb-O1s", "run": "1"},
+        "o1s": {"xps_region": "O1s", "run": "1"},
+        "n1s": {"xps_region": "N1s", "run": "1"},
+    }
+
+    def measure(sid: str, _fp: dict, _pk: str) -> float:
+        return measured[sid]
+
+    out = compute_calibration_deltas_for_step(
+        spectrum_ids=list(labels),
+        labels_by_id=labels,
+        cal_params={
+            "method": "grouped_reference_band",
+            "group_by": "run",
+            "reference_mode": "valence_band",
+            "pos_key": "fit_Fermi_edge_center",
+            "target_x": 0.0,
+        },
+        fit_params={
+            "xps_region": "valence band",
+            "components": [{"component_id": "Fermi_edge", "component_type": "fermi_edge"}],
+        },
+        measure=measure,
+    )
+    assert out.deltas["o1s"] == pytest.approx(-0.4)
+    assert out.deltas["vb_o"] == pytest.approx(-0.4)
+    assert out.deltas["n1s"] == 0.0
+    assert any("no VB partner" in w for w in out.warnings)
+
+
+def test_grouped_core_missing_reference_warns() -> None:
+    from sersflow.core.preprocess.x_axis_calibration import compute_calibration_deltas_for_step
+
+    labels = {
+        "o1s": {"xps_region": "O1s", "run": "1"},
+    }
+
+    def measure(_sid: str, _fp: dict, _pk: str) -> float:
+        raise AssertionError("should not measure")
+
+    out = compute_calibration_deltas_for_step(
+        spectrum_ids=["o1s"],
+        labels_by_id=labels,
+        cal_params={
+            "method": "grouped_reference_band",
+            "group_by": "run",
+            "reference_mode": "core_level",
+            "reference_region": "C1s",
+            "pos_key": "fit_g1_pos",
+            "target_x": 284.8,
+        },
+        fit_params={"xps_region": "C1s"},
+        measure=measure,
+    )
+    assert out.deltas["o1s"] == 0.0
+    assert any("missing" in w.lower() for w in out.warnings)
+
+
 def test_fixed_offset_via_pipeline() -> None:
     xy0 = XY(x=np.array([10.0, 20.0]), y=np.array([1.0, 2.0]))
     final, _, _ = _run_indexed_steps_for_spectrum(
@@ -303,3 +449,4 @@ def test_fixed_offset_via_pipeline() -> None:
     )
     assert np.allclose(final.x, [13.5, 23.5])
     assert math.isfinite(float(final.y[0]))
+

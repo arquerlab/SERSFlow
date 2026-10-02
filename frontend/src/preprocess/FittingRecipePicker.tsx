@@ -74,7 +74,7 @@ export function mergeRecipeApplyIntoEditor(
       param_links: applied.param_links,
       xps_region: applied.xps_region,
       recipe_id: applied.recipe_id,
-      recipe_pass_energy: applied.recipe_pass_energy,
+      recipe_pass_energy: applied.recipe_pass_energy ?? undefined,
     },
     catalog
   );
@@ -82,9 +82,9 @@ export function mergeRecipeApplyIntoEditor(
     ...migrated,
     output_mode: current.output_mode,
     fill_opacity: current.fill_opacity,
-    initial_guess_mode: current.initial_guess_mode,
+    initial_guess_mode: "default",
     recipe_id: applied.recipe_id,
-    recipe_pass_energy: applied.recipe_pass_energy,
+    recipe_pass_energy: applied.recipe_pass_energy ?? undefined,
   };
 }
 

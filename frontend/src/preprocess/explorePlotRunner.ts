@@ -12,7 +12,7 @@ import {
   type TechniqueFamily,
 } from "./api";
 import type { EditorStep } from "./editorTypes";
-import { flattenFittingForPipeline, migrateFittingParamsToEditor } from "./fittingUtils";
+import { flattenFittingForPipeline, fittingRegionMatches, migrateFittingParamsToEditor } from "./fittingUtils";
 import { buildFitResidualFigure } from "./fitResidualPlot";
 import { buildSafeRunRequest, capTraceCount, type Mode, type PlotView } from "./runController";
 import { fetchUploadsList } from "./hooks/useUploadsList";
@@ -390,7 +390,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
             } else if (typeof (labels as { xps_region?: string }).xps_region === "string") {
               region = String((labels as { xps_region?: string }).xps_region);
             }
-            return region.toLowerCase() === wantedRegion.toLowerCase();
+            return fittingRegionMatches(wantedRegion, region);
           });
         } catch (e) {
           if (isAbortErr(e)) return;
@@ -459,7 +459,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
               p0,
               bounds: { lower: lo, upper: hi },
               return_curve: true,
-              initial_guess_mode: fp.initial_guess_mode === "auto" ? "auto" : "default",
+              initial_guess_mode: "default",
               technique_family: techniqueFamily,
               vary: Array.isArray(flat.vary) ? (flat.vary as boolean[]) : undefined,
               param_links: Array.isArray(flat.param_links)

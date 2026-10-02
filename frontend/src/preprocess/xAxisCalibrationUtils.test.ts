@@ -23,6 +23,8 @@ describe("xAxisCalibrationUtils", () => {
       "xps"
     );
     expect(n.pos_key).toBe("fit_C1s_main_pos");
+    expect(n.method).toBe("reference_peak");
+    expect(n.reference_filters).toEqual([]);
   });
 
   it("fittingPosKeysForStep is always unprefixed", () => {
@@ -38,5 +40,20 @@ describe("xAxisCalibrationUtils", () => {
       },
     };
     expect(fittingPosKeysForStep(step)).toEqual(["fit_C1s_main_pos"]);
+  });
+
+  it("includes fermi center keys", () => {
+    const step: EditorStep = {
+      id: "fit-1",
+      name: "fitting",
+      enabled: true,
+      input_from: "previous",
+      after_step_id: null,
+      params: {
+        xps_region: "valence band",
+        components: [{ component_id: "Fermi_edge", component_type: "fermi_edge" }],
+      },
+    };
+    expect(fittingPosKeysForStep(step)).toEqual(["fit_valence_band_Fermi_edge_center"]);
   });
 });
