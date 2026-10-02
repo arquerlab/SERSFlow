@@ -18,11 +18,22 @@ from sersflow.api.schemas.analysis import (
     AnalysisRunCreateResponse,
     AnalysisRunDetailResponse,
     AnalysisRunSummary,
+    FitCurveJobCreateRequest,
+    FitCurveJobCreateResponse,
+    FitCurveJobStatusResponse,
+    FittingPreviewRequest,
     ObservationSchemaResponse,
 )
 from sersflow.api.deps import current_user_id
 from sersflow.api.services.ownership import get_dataset_for_user, get_run_for_user, get_session_for_user
-from sersflow.api.services.analysis_runner import execute_analysis_run, spectrum_xy_for_analysis_run
+from sersflow.api.services.analysis_runner import (
+    execute_analysis_run,
+    prepare_run_context,
+    spectrum_xy_for_analysis_run,
+    _effective_pipeline_for_analysis,
+)
+from sersflow.api.services.fit_curve_export_runner import execute_fit_curve_job
+from sersflow.api.services.fitting_preview import fitting_preview_for_run, list_fitting_steps_for_pipeline
 from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.sessions_service import pipeline_hash, subset_hash
 from sersflow.api.services.technique_guard import (
@@ -30,11 +41,13 @@ from sersflow.api.services.technique_guard import (
     prepare_pipeline_for_run,
 )
 from sersflow.infra.analysis_store import (
+    create_fit_curve_job,
     create_job,
     create_run_pending,
     delete_run,
     delete_runs_for_dataset,
     find_run_by_client_job_key,
+    get_fit_curve_job,
     get_job_by_id,
     get_job_for_run,
     list_runs,
@@ -481,6 +494,96 @@ def get_analysis_spectrum(run_id: str, spectrum_id: str, request: Request) -> di
         "x": x,
         "y": y,
     }
+
+
+@router.get("/runs/{run_id}/fitting-steps", response_model=None)
+def get_analysis_fitting_steps(run_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
+    pipeline, _sub, _sess = prepare_run_context(rec=rec)
+    effective, _ = _effective_pipeline_for_analysis(pipeline)
+    return {"items": list_fitting_steps_for_pipeline(effective)}
+
+
+@router.post("/runs/{run_id}/fitting-preview", response_model=None)
+def post_analysis_fitting_preview(
+    run_id: str, payload: FittingPreviewRequest, request: Request
+) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    _require_run(run_id, user_id)
+    try:
+        return fitting_preview_for_run(
+            run_id=run_id,
+            spectrum_ids=list(payload.spectrum_ids),
+            fitting_step_num=int(payload.fitting_step_num),
+            return_curve=bool(payload.return_curve),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/runs/{run_id}/fit-curve-jobs", response_model=FitCurveJobCreateResponse)
+def post_fit_curve_job(
+    run_id: str, payload: FitCurveJobCreateRequest, request: Request
+) -> FitCurveJobCreateResponse | JSONResponse:
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
+    if rec.status != "completed":
+        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    jid = create_fit_curve_job(
+        run_id=run_id,
+        fitting_step_num=int(payload.fitting_step_num),
+        content=str(payload.content),
+        format=str(payload.format),
+    )
+    Thread(target=execute_fit_curve_job, args=(jid,), daemon=True).start()
+    return JSONResponse(
+        status_code=202,
+        content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump(),
+    )
+
+
+@router.get("/fit-curve-jobs/{job_id}", response_model=FitCurveJobStatusResponse)
+def get_fit_curve_job_status(job_id: str, request: Request) -> FitCurveJobStatusResponse:
+    user_id = current_user_id(request)
+    job = get_fit_curve_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Fit curve job not found")
+    _require_run(job.run_id, user_id)
+    return FitCurveJobStatusResponse(
+        job_id=job.job_id,
+        run_id=job.run_id,
+        fitting_step_num=job.fitting_step_num,
+        content=job.content,
+        format=job.format,
+        status=job.status,
+        progress_done=job.progress_done,
+        progress_total=job.progress_total,
+        error=job.error,
+        created_at=job.created_at,
+        finished_at=job.finished_at,
+    )
+
+
+@router.get("/fit-curve-jobs/{job_id}/download", response_model=None)
+def download_fit_curve_job(job_id: str, request: Request) -> Response:
+    user_id = current_user_id(request)
+    job = get_fit_curve_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Fit curve job not found")
+    _require_run(job.run_id, user_id)
+    if job.status != "completed" or not job.artifact_path:
+        raise HTTPException(status_code=400, detail="Fit curve job is not ready")
+    try:
+        with open(job.artifact_path, "rb") as f:
+            data = f.read()
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read artifact: {e}") from e
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="fit_curves_{job_id}.zip"'},
+    )
 
 
 @router.get("/runs/{run_id}/export/manifest", response_model=AnalysisExportManifest)

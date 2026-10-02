@@ -16,6 +16,7 @@ from sersflow.api.schemas.fitting import (
     FitResponse,
     FitSpectrumRef,
 )
+from sersflow.api.services.fit_diagnostics_public import diagnostics_to_public
 from sersflow.api.services.uploads import resolve_existing_upload
 from sersflow.core.io.load_file import load_dataset
 from sersflow.core.preprocess.fitting import FitComponent, FitProblem, fit_curve
@@ -131,6 +132,10 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
             "params_vector": res.p_opt.astype(float).tolist(),
             "components": comps_out,
             "y_hat": res.y_hat.astype(float).tolist() if payload.return_curve else None,
+            "residual": (prob.y.astype(float) - res.y_hat.astype(float)).tolist()
+            if payload.return_curve
+            else None,
+            "diagnostics": diagnostics_to_public(res.diagnostics),
         }
     except HTTPException:
         raise

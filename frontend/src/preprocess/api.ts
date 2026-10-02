@@ -492,10 +492,31 @@ export type FitComponentResult = {
   y_hat?: number[] | null;
 };
 
+export type FitDiagnostics = {
+  rmse?: number | null;
+  r2?: number | null;
+  r2_adj?: number | null;
+  ssr?: number | null;
+  aic?: number | null;
+  bic?: number | null;
+  aicc?: number | null;
+  chi2?: number | null;
+  redchi?: number | null;
+  resid_mad?: number | null;
+  max_abs_resid?: number | null;
+  success?: number | null;
+  n_points?: number | null;
+  n_vary?: number | null;
+  nfev?: number | null;
+  median_rel_stderr?: number | null;
+};
+
 export type FitResponse = {
   params_vector: number[];
   components: FitComponentResult[];
   y_hat: number[] | null;
+  residual?: number[] | null;
+  diagnostics?: FitDiagnostics | null;
 };
 
 export function postFittingFit(payload: FitRequest, init?: RequestInit) {

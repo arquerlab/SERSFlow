@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+from sersflow.core.preprocess.fit_diagnostics import compute_fit_diagnostics
 from sersflow.core.preprocess.fitting import (
     FitComponent,
     FitProblem,
@@ -298,10 +299,32 @@ def fit_curve_lmfit(problem: FitProblem) -> FitResult:
                 break
         comp_curves.append(np.asarray(matched if matched is not None else np.zeros_like(xf), dtype=float))
 
+    n_vary = 0
+    for name in flat_names:
+        p = result.params.get(name)
+        if p is not None and bool(getattr(p, "vary", False)) and not getattr(p, "expr", None):
+            n_vary += 1
+    nfev = None
+    try:
+        nv = getattr(result, "nfev", None)
+        if nv is not None:
+            nfev = int(nv)
+    except Exception:
+        nfev = None
+    diag = compute_fit_diagnostics(
+        yf,
+        y_hat,
+        n_vary=n_vary,
+        p_cov=p_cov,
+        p_opt=p_opt,
+        nfev=nfev,
+        success=bool(getattr(result, "success", True)),
+    )
     return FitResult(
         p_opt=p_opt,
         p_cov=p_cov,
         y_hat=y_hat,
         component_y_hat=comp_curves,
         mapping=mapping,
+        diagnostics=diag,
     )

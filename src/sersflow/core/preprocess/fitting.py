@@ -7,6 +7,7 @@ import numpy as np
 from scipy.optimize import curve_fit
 import inspect
 
+from sersflow.core.preprocess.fit_diagnostics import FitDiagnostics, compute_fit_diagnostics
 from sersflow.core.preprocess.fitting_specs import PEAK_COMPONENT_TYPES, build_component_function
 from sersflow.core.spectrum import XY
 
@@ -48,6 +49,7 @@ class FitResult:
     component_y_hat: list[np.ndarray]
     """Per-component curves on the same x grid, same order as `components`."""
     mapping: list[dict[str, Any]]
+    diagnostics: FitDiagnostics
 
 
 def _interp_y_at_x(x: np.ndarray, y: np.ndarray, xq: float) -> float:
@@ -313,10 +315,28 @@ def _fit_curve_scipy(problem: FitProblem) -> FitResult:
     comp_curves: list[np.ndarray] = []
     for (_comp, f, _params), (s, e) in zip(funcs, slices):
         comp_curves.append(np.asarray(f(xf, *popt[s:e].tolist()), dtype=float))
+    if problem.vary is not None and len(problem.vary) >= cursor:
+        n_vary = sum(1 for v in problem.vary[:cursor] if v)
+    else:
+        n_vary = cursor
+        if problem.vary is not None:
+            for i, vflag in enumerate(problem.vary):
+                if i < cursor and not vflag:
+                    n_vary -= 1
+    diag = compute_fit_diagnostics(
+        yf,
+        yhat,
+        n_vary=max(0, int(n_vary)),
+        p_cov=pcov,
+        p_opt=popt,
+        nfev=None,
+        success=True,
+    )
     return FitResult(
         p_opt=popt,
         p_cov=pcov,
         y_hat=yhat,
         component_y_hat=comp_curves,
         mapping=mapping,
+        diagnostics=diag,
     )

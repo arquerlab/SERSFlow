@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from sersflow.api.schemas.pipeline import Pipeline
@@ -122,3 +124,34 @@ class ObservationSchemaResponse(BaseModel):
     feature_keys: list[str]
     axis_keys: list[str]
     meta_keys: list[str]
+
+
+class FittingPreviewRequest(BaseModel):
+    spectrum_ids: list[str] = Field(min_length=1, max_length=50)
+    fitting_step_num: int
+    return_curve: bool = True
+
+
+class FitCurveJobCreateRequest(BaseModel):
+    fitting_step_num: int
+    content: Literal["data_fit_resid", "data_fit_components_resid"] = "data_fit_components_resid"
+    format: Literal["csv", "png", "svg"] = "csv"
+
+
+class FitCurveJobCreateResponse(BaseModel):
+    job_id: str
+    status: str
+
+
+class FitCurveJobStatusResponse(BaseModel):
+    job_id: str
+    run_id: str
+    fitting_step_num: int
+    content: str
+    format: str
+    status: str
+    progress_done: int
+    progress_total: int
+    error: str | None = None
+    created_at: str
+    finished_at: str | None = None

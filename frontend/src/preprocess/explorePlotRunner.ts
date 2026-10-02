@@ -12,7 +12,8 @@ import {
   type TechniqueFamily,
 } from "./api";
 import type { EditorStep } from "./editorTypes";
-import { flattenFittingForPipeline, isPeakComponentType, migrateFittingParamsToEditor } from "./fittingUtils";
+import { flattenFittingForPipeline, migrateFittingParamsToEditor } from "./fittingUtils";
+import { buildFitResidualFigure } from "./fitResidualPlot";
 import { buildSafeRunRequest, capTraceCount, type Mode, type PlotView } from "./runController";
 import { fetchUploadsList } from "./hooks/useUploadsList";
 
@@ -31,14 +32,10 @@ function hasPlottableXy(it: { x?: unknown[]; y?: unknown[] } | null | undefined)
   return Array.isArray(it?.x) && it!.x!.length > 0;
 }
 
-function hexToRgba(hex: string, alpha: number): string {
-  const h = hex.replace("#", "").trim();
-  if (h.length !== 6) return `rgba(128,128,128,${alpha})`;
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
+export type FitStackFigure = {
+  kind: "fit_stack";
+  figures: Array<{ data: Record<string, unknown>[]; layout: Record<string, unknown>; spectrum_id?: string }>;
+};
 
 export type ExplorePlotRunnerDeps = {
   sessionId: string;
@@ -403,10 +400,9 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
 
       const rawItems = capTraceCount(rawIn.items ?? [], subsetSize);
       const fillOpacity = Math.max(0, Math.min(1, typeof fp.fill_opacity === "number" ? fp.fill_opacity : 0.15));
-      const fitColors = ["#e74c3c", "#3498db", "#2ecc71", "#9b59b6", "#f39c12", "#1abc9c"];
       const nSpectra = rawItems.length;
 
-      const traces: Record<string, unknown>[] = [];
+      const figures: FitStackFigure["figures"] = [];
       for (let si = 0; si < rawItems.length; si++) {
         const it = rawItems[si]!;
         if (aborted()) return;
@@ -438,53 +434,26 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
           if (isAbortErr(e)) return;
           throw new Error(`Fitting failed for ${it.spectrum_id}: ${(e as Error)?.message ?? e}`);
         }
-        traces.push({
-          type: "scatter",
-          mode: "lines",
+        const residual =
+          fitResp.residual ??
+          it.y.map((yv, i) => Number(yv) - Number(fitResp.y_hat?.[i] ?? 0));
+        const built = buildFitResidualFigure({
           x: it.x,
           y: it.y,
-          name: `${it.spectrum_id}`,
-          line: { color: "#333" },
+          yHat: fitResp.y_hat ?? [],
+          residual,
+          components: fitResp.components ?? [],
+          diagnostics: fitResp.diagnostics,
+          title: it.spectrum_id,
+          xAxisTitle,
+          fillOpacity,
         });
-        traces.push({
-          type: "scatter",
-          mode: "lines",
-          x: it.x,
-          y: fitResp.y_hat ?? [],
-          line: { color: "rgba(231,76,60,0.95)", width: 2 },
-          name: `${it.spectrum_id} fit (sum)`,
-        });
-        (fitResp.components ?? []).forEach((comp, j) => {
-          if (!comp.y_hat?.length) return;
-          const isPeak = isPeakComponentType(comp.component_type);
-          traces.push({
-            type: "scatter",
-            mode: "lines",
-            x: it.x,
-            y: comp.y_hat,
-            name: `${it.spectrum_id} ${comp.component_type} [${comp.component_id}]`,
-            line: { color: fitColors[j % fitColors.length], dash: isPeak ? "solid" : "dot" },
-            ...(isPeak
-              ? {
-                  fill: "tozeroy",
-                  fillcolor: hexToRgba(fitColors[j % fitColors.length] ?? "#888888", fillOpacity),
-                }
-              : {}),
-          });
-        });
+        figures.push({ ...built, spectrum_id: it.spectrum_id });
       }
 
-      setExplorePlotStatus("Fitting: building plot…");
+      setExplorePlotStatus(`Fitting preview: ${figures.length} spectra (stacked)`);
       setPreviousFigure(currentFigure);
-      setCurrentFigure({
-        data: traces,
-        layout: {
-          xaxis: { title: { text: xAxisTitle } },
-          yaxis: { title: { text: "Intensity (counts)" } },
-          legend: { orientation: "h", yanchor: "top", y: -0.25, xanchor: "center", x: 0.5 },
-          margin: { l: 60, r: 20, t: 20, b: 95 },
-        },
-      });
+      setCurrentFigure({ kind: "fit_stack", figures } satisfies FitStackFigure);
       return;
     }
 

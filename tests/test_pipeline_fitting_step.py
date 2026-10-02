@@ -60,7 +60,8 @@ def test_fitting_pipeline_step_pass_through_when_too_few_points() -> None:
     assert np.array_equal(out.y, xy.y)
 
 
-def test_fitting_pipeline_step_residual_mode() -> None:
+def test_fitting_pipeline_step_legacy_residual_still_returns_fit() -> None:
+    """Legacy output_mode=residual is ignored; step always returns fitted curve."""
     x = np.linspace(400.0, 600.0, 120)
     y = 100.0 * np.exp(-((x - 500.0) ** 2) / (8.0**2 / 4.0 / np.log(2.0))) + 5.0
     xy = XY(x=x, y=y)
@@ -74,4 +75,6 @@ def test_fitting_pipeline_step_residual_mode() -> None:
     }
     out = impl.transform(xy, params)
     assert out.x.shape == xy.x.shape
-    assert float(np.max(np.abs(out.y))) < float(np.max(np.abs(y))) * 0.5
+    assert float(np.max(out.y)) > 50.0
+    # Residual would be near zero max; fitted curve stays near peak height.
+    assert float(np.max(np.abs(out.y - y))) > 1.0 or float(np.max(out.y)) > 40.0

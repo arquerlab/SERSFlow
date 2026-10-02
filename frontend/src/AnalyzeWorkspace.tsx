@@ -15,6 +15,7 @@ import Plotly from "plotly.js-dist-min";
 import { DatasetPicker } from "./components/DatasetPicker";
 import { listDatasets, listPipelines, type PipelineLibraryItem, type SubsetStrategy } from "./preprocess/api";
 import { downloadBlob, downloadCsv, plotlyDivToPngBytes, plotlyDivToSvgText, rowsToCsv, zipFiles } from "./analyze/export";
+import { buildFitResidualFigure } from "./preprocess/fitResidualPlot";
 import type { ClusterResult, PcaLikeResult, PcaScaler, PlotCardModel } from "./analyze/types";
 import {
   buildCumulativeEvr,
@@ -34,12 +35,15 @@ import {
   downloadUrl,
   fetchAnalysisSpectrum,
   fetchExportManifest,
+  fetchFittingSteps,
   fetchObservationColumns,
   fetchObservationSchema,
   getAnalysisJob,
   getExportBundleUrl,
   getExportFeaturesUrl,
   getExplorePcaExportUrl,
+  getFitCurveJob,
+  getFitCurveJobDownloadUrl,
   getMatrixJobExportUrl,
   getObservationUrl,
   getSpectrumAxesPage,
@@ -47,6 +51,8 @@ import {
   listAnalysisRuns,
   postCluster,
   postCorrelation,
+  postFitCurveJob,
+  postFittingPreview,
   postFpcaDiscrete,
   postFpcaFda,
   postMatrixJob,
@@ -75,7 +81,7 @@ const SECTIONS: { id: AnalyzeSection; label: string }[] = [
   { id: "correlation", label: "Correlation / VIF" },
   { id: "pca_cluster", label: "PCA / Cluster" },
   { id: "heatmaps", label: "Heatmaps" },
-  { id: "meta_plot", label: "Parameter scatter" },
+  { id: "meta_plot", label: "Plots" },
   { id: "spectrum_matrix", label: "Spectrum matrix & PCA" },
 ];
 
@@ -568,6 +574,21 @@ export default function AnalyzeWorkspace() {
     { spectrum_id: string; x: number; y: number; color?: number | null; x_err?: number | null; y_err?: number | null }[]
   >([]);
   const metaPlotDivRef = useRef<HTMLDivElement | null>(null);
+  const [plotsSubTab, setPlotsSubTab] = useState<"param" | "fit">("param");
+  const [fitDiagStepNum, setFitDiagStepNum] = useState<number | null>(null);
+  const [fitDiagSelectedIds, setFitDiagSelectedIds] = useState<string[]>([]);
+  const [fitDiagFigures, setFitDiagFigures] = useState<
+    Array<{ spectrum_id: string; data: Record<string, unknown>[]; layout: Record<string, unknown>; badge?: string }>
+  >([]);
+  const [fitDiagBusy, setFitDiagBusy] = useState(false);
+  const [fitDiagError, setFitDiagError] = useState<string | null>(null);
+  const [fitExportContent, setFitExportContent] = useState<"data_fit_resid" | "data_fit_components_resid">(
+    "data_fit_components_resid"
+  );
+  const [fitExportSelectedIds, setFitExportSelectedIds] = useState<string[]>([]);
+  const [fitExportBusy, setFitExportBusy] = useState<string | null>(null);
+  const [fitExportNote, setFitExportNote] = useState<string | null>(null);
+  const [allSpectrumIds, setAllSpectrumIds] = useState<string[]>([]);
   const corrPlotDivRef = useRef<HTMLDivElement | null>(null);
   const vifPlotDivRef = useRef<HTMLDivElement | null>(null);
   const [heatmapFeature, setHeatmapFeature] = useState("");
@@ -802,6 +823,218 @@ export default function AnalyzeWorkspace() {
     queryFn: () => fetchObservationSchema(runId),
     enabled: !!runId && selectedRun?.status === "completed",
   });
+
+  const fittingStepsQ = useQuery({
+    queryKey: ["fittingSteps", runId],
+    queryFn: () => fetchFittingSteps(runId),
+    enabled: !!runId && selectedRun?.status === "completed",
+  });
+
+  useEffect(() => {
+    const items = fittingStepsQ.data?.items ?? [];
+    if (!items.length) {
+      setFitDiagStepNum(null);
+      return;
+    }
+    if (fitDiagStepNum == null || !items.some((it) => it.step_num === fitDiagStepNum)) {
+      setFitDiagStepNum(items[0]!.step_num);
+    }
+  }, [fittingStepsQ.data, fitDiagStepNum]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!runId || selectedRun?.status !== "completed") {
+      setAllSpectrumIds([]);
+      return;
+    }
+    fetchObservationColumns(runId, ["spectrum_id"], 500_000)
+      .then(({ rows }) => {
+        if (cancelled) return;
+        const ids = rows.map((r) => String((r as { spectrum_id?: string }).spectrum_id ?? "")).filter(Boolean);
+        setAllSpectrumIds(ids);
+      })
+      .catch(() => {
+        if (!cancelled) setAllSpectrumIds([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, selectedRun?.status]);
+
+  useEffect(() => {
+    setFitExportSelectedIds(fitDiagSelectedIds);
+  }, [fitDiagSelectedIds]);
+
+  async function refreshFitDiagnostics() {
+    if (!runId || fitDiagStepNum == null || fitDiagSelectedIds.length === 0) {
+      setFitDiagFigures([]);
+      return;
+    }
+    setFitDiagBusy(true);
+    setFitDiagError(null);
+    try {
+      const resp = await postFittingPreview(runId, {
+        spectrum_ids: fitDiagSelectedIds.slice(0, 10),
+        fitting_step_num: fitDiagStepNum,
+        return_curve: true,
+      });
+      const figs = (resp.items ?? []).map((it) => {
+        if (it.error || !it.y_hat?.length) {
+          return {
+            spectrum_id: it.spectrum_id,
+            data: [],
+            layout: {
+              title: { text: `${it.spectrum_id}: ${it.error || "fit failed"}` },
+              height: 200,
+            },
+            badge: it.error || "failed",
+          };
+        }
+        const residual = it.residual ?? it.y.map((yv, i) => Number(yv) - Number(it.y_hat?.[i] ?? 0));
+        const built = buildFitResidualFigure({
+          x: it.x,
+          y: it.y,
+          yHat: it.y_hat,
+          residual,
+          components: it.components ?? [],
+          diagnostics: it.diagnostics as any,
+          title: it.spectrum_id,
+        });
+        const d = it.diagnostics || {};
+        const badge = `RMSE=${d.rmse ?? "—"}  R²=${d.r2 ?? "—"}  BIC=${d.bic ?? "—"}`;
+        return { spectrum_id: it.spectrum_id, ...built, badge };
+      });
+      setFitDiagFigures(figs);
+    } catch (e) {
+      setFitDiagError(String((e as Error)?.message ?? e));
+      setFitDiagFigures([]);
+    } finally {
+      setFitDiagBusy(false);
+    }
+  }
+
+  async function exportSelectedFitCurves(format: "csv" | "png" | "svg") {
+    if (!runId || fitDiagStepNum == null || !fitExportSelectedIds.length) return;
+    setFitExportBusy(`sel-${format}`);
+    setFitExportNote(null);
+    try {
+      const resp = await postFittingPreview(runId, {
+        spectrum_ids: fitExportSelectedIds,
+        fitting_step_num: fitDiagStepNum,
+        return_curve: true,
+      });
+      const files: { path: string; bytes: Uint8Array }[] = [];
+      const includeComps = fitExportContent === "data_fit_components_resid";
+      for (const it of resp.items ?? []) {
+        if (!it.y_hat?.length || it.error) continue;
+        const residual = it.residual ?? it.y.map((yv, i) => Number(yv) - Number(it.y_hat?.[i] ?? 0));
+        const safe = it.spectrum_id.replace(/[^a-zA-Z0-9._-]+/g, "_");
+        if (format === "csv") {
+          const headers = ["x", "y", "y_hat", "residual"];
+          const compCols: { name: string; y: number[] }[] = [];
+          if (includeComps) {
+            for (const c of it.components ?? []) {
+              if (!c.y_hat?.length) continue;
+              const name = `comp_${String(c.component_id).replace(/[^a-zA-Z0-9_]+/g, "_")}`;
+              headers.push(name);
+              compCols.push({ name, y: c.y_hat });
+            }
+          }
+          const rows = it.x.map((_, i) => {
+            const row: Record<string, string | number> = {
+              x: it.x[i]!,
+              y: it.y[i]!,
+              y_hat: it.y_hat![i]!,
+              residual: residual[i]!,
+            };
+            for (const c of compCols) row[c.name] = c.y[i] ?? "";
+            return row;
+          });
+          const csv = rowsToCsv(rows, headers);
+          files.push({ path: `fit_${runId}_${safe}.csv`, bytes: new TextEncoder().encode(csv) });
+        } else {
+          const built = buildFitResidualFigure({
+            x: it.x,
+            y: it.y,
+            yHat: it.y_hat,
+            residual,
+            components: includeComps ? it.components ?? [] : [],
+            diagnostics: it.diagnostics as any,
+            title: it.spectrum_id,
+          });
+          const host = document.createElement("div");
+          host.style.position = "fixed";
+          host.style.left = "-10000px";
+          host.style.width = "900px";
+          host.style.height = "480px";
+          document.body.appendChild(host);
+          try {
+            await Plotly.newPlot(host, built.data as any, built.layout as any, { displayModeBar: false });
+            if (format === "png") {
+              const bytes = await plotlyDivToPngBytes(host, { width: 900, scale: 2 });
+              files.push({ path: `fit_${runId}_${safe}.png`, bytes });
+            } else {
+              const svg = await plotlyDivToSvgText(host, { width: 900, background: "white" });
+              files.push({ path: `fit_${runId}_${safe}.svg`, bytes: new TextEncoder().encode(svg) });
+            }
+          } finally {
+            try {
+              Plotly.purge(host);
+            } catch {
+              /* ignore */
+            }
+            host.remove();
+          }
+        }
+      }
+      if (!files.length) throw new Error("No successful fits to export");
+      const blob = zipFiles(files);
+      downloadBlob(`fit_curves_selected_${runId}_${format}.zip`, blob);
+    } catch (e) {
+      setFitExportNote(String((e as Error)?.message ?? e));
+    } finally {
+      setFitExportBusy(null);
+    }
+  }
+
+  async function exportAllFitCurves(format: "csv" | "png" | "svg") {
+    if (!runId || fitDiagStepNum == null) return;
+    setFitExportBusy(`all-${format}`);
+    setFitExportNote(null);
+    try {
+      const created = await postFitCurveJob(runId, {
+        fitting_step_num: fitDiagStepNum,
+        content: fitExportContent,
+        format,
+      });
+      const jobId = created.job_id;
+      for (let i = 0; i < 600; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const st = await getFitCurveJob(jobId);
+        if (st.status === "completed") {
+          await safeDownload(getFitCurveJobDownloadUrl(jobId), `fit_curves_all_${runId}_${format}.zip`, (m) =>
+            setFitExportNote(m)
+          );
+          return;
+        }
+        if (st.status === "failed") {
+          throw new Error(st.error || "Fit curve job failed");
+        }
+        setFitExportNote(`Job ${st.status}: ${st.progress_done}/${st.progress_total}`);
+      }
+      throw new Error("Fit curve job timed out");
+    } catch (e) {
+      setFitExportNote(String((e as Error)?.message ?? e));
+    } finally {
+      setFitExportBusy(null);
+    }
+  }
+
+  useEffect(() => {
+    if (section !== "meta_plot" || plotsSubTab !== "fit") return;
+    void refreshFitDiagnostics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, plotsSubTab, runId, fitDiagStepNum, fitDiagSelectedIds.join("|")]);
 
   const jobQ = useQuery({
     queryKey: ["analysisJob", pendingJobId],
@@ -1997,6 +2230,133 @@ export default function AnalyzeWorkspace() {
                     Bundle (ZIP, features only)
                   </button>
                 </div>
+                <div className="hint" style={{ margin: "12px 0 8px" }}>
+                  Fitting curves (on-demand; not stored on the analysis run)
+                </div>
+                <p className="hint" style={{ marginTop: 0 }}>
+                  CSV columns are raw model contributions. PNG/SVG match the 65:35 fit+residual plot (peaks on background).
+                  Selected spectra use the browser; All spectra starts a backend job (matplotlib for images).
+                </p>
+                {(fittingStepsQ.data?.items?.length ?? 0) === 0 ? (
+                  <div className="hint">No fitting steps on this pipeline.</div>
+                ) : (
+                  <>
+                    <div className="row" style={{ flexWrap: "wrap", gap: "8px", alignItems: "flex-end" }}>
+                      <label className="inline">
+                        Fitting step
+                        <select
+                          value={fitDiagStepNum ?? ""}
+                          onChange={(e) => setFitDiagStepNum(Number(e.target.value))}
+                        >
+                          {(fittingStepsQ.data?.items ?? []).map((it) => (
+                            <option key={it.step_num} value={it.step_num}>
+                              s{it.step_num}
+                              {it.xps_region ? ` (${it.xps_region})` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="inline">
+                        Content
+                        <select
+                          value={fitExportContent}
+                          onChange={(e) =>
+                            setFitExportContent(e.target.value as "data_fit_resid" | "data_fit_components_resid")
+                          }
+                        >
+                          <option value="data_fit_resid">data + fit + residuals</option>
+                          <option value="data_fit_components_resid">data + fit + components + residuals</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="hint" style={{ margin: "8px 0 4px" }}>
+                      Selected spectra ({fitExportSelectedIds.length}
+                      {fitExportSelectedIds.length > 25 ? " — large; may be slow" : ""})
+                    </div>
+                    <div
+                      style={{
+                        maxHeight: 120,
+                        overflow: "auto",
+                        border: "1px solid #ddd",
+                        padding: 6,
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                        gap: 4,
+                      }}
+                    >
+                      {allSpectrumIds.map((sid) => (
+                        <label key={sid} className="inline" style={{ gap: 4, fontSize: 12 }}>
+                          <input
+                            type="checkbox"
+                            checked={fitExportSelectedIds.includes(sid)}
+                            onChange={(e) => {
+                              setFitExportSelectedIds((prev) =>
+                                e.target.checked ? [...prev, sid] : prev.filter((x) => x !== sid)
+                              );
+                            }}
+                          />
+                          {sid}
+                        </label>
+                      ))}
+                    </div>
+                    <div className="row" style={{ flexWrap: "wrap", gap: "8px", marginTop: 8 }}>
+                      <button
+                        type="button"
+                        className="mini"
+                        disabled={!!fitExportBusy || !fitExportSelectedIds.length || fitDiagStepNum == null}
+                        onClick={() => void exportSelectedFitCurves("csv")}
+                      >
+                        {fitExportBusy === "sel-csv" ? "…" : "Selected CSV zip"}
+                      </button>
+                      <button
+                        type="button"
+                        className="mini"
+                        disabled={!!fitExportBusy || !fitExportSelectedIds.length || fitDiagStepNum == null}
+                        onClick={() => void exportSelectedFitCurves("png")}
+                      >
+                        {fitExportBusy === "sel-png" ? "…" : "Selected PNG zip"}
+                      </button>
+                      <button
+                        type="button"
+                        className="mini"
+                        disabled={!!fitExportBusy || !fitExportSelectedIds.length || fitDiagStepNum == null}
+                        onClick={() => void exportSelectedFitCurves("svg")}
+                      >
+                        {fitExportBusy === "sel-svg" ? "…" : "Selected SVG zip"}
+                      </button>
+                    </div>
+                    <div className="hint" style={{ margin: "10px 0 4px" }}>
+                      All spectra (backend job)
+                    </div>
+                    <div className="row" style={{ flexWrap: "wrap", gap: "8px" }}>
+                      <button
+                        type="button"
+                        className="mini"
+                        disabled={!!fitExportBusy || fitDiagStepNum == null}
+                        onClick={() => void exportAllFitCurves("csv")}
+                      >
+                        {fitExportBusy === "all-csv" ? "…" : "All CSV zip"}
+                      </button>
+                      <button
+                        type="button"
+                        className="mini"
+                        disabled={!!fitExportBusy || fitDiagStepNum == null}
+                        onClick={() => void exportAllFitCurves("png")}
+                      >
+                        {fitExportBusy === "all-png" ? "…" : "All PNG zip"}
+                      </button>
+                      <button
+                        type="button"
+                        className="mini"
+                        disabled={!!fitExportBusy || fitDiagStepNum == null}
+                        onClick={() => void exportAllFitCurves("svg")}
+                      >
+                        {fitExportBusy === "all-svg" ? "…" : "All SVG zip"}
+                      </button>
+                    </div>
+                    {fitExportNote ? <div className="err" style={{ marginTop: 8 }}>{fitExportNote}</div> : null}
+                  </>
+                )}
                 {exportNote ? <div className="err" style={{ marginTop: "8px" }}>{exportNote}</div> : null}
                 {manifestJson ? (
                   <pre
@@ -2448,11 +2808,114 @@ export default function AnalyzeWorkspace() {
 
         {section === "meta_plot" ? (
           <div style={{ marginTop: "14px" }}>
-            <div className="section-title">Parameter vs parameter</div>
+            <div className="section-title">Plots</div>
+            <div className="row" style={{ gap: "8px", marginBottom: "10px" }}>
+              <button
+                type="button"
+                className={plotsSubTab === "param" ? "mini" : "mini ghost"}
+                onClick={() => setPlotsSubTab("param")}
+              >
+                Parameter vs parameter
+              </button>
+              <button
+                type="button"
+                className={plotsSubTab === "fit" ? "mini" : "mini ghost"}
+                onClick={() => setPlotsSubTab("fit")}
+              >
+                Fit diagnostics
+              </button>
+            </div>
             {emptyRun || selectedRun?.status !== "completed" ? (
               <AnalysisRunGateNotice runId={runId} selectedRun={selectedRun} />
+            ) : plotsSubTab === "fit" ? (
+              <>
+                <p className="hint">
+                  Select up to 10 spectra. Curves are re-fit on demand from the analysis pipeline (not stored).
+                  Peaks are drawn on top of background when present; residuals in the lower panel.
+                </p>
+                {(fittingStepsQ.data?.items?.length ?? 0) === 0 ? (
+                  <div className="hint">No enabled fitting steps in this run&apos;s pipeline.</div>
+                ) : (
+                  <>
+                    <div className="row" style={{ flexWrap: "wrap", gap: "8px", alignItems: "flex-end" }}>
+                      <label className="inline">
+                        Fitting step
+                        <select
+                          value={fitDiagStepNum ?? ""}
+                          onChange={(e) => setFitDiagStepNum(Number(e.target.value))}
+                        >
+                          {(fittingStepsQ.data?.items ?? []).map((it) => (
+                            <option key={it.step_num} value={it.step_num}>
+                              s{it.step_num}
+                              {it.xps_region ? ` (${it.xps_region})` : ""} — {it.n_components} comps
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <span className="hint" style={{ margin: 0 }}>
+                        Selected {fitDiagSelectedIds.length}/10
+                      </span>
+                      <button type="button" className="mini" disabled={fitDiagBusy} onClick={() => void refreshFitDiagnostics()}>
+                        {fitDiagBusy ? "Fitting…" : "Refresh"}
+                      </button>
+                    </div>
+                    <div
+                      style={{
+                        maxHeight: 160,
+                        overflow: "auto",
+                        border: "1px solid #ddd",
+                        padding: 6,
+                        marginTop: 8,
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+                        gap: 4,
+                      }}
+                    >
+                      {allSpectrumIds.map((sid) => {
+                        const checked = fitDiagSelectedIds.includes(sid);
+                        const atCap = !checked && fitDiagSelectedIds.length >= 10;
+                        return (
+                          <label key={sid} className="inline" style={{ gap: 4, fontSize: 12 }}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={atCap}
+                              onChange={(e) => {
+                                setFitDiagSelectedIds((prev) => {
+                                  if (e.target.checked) {
+                                    if (prev.length >= 10) return prev;
+                                    return [...prev, sid];
+                                  }
+                                  return prev.filter((x) => x !== sid);
+                                });
+                              }}
+                            />
+                            {sid}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    {fitDiagError ? <div className="err">{fitDiagError}</div> : null}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 12 }}>
+                      {fitDiagFigures.map((f) => (
+                        <div key={f.spectrum_id}>
+                          {f.badge ? <div className="hint">{f.badge}</div> : null}
+                          <PlotlyWrapper
+                            figure={{ data: f.data, layout: f.layout }}
+                            previousFigure={null}
+                            plotStyle={{ mode: "overlay", stackSep: 0 }}
+                            ghostOverlayEnabled={false}
+                            className="plot-host"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
             ) : (
               <>
+            <div className="section-title">Parameter vs parameter</div>
                 <p className="hint">
                   Scatter plot of numeric columns from the merged observation row (features, <code>meta_*</code>, axes).
                   Pick X and Y; optional color uses a third numeric column.
@@ -3368,7 +3831,7 @@ export default function AnalyzeWorkspace() {
             </div>
           </div>
         ) : null}
-        {section === "meta_plot" && metaScatterFig ? (
+        {section === "meta_plot" && plotsSubTab === "param" && metaScatterFig ? (
           <PlotlyWrapper
             ref={metaPlotDivRef}
             figure={metaScatterFig}

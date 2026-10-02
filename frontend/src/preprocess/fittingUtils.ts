@@ -111,7 +111,8 @@ export type FittingComponentEditor = {
 };
 
 export type FittingEditorParams = {
-  output_mode: "fit" | "residual";
+  /** Always "fit"; residual mode removed — residuals are plot/export only. */
+  output_mode: "fit";
   /** Plot overlay only (ignored by backend transform). */
   fill_opacity: number;
   /**
@@ -449,7 +450,7 @@ export function migrateFittingParamsToEditor(
     };
   }
   const p = raw ?? {};
-  const output_mode = p.output_mode === "residual" ? "residual" : "fit";
+  const output_mode = "fit" as const;
   const fill_opacity = typeof p.fill_opacity === "number" && Number.isFinite(p.fill_opacity) ? p.fill_opacity : 0.15;
   const initial_guess_mode = p.initial_guess_mode === "auto" ? "auto" : "default";
   const xps_region = typeof p.xps_region === "string" ? p.xps_region : "";

@@ -210,13 +210,12 @@ def _fitting(xy: XY, params: dict[str, Any]) -> XY:
     ds, gds, la, lf, apv, asymmetric_voigt.
 
     Params (flattened for caching + API):
-    - output_mode: "fit" (replace y with model sum) or "residual" (y - model sum)
+    - output_mode: ignored (legacy); always replaces y with the fitted model sum
     - components: list of {component_id, component_type, degree?}
     - p0: list[float]
     - bounds_lower, bounds_upper: list[float | null] (null = unbounded)
     - initial_guess_mode: "default" | "auto" (peak amp from y at pos in auto mode)
     """
-    output_mode = str(params.get("output_mode", "fit"))
     try:
         prob = fit_problem_from_step_params(xy, params)
         if prob is None:
@@ -227,12 +226,7 @@ def _fitting(xy: XY, params: dict[str, Any]) -> XY:
         # Do not fail the whole session run — pass the spectrum through unchanged.
         logger.info("Fitting step skipped (pass-through unchanged spectrum): %s", e)
         return xy
-    y_in = xy.y.astype(float, copy=False)
-    if output_mode == "residual":
-        return XY(x=xy.x, y=y_in - res.y_hat)
-    if output_mode == "fit":
-        return XY(x=xy.x, y=res.y_hat)
-    raise ValueError(f"Unknown fitting output_mode: {output_mode}")
+    return XY(x=xy.x, y=res.y_hat)
 
 
 def _spectral_intensities(xy: XY, params: dict[str, Any]) -> XY:

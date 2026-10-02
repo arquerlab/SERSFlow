@@ -98,6 +98,24 @@ def ensure_schema() -> None:
               error TEXT NULL,
               FOREIGN KEY (run_id) REFERENCES analysis_runs(run_id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS fit_curve_jobs (
+              job_id TEXT PRIMARY KEY,
+              run_id TEXT NOT NULL,
+              fitting_step_num INTEGER NOT NULL,
+              content TEXT NOT NULL,
+              format TEXT NOT NULL,
+              status TEXT NOT NULL,
+              progress_done INTEGER NOT NULL DEFAULT 0,
+              progress_total INTEGER NOT NULL DEFAULT 0,
+              artifact_path TEXT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              finished_at TEXT NULL,
+              error TEXT NULL,
+              FOREIGN KEY (run_id) REFERENCES analysis_runs(run_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_fit_curve_jobs_run ON fit_curve_jobs(run_id, created_at DESC);
             """
         )
         # Backwards-compatible migrations for existing DBs.
@@ -403,3 +421,121 @@ def prune_unpinned_runs(*, dataset_id: str, max_keep: int | None = None) -> int:
         to_del = ids[cap:]
         con.executemany("DELETE FROM analysis_runs WHERE run_id = ?", [(i,) for i in to_del])
     return len(to_del)
+
+
+@dataclass(frozen=True)
+class FitCurveJobRecord:
+    job_id: str
+    run_id: str
+    fitting_step_num: int
+    content: str
+    format: str
+    status: str
+    progress_done: int
+    progress_total: int
+    artifact_path: str | None
+    created_at: str
+    updated_at: str
+    finished_at: str | None
+    error: str | None
+
+
+def create_fit_curve_job(
+    *,
+    run_id: str,
+    fitting_step_num: int,
+    content: str,
+    format: str,
+) -> str:
+    ensure_schema()
+    job_id = f"fcjob_{uuid4().hex}"
+    now = _utc_now_iso()
+    with connect() as con:
+        con.execute(
+            """
+            INSERT INTO fit_curve_jobs(
+              job_id, run_id, fitting_step_num, content, format, status,
+              progress_done, progress_total, artifact_path, created_at, updated_at, finished_at, error
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                job_id,
+                run_id,
+                int(fitting_step_num),
+                content,
+                format,
+                "queued",
+                0,
+                0,
+                None,
+                now,
+                now,
+                None,
+                None,
+            ),
+        )
+    return job_id
+
+
+def get_fit_curve_job(job_id: str) -> FitCurveJobRecord | None:
+    ensure_schema()
+    with connect() as con:
+        row = con.execute("SELECT * FROM fit_curve_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        if row is None:
+            return None
+        return FitCurveJobRecord(
+            job_id=row["job_id"],
+            run_id=row["run_id"],
+            fitting_step_num=int(row["fitting_step_num"]),
+            content=row["content"],
+            format=row["format"],
+            status=row["status"],
+            progress_done=int(row["progress_done"] or 0),
+            progress_total=int(row["progress_total"] or 0),
+            artifact_path=row["artifact_path"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            finished_at=row["finished_at"],
+            error=row["error"],
+        )
+
+
+def update_fit_curve_job(
+    *,
+    job_id: str,
+    status: str | None = None,
+    progress_done: int | None = None,
+    progress_total: int | None = None,
+    artifact_path: str | None = None,
+    error: str | None = None,
+    finished: bool = False,
+) -> None:
+    ensure_schema()
+    now = _utc_now_iso()
+    with connect() as con:
+        row = con.execute("SELECT * FROM fit_curve_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        if row is None:
+            return
+        con.execute(
+            """
+            UPDATE fit_curve_jobs SET
+              status = ?,
+              progress_done = ?,
+              progress_total = ?,
+              artifact_path = ?,
+              error = ?,
+              updated_at = ?,
+              finished_at = ?
+            WHERE job_id = ?
+            """,
+            (
+                status if status is not None else row["status"],
+                progress_done if progress_done is not None else row["progress_done"],
+                progress_total if progress_total is not None else row["progress_total"],
+                artifact_path if artifact_path is not None else row["artifact_path"],
+                error if error is not None else row["error"],
+                now,
+                now if finished else row["finished_at"],
+                job_id,
+            ),
+        )

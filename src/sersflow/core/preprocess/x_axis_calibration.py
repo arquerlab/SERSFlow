@@ -109,6 +109,35 @@ def measured_pos_from_fitting_xy(
             f"(expected one of {expected})"
         )
     if xy.x.size == 0 or xy.y.size == 0:
+        # #region agent log
+        try:
+            import json as _dj
+            import time as _dt
+            from pathlib import Path as _dp
+
+            _logp = _dp(__file__).resolve().parents[4] / "debug-7bfc6e.log"
+            with _logp.open("a", encoding="utf-8") as _lf:
+                _lf.write(
+                    _dj.dumps(
+                        {
+                            "sessionId": "7bfc6e",
+                            "hypothesisId": "A,D",
+                            "location": "x_axis_calibration.py:measured_pos_from_fitting_xy",
+                            "message": "empty fitting input — about to raise",
+                            "data": {
+                                "pos_key": str(pos_key or ""),
+                                "step_index": int(step_index),
+                                "x_size": int(xy.x.size),
+                                "y_size": int(xy.y.size),
+                            },
+                            "timestamp": int(_dt.time() * 1000),
+                        }
+                    )
+                    + "\n"
+                )
+        except Exception:
+            pass
+        # #endregion
         raise ValueError("x_axis_calibration reference_peak: fitting input spectrum is empty")
 
     params = dict(fit_params)

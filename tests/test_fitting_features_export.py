@@ -75,7 +75,10 @@ def test_preview_fitting_keys_gaussian_component() -> None:
         ]
     )
     keys = preview_fitting_feature_keys_for_pipeline(pipe)
-    assert keys == ["fit_g1_pos", "fit_g1_amp", "fit_g1_fwhm", "fit_g1_area"]
+    assert keys[:4] == ["fit_g1_pos", "fit_g1_amp", "fit_g1_fwhm", "fit_g1_area"]
+    assert "fit_gof_rmse" in keys
+    assert "fit_gof_bic" in keys
+    assert keys[-1] == "fit_gof_median_rel_stderr"
 
 
 def test_preview_fitting_keys_lorentzian_and_voigt() -> None:
@@ -125,7 +128,8 @@ def test_preview_fitting_keys_include_polynomial_coefficients() -> None:
         ]
     )
     keys = preview_fitting_feature_keys_for_pipeline(pipe)
-    assert keys == ["fit_bg_c2", "fit_bg_c1", "fit_bg_c0"]
+    assert keys[:3] == ["fit_bg_c2", "fit_bg_c1", "fit_bg_c0"]
+    assert "fit_gof_rmse" in keys
 
 
 def test_collect_fitting_features_populates_gaussian_params() -> None:
@@ -152,6 +156,9 @@ def test_collect_fitting_features_populates_gaussian_params() -> None:
     assert abs(float(feats["fit_pk_pos"]) - 510.0) < 5.0
     assert feats["fit_pk_area"] is not None
     assert math.isfinite(float(feats["fit_pk_area"]))
+    assert feats.get("fit_gof_rmse") is not None
+    assert float(feats["fit_gof_success"]) == 1.0
+    assert feats.get("fit_gof_bic") is not None
 
 
 def test_collect_fitting_features_populates_polynomial_coefficients() -> None:
@@ -177,10 +184,12 @@ def test_collect_fitting_features_populates_polynomial_coefficients() -> None:
 
     ordered, feats = collect_fitting_features_for_pipeline(xy, pipe)
 
-    assert ordered == ["fit_bg_c2", "fit_bg_c1", "fit_bg_c0"]
+    assert ordered[:3] == ["fit_bg_c2", "fit_bg_c1", "fit_bg_c0"]
+    assert "fit_gof_rmse" in ordered
     assert feats["fit_bg_c2"] == pytest.approx(2.0, abs=1e-8)
     assert feats["fit_bg_c1"] == pytest.approx(-0.5, abs=1e-8)
     assert feats["fit_bg_c0"] == pytest.approx(3.0, abs=1e-8)
+    assert feats["fit_gof_rmse"] == pytest.approx(0.0, abs=1e-6)
 
 
 def test_xps_region_prefixes_feature_keys() -> None:
@@ -204,4 +213,6 @@ def test_xps_region_prefixes_feature_keys() -> None:
     assert any(k.startswith("fit_O1s_pk_") for k in keys)
     assert "fit_O1s_pk_amp" in keys
     assert "fit_O1s_pk_area" in keys
+    assert "fit_O1s_gof_rmse" in keys
+    assert "fit_O1s_gof_bic" in keys
 

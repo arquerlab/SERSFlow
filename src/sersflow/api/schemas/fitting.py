@@ -92,9 +92,30 @@ class FitComponentResult(BaseModel):
     """This component's contribution on the same x as the request (same length as target)."""
 
 
+class FitDiagnosticsPublic(BaseModel):
+    rmse: float | None = None
+    r2: float | None = None
+    r2_adj: float | None = None
+    ssr: float | None = None
+    aic: float | None = None
+    bic: float | None = None
+    aicc: float | None = None
+    chi2: float | None = None
+    redchi: float | None = None
+    resid_mad: float | None = None
+    max_abs_resid: float | None = None
+    success: float | None = None
+    n_points: float | None = None
+    n_vary: float | None = None
+    nfev: float | None = None
+    median_rel_stderr: float | None = None
+
+
 class FitResponse(BaseModel):
     params_vector: list[float] = Field(default_factory=list)
     components: list[FitComponentResult] = Field(default_factory=list)
     y_hat: list[float] | None = None
     """Total fitted curve (sum of components)."""
-
+    residual: list[float] | None = None
+    """y - y_hat when return_curve; not persisted."""
+    diagnostics: FitDiagnosticsPublic | None = None

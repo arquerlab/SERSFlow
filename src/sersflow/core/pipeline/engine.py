@@ -598,15 +598,65 @@ def _run_indexed_steps_for_spectrum(
                         and cal_fitting_input is not None
                         and cal_fit_params is not None
                     ):
-                        params["_measured_pos"] = measured_pos_from_fitting_xy(
-                            cal_fitting_input,
-                            cal_fit_params,
-                            step_index=cal_fitting_k,
-                            multi_fitting=cal_multi_fitting,
-                            pos_key=str(params.get("pos_key") or ""),
-                            technique_family=technique_family,
-                        )
-                    xy_out = impl.transform(inp_xy, params)
+                        # #region agent log
+                        try:
+                            import json as _dj
+                            import time as _dt
+                            from pathlib import Path as _dp
+
+                            _logp = _dp(__file__).resolve().parents[4] / "debug-7bfc6e.log"
+                            with _logp.open("a", encoding="utf-8") as _lf:
+                                _lf.write(
+                                    _dj.dumps(
+                                        {
+                                            "sessionId": "7bfc6e",
+                                            "runId": "post-fix",
+                                            "hypothesisId": "A,B,C,E",
+                                            "location": "engine.py:x_axis_calibration",
+                                            "message": "reference_peak pre-measure",
+                                            "data": {
+                                                "spectrum_id": spectrum_id,
+                                                "spectrum_xps_region": spectrum_xps_region,
+                                                "inp_xy_size": int(getattr(inp_xy, "x", []).size)
+                                                if hasattr(inp_xy, "x")
+                                                else -1,
+                                                "fit_input_size": int(cal_fitting_input.x.size),
+                                                "fit_input_y_size": int(cal_fitting_input.y.size),
+                                                "cal_fitting_k": cal_fitting_k,
+                                                "pos_key": str(params.get("pos_key") or ""),
+                                                "fit_xps_region": str(
+                                                    (cal_fit_params or {}).get("xps_region") or ""
+                                                ),
+                                                "step_index": j,
+                                                "skip_empty_fit_input": bool(
+                                                    cal_fitting_input.x.size == 0
+                                                    or cal_fitting_input.y.size == 0
+                                                ),
+                                            },
+                                            "timestamp": int(_dt.time() * 1000),
+                                        }
+                                    )
+                                    + "\n"
+                                )
+                        except Exception:
+                            pass
+                        # #endregion
+                        # Masked / wrong-branch spectra: fitting input empty after metadata_filter.
+                        # Pass through without measuring (do not hard-fail the session run).
+                        if cal_fitting_input.x.size == 0 or cal_fitting_input.y.size == 0:
+                            xy_out = inp_xy
+                        else:
+                            params["_measured_pos"] = measured_pos_from_fitting_xy(
+                                cal_fitting_input,
+                                cal_fit_params,
+                                step_index=cal_fitting_k,
+                                multi_fitting=cal_multi_fitting,
+                                pos_key=str(params.get("pos_key") or ""),
+                                technique_family=technique_family,
+                            )
+                            xy_out = impl.transform(inp_xy, params)
+                    else:
+                        xy_out = impl.transform(inp_xy, params)
                 if cache is not None:
                     cache.set(key, xy_out)
 

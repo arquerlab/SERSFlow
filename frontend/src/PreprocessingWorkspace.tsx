@@ -1519,13 +1519,28 @@ export default function PreprocessingWorkspace() {
             </label>
           ) : null}
         </div>
-        <PlotlyWrapper
-          figure={fig}
-          previousFigure={previousFigure}
-          plotStyle={{ mode: plotMode, stackSep: sep }}
-          ghostOverlayEnabled={ghost}
-          className="plot"
-        />
+        {fig && typeof fig === "object" && (fig as { kind?: string }).kind === "fit_stack" ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            {((fig as { figures?: unknown[] }).figures ?? []).map((f, i) => (
+              <PlotlyWrapper
+                key={(f as { spectrum_id?: string })?.spectrum_id ?? i}
+                figure={f as any}
+                previousFigure={null}
+                plotStyle={{ mode: "overlay", stackSep: 0 }}
+                ghostOverlayEnabled={false}
+                className="plot"
+              />
+            ))}
+          </div>
+        ) : (
+          <PlotlyWrapper
+            figure={fig}
+            previousFigure={previousFigure}
+            plotStyle={{ mode: plotMode, stackSep: sep }}
+            ghostOverlayEnabled={ghost}
+            className="plot"
+          />
+        )}
 
         <div className="section-title" style={{ marginTop: "12px" }}>
           Subsets
@@ -1887,19 +1902,6 @@ export default function PreprocessingWorkspace() {
                           </span>
                         </label>
                       ) : null}
-                      <label className="inline" style={{ justifyContent: "space-between" }}>
-                        Output mode
-                        <select
-                          value={fp.output_mode}
-                          onChange={(e) => {
-                            const output_mode = e.target.value === "residual" ? "residual" : "fit";
-                            updateSelectedFittingParams({ ...fp, output_mode });
-                          }}
-                        >
-                          <option value="fit">Replace y with fitted curve (fit)</option>
-                          <option value="residual">Residual (y − fit)</option>
-                        </select>
-                      </label>
                       <label className="inline" style={{ justifyContent: "space-between" }}>
                         Peak amplitude (initial guess)
                         <select

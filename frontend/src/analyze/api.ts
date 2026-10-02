@@ -184,6 +184,91 @@ export function fetchAnalysisSpectrum(runId: string, spectrumId: string) {
   );
 }
 
+export type FittingStepInfo = {
+  step_num: number;
+  step_index: number;
+  xps_region?: string | null;
+  n_components: number;
+};
+
+export function fetchFittingSteps(runId: string) {
+  return fetchJson<{ items: FittingStepInfo[] }>(
+    `/analysis/runs/${encodeURIComponent(runId)}/fitting-steps`
+  );
+}
+
+export type FittingPreviewItem = {
+  spectrum_id: string;
+  error?: string | null;
+  x: number[];
+  y: number[];
+  y_hat?: number[] | null;
+  residual?: number[] | null;
+  components: Array<{
+    component_id: string;
+    component_type: string;
+    degree?: number | null;
+    y_hat?: number[] | null;
+  }>;
+  diagnostics?: Record<string, number | null> | null;
+};
+
+export function postFittingPreview(
+  runId: string,
+  body: { spectrum_ids: string[]; fitting_step_num: number; return_curve?: boolean }
+) {
+  return fetchJson<{ run_id: string; fitting_step_num: number; items: FittingPreviewItem[] }>(
+    `/analysis/runs/${encodeURIComponent(runId)}/fitting-preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+}
+
+export type FitCurveJobCreateResponse = { job_id: string; status: string };
+
+export function postFitCurveJob(
+  runId: string,
+  body: {
+    fitting_step_num: number;
+    content: "data_fit_resid" | "data_fit_components_resid";
+    format: "csv" | "png" | "svg";
+  }
+) {
+  return fetchJson<FitCurveJobCreateResponse>(
+    `/analysis/runs/${encodeURIComponent(runId)}/fit-curve-jobs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+}
+
+export type FitCurveJobStatus = {
+  job_id: string;
+  run_id: string;
+  fitting_step_num: number;
+  content: string;
+  format: string;
+  status: string;
+  progress_done: number;
+  progress_total: number;
+  error: string | null;
+  created_at: string;
+  finished_at: string | null;
+};
+
+export function getFitCurveJob(jobId: string) {
+  return fetchJson<FitCurveJobStatus>(`/analysis/fit-curve-jobs/${encodeURIComponent(jobId)}`);
+}
+
+export function getFitCurveJobDownloadUrl(jobId: string) {
+  return `/analysis/fit-curve-jobs/${encodeURIComponent(jobId)}/download`;
+}
+
 // --- Explore ---
 
 export type MatrixExportResponse = { matrix_job_id: string; status: string };

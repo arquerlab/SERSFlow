@@ -18,6 +18,7 @@ from scipy.special import voigt_profile
 
 from sersflow.core.metrics.key_dedupe import dedupe_parallel
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
+from sersflow.core.preprocess.fit_diagnostics import GOF_METRIC_KEYS, diagnostics_as_feature_dict
 from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
 from sersflow.core.preprocess.fitting_specs import (
     AREA_EXPORT_COMPONENT_TYPES,
@@ -132,6 +133,44 @@ def _feature_keys_for_component(
     return keys
 
 
+def _gof_feature_keys(
+    step_index: int,
+    multi_step: bool,
+    xps_region: str | None = None,
+) -> list[str]:
+    prefix = f"s{step_index}_" if multi_step else ""
+    region = _safe_id_fragment(xps_region) if xps_region else ""
+    mid = f"{region}_" if region else ""
+    base = f"{prefix}fit_{mid}gof_"
+    return [base + m for m in GOF_METRIC_KEYS]
+
+
+def _step_component_and_gof_key_count(
+    step_index: int,
+    multi_step: bool,
+    comps: list[Any],
+    xps_region: str | None,
+) -> int:
+    n = 0
+    if isinstance(comps, list):
+        for row in comps:
+            if not isinstance(row, dict):
+                continue
+            ctype = str(row.get("component_type", "")).strip()
+            cid = str(row.get("component_id") or "").strip() or "comp"
+            try:
+                param_keys = _param_keys_for_component(row)
+            except ValueError:
+                continue
+            n += len(
+                _feature_keys_for_component(
+                    step_index, multi_step, cid, ctype, param_keys, xps_region=xps_region
+                )
+            )
+    n += len(_gof_feature_keys(step_index, multi_step, xps_region=xps_region))
+    return n
+
+
 def _derived_peak_area(ctype: str, pk: dict[str, float]) -> float | None:
     ct = ctype.strip().lower()
     if ct not in AREA_EXPORT_COMPONENT_TYPES:
@@ -191,6 +230,9 @@ def _raw_fitting_keys_and_nums(pipeline: Any) -> tuple[list[str], list[int]]:
             for kk in _feature_keys_for_component(i, multi, cid, ctype, param_keys, xps_region=xps_region):
                 raw.append(kk)
                 nums.append(sns[i])
+        for kk in _gof_feature_keys(i, multi, xps_region=xps_region):
+            raw.append(kk)
+            nums.append(sns[i])
     return raw, nums
 
 
@@ -211,28 +253,14 @@ def fitting_feature_key_groups_for_pipeline(pipeline: Any) -> dict[int, list[str
     fit_indices = [i for i, s in enumerate(steps) if getattr(s, "enabled", True) and s.name == "fitting"]
     out: dict[int, list[str]] = {}
     key_cursor = 0
+    multi = len(fit_indices) > 1
     for i in fit_indices:
         step = steps[i]
         params = step.params or {}
         comps = params.get("components")
-        step_key_count = 0
-        if isinstance(comps, list):
-            for row in comps:
-                if not isinstance(row, dict):
-                    continue
-                ctype = str(row.get("component_type", "")).strip()
-                cid = str(row.get("component_id") or "").strip() or "comp"
-                try:
-                    param_keys = _param_keys_for_component(row)
-                except ValueError:
-                    continue
-                region = params.get("xps_region")
-                xps_region = str(region).strip() if region is not None and str(region).strip() else None
-                step_key_count += len(
-                    _feature_keys_for_component(
-                        i, len(fit_indices) > 1, cid, ctype, param_keys, xps_region=xps_region
-                    )
-                )
+        region = params.get("xps_region")
+        xps_region = str(region).strip() if region is not None and str(region).strip() else None
+        step_key_count = _step_component_and_gof_key_count(i, multi, comps or [], xps_region)
         out[sns[i]] = final_keys[key_cursor : key_cursor + step_key_count]
         key_cursor += step_key_count
     return out
@@ -248,6 +276,7 @@ def collect_fitting_features_for_pipeline(
     """
     Re-fit using stored step params and export optimized parameters per component.
     Peak components also export a derived area column.
+    Each fitting step also exports goodness-of-fit scalars (fit_*_gof_*).
 
     On failure (non-convergence, too few points), returns None for that component's keys.
 
@@ -292,10 +321,12 @@ def collect_fitting_features_for_pipeline(
             step_key_groups.append(
                 _feature_keys_for_component(i, multi, cid, ctype, param_keys, xps_region=xps_region)
             )
+        gof_raw_keys = _gof_feature_keys(i, multi, xps_region=xps_region)
 
         step_raw: list[str] = []
         for group in step_key_groups:
             step_raw.extend(group)
+        step_raw.extend(gof_raw_keys)
         n_step_keys = len(step_raw)
         step_final_keys = final_keys[key_cursor : key_cursor + n_step_keys]
         key_cursor += n_step_keys
@@ -306,6 +337,7 @@ def collect_fitting_features_for_pipeline(
             n_group = len(group)
             step_final_groups.append(step_final_keys[group_cursor : group_cursor + n_group])
             group_cursor += n_group
+        gof_final_keys = step_final_keys[group_cursor : group_cursor + len(gof_raw_keys)]
 
         sn = sns[i]
         xy_use = per_step_input_xy.get(sn, xy) if per_step_input_xy is not None else xy
@@ -332,7 +364,11 @@ def collect_fitting_features_for_pipeline(
         try:
             res = fit_curve(prob)
         except (ValueError, RuntimeError):
-            merged.update(nulls)
+            failed = dict(nulls)
+            for fk, metric in zip(gof_final_keys, GOF_METRIC_KEYS):
+                if metric == "success":
+                    failed[fk] = 0.0
+            merged.update(failed)
             continue
 
         out = dict(nulls)
@@ -353,6 +389,10 @@ def collect_fitting_features_for_pipeline(
             if ctype in AREA_EXPORT_COMPONENT_TYPES and len(final_group) > len(keys_list):
                 area_key = final_group[len(keys_list)]
                 out[area_key] = _derived_peak_area(ctype, pk)
+
+        gof_vals = diagnostics_as_feature_dict(res.diagnostics)
+        for fk, metric in zip(gof_final_keys, GOF_METRIC_KEYS):
+            out[fk] = gof_vals.get(metric)
 
         merged.update(out)
 
