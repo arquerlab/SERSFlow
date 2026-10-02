@@ -36,6 +36,12 @@ AREA_EXPORT_COMPONENT_TYPES = PEAK_COMPONENT_TYPES - INFINITE_AREA_COMPONENT_TYP
 
 XPS_BACKGROUND_COMPONENT_TYPES = frozenset({"shirley_bg", "tougaard_bg", "slope_bg"})
 
+# lmfitxps models that are not simple peak callables (XPS pipelines only).
+XPS_LMFITXPS_COMPONENT_TYPES = XPS_BACKGROUND_COMPONENT_TYPES | frozenset({"fermi_edge"})
+
+# Boltzmann constant in eV/K (for Temperature → kt conversion).
+BOLTZMANN_EV_PER_K = 8.617333262145e-5
+
 
 @dataclass(frozen=True)
 class ParamSpec:
@@ -481,6 +487,56 @@ def _slope_bg_spec() -> ComponentSpec:
     )
 
 
+def _fermi_edge_spec() -> ComponentSpec:
+    """
+    lmfitxps FermiEdgeModel (Gaussian ⊗ Fermi–Dirac).
+
+    ``temperature_K`` is shown to the user; the fit engine converts to kt = kB·T.
+    Amplitude defaults to auto (engine estimates step height when initial amp ≤ 0).
+    """
+    return ComponentSpec(
+        component_type="fermi_edge",
+        display_name="Fermi edge (valence)",
+        params=[
+            ParamSpec(
+                key="amplitude",
+                label="Amplitude",
+                default=0.0,
+                lower_default=0.0,
+                upper_default=1.0e7,
+                ui={"step": 1.0, "auto_default": True, "auto_sentinel": True},
+            ),
+            ParamSpec(
+                key="center",
+                label="Center (Ef)",
+                default=0.0,
+                lower_default=-3.0,
+                upper_default=3.0,
+                unit="eV",
+                ui={"step": 0.01},
+            ),
+            ParamSpec(
+                key="sigma",
+                label="Sigma",
+                default=0.25,
+                lower_default=0.05,
+                upper_default=0.4,
+                unit="eV",
+                ui={"step": 0.01},
+            ),
+            ParamSpec(
+                key="temperature_K",
+                label="Temperature",
+                default=298.0,
+                lower_default=None,
+                upper_default=None,
+                unit="K",
+                ui={"step": 1.0, "vary_default": False, "bounds_editable": False},
+            ),
+        ],
+    )
+
+
 def list_component_types() -> list[ComponentSpec]:
     # Parameterized specs (like polynomial degree) are represented via templates.
     # For the UI catalog we include a few common degrees.
@@ -499,7 +555,7 @@ def list_component_types() -> list[ComponentSpec]:
         _asymmetric_voigt_spec(),
     ]
     base.extend(polynomial_background_spec(d) for d in (0, 1, 2, 3, 4))
-    base.extend([_shirley_bg_spec(), _tougaard_bg_spec(), _slope_bg_spec()])
+    base.extend([_shirley_bg_spec(), _tougaard_bg_spec(), _slope_bg_spec(), _fermi_edge_spec()])
     return base
 
 
@@ -532,6 +588,8 @@ def component_param_specs(component_type: str, degree: int | None = None) -> lis
         return list(_tougaard_bg_spec().params)
     if ct == "slope_bg":
         return list(_slope_bg_spec().params)
+    if ct == "fermi_edge":
+        return list(_fermi_edge_spec().params)
     _fn, params = build_component_function(ct, degree=degree)
     return list(params)
 
@@ -546,11 +604,11 @@ def build_component_function(component_type: str, degree: int | None = None) -> 
             raise ValueError("degree is required for polynomial_background")
         spec = polynomial_background_spec(int(degree))
         return fitting_models.polynomial_background, spec.params
-    if ct in XPS_BACKGROUND_COMPONENT_TYPES:
-        # Active XPS backgrounds are only evaluable via lmfitxps models (see fitting_lmfit).
+    if ct in XPS_LMFITXPS_COMPONENT_TYPES:
+        # Active XPS backgrounds / Fermi edge are only evaluable via lmfitxps (see fitting_lmfit).
         raise ValueError(
             f"component_type {component_type!r} requires the XPS/lmfit fitting path "
-            "(active background); it cannot be used with curve_fit"
+            "(lmfitxps model); it cannot be used with curve_fit"
         )
     builder = _BUILDERS.get(ct)
     if builder is None:

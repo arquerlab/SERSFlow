@@ -144,6 +144,28 @@ h1 {
   backdrop-filter: blur(10px);
 }
 
+/* Raise prepare cards while a control inside is focused so native <select>
+   menus and portaled dropdowns are not painted under the next .card
+   (backdrop-filter creates a stacking context per card). */
+.preprocess-top.card,
+.preprocess-left.card,
+.preprocess-center.card,
+.preprocess-bottom.card {
+  position: relative;
+  z-index: 1;
+}
+.preprocess-top.card:focus-within,
+.preprocess-left.card:focus-within,
+.preprocess-center.card:focus-within,
+.preprocess-bottom.card:focus-within {
+  z-index: 40;
+}
+
+.pipeline-step-params-pane:focus-within {
+  position: relative;
+  z-index: 6;
+}
+
 .card-inner {
   background: rgba(0, 0, 0, 0.12);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -152,9 +174,20 @@ h1 {
 }
 
 .section-title {
-  color: var(--muted);
-  font-size: 13px;
+  /* Card headings: stand out from helper / body text (same as Analyze). */
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
   margin: 0 0 10px;
+}
+
+.subsection-title {
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--text);
+  opacity: 0.95;
+  margin: 0 0 8px;
 }
 
 .drop {

@@ -21,6 +21,10 @@ export type FittingPeakType = (typeof PEAK_COMPONENT_TYPES)[number];
 export const XPS_BG_COMPONENT_TYPES = ["shirley_bg", "tougaard_bg", "slope_bg"] as const;
 export type FittingXpsBgType = (typeof XPS_BG_COMPONENT_TYPES)[number];
 
+/** XPS-only lmfitxps models that are not Shirley/Tougaard-style backgrounds. */
+export const XPS_SPECIAL_COMPONENT_TYPES = ["fermi_edge"] as const;
+export type FittingXpsSpecialType = (typeof XPS_SPECIAL_COMPONENT_TYPES)[number];
+
 /** Prefer catalog `component_type` list; fall back to builtin XPS bg ids. */
 export function xpsBgComponentTypesFromCatalog(
   catalog: FittingComponentSpecPublic[] | undefined
@@ -33,6 +37,17 @@ export function xpsBgComponentTypesFromCatalog(
   return uniq.length ? uniq : XPS_BG_COMPONENT_TYPES;
 }
 
+export function xpsSpecialComponentTypesFromCatalog(
+  catalog: FittingComponentSpecPublic[] | undefined
+): readonly string[] {
+  if (!catalog?.length) return XPS_SPECIAL_COMPONENT_TYPES;
+  const fromCat = catalog
+    .map((c) => String(c.component_type || "").trim().toLowerCase())
+    .filter((ct) => (XPS_SPECIAL_COMPONENT_TYPES as readonly string[]).includes(ct));
+  const uniq = [...new Set(fromCat)];
+  return uniq.length ? uniq : XPS_SPECIAL_COMPONENT_TYPES;
+}
+
 export function xpsBgTypeLabel(ct: string, catalog: FittingComponentSpecPublic[] | undefined): string {
   const key = ct.trim().toLowerCase();
   const spec = catalog?.find((c) => String(c.component_type || "").trim().toLowerCase() === key);
@@ -40,7 +55,20 @@ export function xpsBgTypeLabel(ct: string, catalog: FittingComponentSpecPublic[]
   return XPS_BG_TYPE_LABELS[key as FittingXpsBgType] ?? key;
 }
 
-export type FittingComponentType = FittingPeakType | "polynomial_background" | FittingXpsBgType | string;
+export function xpsSpecialTypeLabel(ct: string, catalog: FittingComponentSpecPublic[] | undefined): string {
+  const key = ct.trim().toLowerCase();
+  const spec = catalog?.find((c) => String(c.component_type || "").trim().toLowerCase() === key);
+  if (spec?.display_name) return spec.display_name;
+  return XPS_SPECIAL_TYPE_LABELS[key as FittingXpsSpecialType] ?? key;
+}
+
+export type FittingComponentType =
+  | FittingPeakType
+  | "polynomial_background"
+  | FittingXpsBgType
+  | FittingXpsSpecialType
+  | string;
+
 
 export const PEAK_TYPE_LABELS: Record<FittingPeakType, string> = {
   gaussian: "Gaussian",
@@ -63,7 +91,11 @@ export const XPS_BG_TYPE_LABELS: Record<FittingXpsBgType, string> = {
   slope_bg: "Slope background (active)",
 };
 
-export const XPS_REGION_PRESETS = ["O1s", "C1s", "N1s", "S2p", "Ir4f", "Au4f", "Ag3d", "Pt4f"] as const;
+export const XPS_SPECIAL_TYPE_LABELS: Record<FittingXpsSpecialType, string> = {
+  fermi_edge: "Fermi edge (valence)",
+};
+
+export const XPS_REGION_PRESETS = ["O1s", "C1s", "N1s", "S2p", "Ir4f", "Au4f", "Ag3d", "Pt4f", "VB"] as const;
 
 export type FittingParamLink = {
   source_component_id: string;
@@ -84,9 +116,18 @@ export function isXpsBgComponentType(ct: string): ct is FittingXpsBgType {
   return (XPS_BG_COMPONENT_TYPES as readonly string[]).includes(t) || t.endsWith("_bg");
 }
 
+export function isXpsSpecialComponentType(ct: string): ct is FittingXpsSpecialType {
+  return (XPS_SPECIAL_COMPONENT_TYPES as readonly string[]).includes(ct.trim().toLowerCase());
+}
+
+export function isXpsOnlyComponentType(ct: string): boolean {
+  return isXpsBgComponentType(ct) || isXpsSpecialComponentType(ct);
+}
+
 export function parseFittingComponentType(raw: string | null | undefined): FittingComponentType {
   const ct = String(raw ?? "gaussian").trim().toLowerCase();
   if (ct === "polynomial_background") return "polynomial_background";
+  if (isXpsSpecialComponentType(ct)) return ct;
   if (isXpsBgComponentType(ct)) return ct;
   if (isPeakComponentType(ct)) return ct;
   return "gaussian";
@@ -100,6 +141,11 @@ export type FittingParamRow = {
   upper: number | null;
   /** When false, parameter is held fixed (XPS/lmfit). Default true. */
   vary?: boolean;
+  /**
+   * When true (Fermi-edge amplitude), initial guess is auto-estimated at fit time
+   * (p0 stored as 0 sentinel).
+   */
+  auto?: boolean;
 };
 
 export type FittingComponentEditor = {
@@ -202,7 +248,7 @@ export function paramKeysForComponent(
     for (const k of keys) if (!labels.has(k)) labels.set(k, k);
     return { keys, labels };
   }
-  if (isXpsBgComponentType(ct)) {
+  if (isXpsOnlyComponentType(ct)) {
     const spec = catalog?.find((c) => c.component_type === ct);
     const keys = spec?.params?.map((p) => p.key) ?? [];
     const labels = new Map<string, string>();
@@ -227,7 +273,7 @@ export function defaultRowsForComponent(
 ): FittingParamRow[] {
   const { keys, labels } = paramKeysForComponent(componentType, degree, catalog);
   const byKey = new Map<string, FittingParamSpecPublic>();
-  if (isPeakComponentType(componentType) || isXpsBgComponentType(componentType)) {
+  if (isPeakComponentType(componentType) || isXpsOnlyComponentType(componentType)) {
     const spec = catalog?.find((c) => c.component_type === componentType);
     if (spec) {
       for (const p of spec.params) byKey.set(p.key, p);
@@ -247,23 +293,27 @@ export function defaultRowsForComponent(
     const def = ps?.default;
     const lo = ps?.bounds_default?.lower ?? null;
     const hi = ps?.bounds_default?.upper ?? null;
+    const ui = (ps?.ui ?? {}) as Record<string, unknown>;
     let p0 = 0;
     if (typeof def === "number" && Number.isFinite(def)) {
       p0 = def;
     } else if (isPeakComponentType(componentType)) {
       const typed = FALLBACK_PEAK_P0_BY_TYPE[componentType]?.[k];
       p0 = typeof typed === "number" ? typed : (FALLBACK_PEAK_P0[k] ?? 0);
-    } else if (isXpsBgComponentType(componentType)) {
-      // XPS bg p0/keys come from `/fitting/models` only.
+    } else if (isXpsOnlyComponentType(componentType)) {
+      // XPS bg / special p0/keys come from `/fitting/models` only.
       p0 = 0;
     }
+    const varyDefault = ui.vary_default === false ? false : true;
+    const autoDefault = ui.auto_default === true;
     return {
       key: k,
       label: labels.get(k) ?? k,
-      p0,
-      lower: lo ?? null,
-      upper: hi ?? null,
-      vary: true,
+      p0: autoDefault ? 0 : p0,
+      lower: ui.bounds_editable === false ? null : (lo ?? null),
+      upper: ui.bounds_editable === false ? null : (hi ?? null),
+      vary: varyDefault,
+      ...(autoDefault ? { auto: true } : {}),
     };
   });
 }
@@ -397,7 +447,8 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
       ...(c.component_type === "polynomial_background" ? { degree: c.degree } : {}),
     });
     for (const r of c.rows) {
-      p0.push(r.p0);
+      // Auto amplitude: send ≤0 sentinel so the XPS engine estimates step height.
+      p0.push(r.auto ? 0 : r.p0);
       bounds_lower.push(r.lower);
       bounds_upper.push(r.upper);
       vary.push(r.vary !== false);
@@ -445,7 +496,17 @@ export function migrateFittingParamsToEditor(
         ...c,
         component_type: parseFittingComponentType(c.component_type),
         component_id: stripLegacyFittingComponentId(c.component_id),
-        rows: c.rows.map((row) => ({ ...row, vary: row.vary !== false })),
+        rows: c.rows.map((row) => {
+          const base = { ...row, vary: row.key === "temperature_K" ? false : row.vary !== false };
+          if (
+            parseFittingComponentType(c.component_type) === "fermi_edge" &&
+            row.key === "amplitude" &&
+            (row.auto || !(typeof row.p0 === "number") || !Number.isFinite(row.p0) || row.p0 <= 0)
+          ) {
+            return { ...base, auto: true, p0: 0 };
+          }
+          return base;
+        }),
       })),
     };
   }
@@ -494,7 +555,10 @@ export function migrateFittingParamsToEditor(
         p0: typeof pv === "number" && Number.isFinite(pv) ? pv : 0,
         lower: lv === null || lv === undefined ? null : (typeof lv === "number" && Number.isFinite(lv) ? lv : null),
         upper: uv === null || uv === undefined ? null : (typeof uv === "number" && Number.isFinite(uv) ? uv : null),
-        vary: vv !== false,
+        vary: k === "temperature_K" ? false : vv !== false,
+        ...(component_type === "fermi_edge" && k === "amplitude" && (!(typeof pv === "number") || !Number.isFinite(pv) || pv <= 0)
+          ? { auto: true, p0: 0 }
+          : {}),
       });
     }
     off += n;

@@ -468,7 +468,8 @@ export function createMapUi({ selectorId, mapStateByFile, schedulePlotUpdate }) 
 
 
 /**
- * Multi-block (VAMAS) filter UI  mode + metadata filters, like series/map attachment.
+ * Multi-block (VAMAS) filter UI — metadata filters (and optional block ticks).
+ * Spectrum role mode (averaged/individual/all) is fixed to averages for now.
  * Filter ops mirror Python evaluate_filters (AND across rows).
  */
 export function createMultiUi({ selectorId, schedulePlotUpdate }) {
@@ -483,13 +484,7 @@ export function createMultiUi({ selectorId, schedulePlotUpdate }) {
   title.style.margin = '0';
   title.textContent = 'Multi-spectrum blocks';
 
-  const modeLabel = document.createElement('label');
-  modeLabel.className = 'inline';
-  modeLabel.style.margin = '0';
-  modeLabel.innerHTML = 'Mode <select class=\"mini multi-mode\"><option value=\"averages\">Averaged</option><option value=\"individuals\">Individual</option><option value=\"all\">All</option></select>';
-
   head.appendChild(title);
-  head.appendChild(modeLabel);
 
   const blocksHost = document.createElement('details');
   blocksHost.className = 'multi-blocks-list';
@@ -543,12 +538,12 @@ export function createMultiUi({ selectorId, schedulePlotUpdate }) {
     isMulti: false,
     blocks: [],
     fields: [],
+    /** Locked to averages until spectrum-mode UI returns. */
     mode: 'averages',
     filters: [],
     matchedIndices: [],
     explicitIndices: new Set(),
   };
-  const modeSelect = modeLabel.querySelector('select');
 
   function evaluateMetaFilters(row, filters) {
     if (!filters || !filters.length) return true;
@@ -751,10 +746,6 @@ export function createMultiUi({ selectorId, schedulePlotUpdate }) {
     });
   }
 
-  modeSelect.addEventListener('change', () => {
-    state.mode = modeSelect.value === 'individuals' ? 'individuals' : modeSelect.value === 'all' ? 'all' : 'averages';
-    recompute();
-  });
   addFilterBtn.addEventListener('click', () => {
     const unused = (state.fields || []).find((f) => !state.filters.some((c) => c.field === f.id));
     const next = unused || state.fields[0];
@@ -820,7 +811,6 @@ export function createMultiUi({ selectorId, schedulePlotUpdate }) {
     state.blocks = Array.isArray(info.blocks) ? info.blocks : [];
     state.fields = Array.isArray(info.fields) ? info.fields : [];
     state.mode = 'averages';
-    modeSelect.value = 'averages';
     state.explicitIndices = new Set();
     // Default: XPS region filter with only the first region in the file selected.
     const firstRegion = firstXpsRegion();

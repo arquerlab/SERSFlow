@@ -10,6 +10,34 @@ from sersflow.core.preprocess.fitting_specs import XPS_BACKGROUND_COMPONENT_TYPE
 def test_registry_includes_xps_backgrounds() -> None:
     types = {s.component_type for s in list_component_types()}
     assert XPS_BACKGROUND_COMPONENT_TYPES <= types
+    assert "fermi_edge" in types
+
+
+def test_xps_fermi_edge_smoke() -> None:
+    pytest.importorskip("lmfitxps")
+    from lmfitxps.models import fermi_edge
+
+    kb = 8.617333262145e-5
+    x = np.linspace(-2.0, 2.0, 201)
+    y = fermi_edge(x, amplitude=150.0, center=0.0, kt=kb * 298.0, sigma=0.2) + 3.0
+    y = y + np.random.default_rng(1).normal(0.0, 0.4, size=y.shape)
+    res = fit_curve(
+        FitProblem(
+            x=x,
+            y=y,
+            components=[FitComponent(component_type="fermi_edge", component_id="edge")],
+            p0=[0.0, 0.0, 0.25, 298.0],
+            bounds_lower=[0.0, -3.0, 0.05, None],
+            bounds_upper=[1.0e7, 3.0, 0.4, None],
+            vary=[True, True, True, False],
+            technique_family="xps",
+        )
+    )
+    amp, center, sigma, temp = [float(v) for v in res.p_opt]
+    assert amp > 50.0
+    assert abs(center) < 0.15
+    assert 0.05 <= sigma <= 0.4
+    assert abs(temp - 298.0) < 1e-6
 
 
 def test_vibrational_engine_rejects_xps_background() -> None:

@@ -146,6 +146,7 @@ let multiUiBySelectorId = new Map(); // selectorId -> { wrap, setFile, getState 
 let mapStateByFile = new Map(); // relative_path -> { selectedIndices: number[] }
 
 let _plotUpdateTimer = null;
+let _plotUpdateGen = 0;
 function schedulePlotUpdate() {
   if (_plotUpdateTimer) clearTimeout(_plotUpdateTimer);
   _plotUpdateTimer = setTimeout(() => {
@@ -413,6 +414,7 @@ async function upload(files) {
 
 async function plotCombinedSelection() {
   clearError();
+  const gen = ++_plotUpdateGen;
   try {
     const paths = getSelectedPaths(plotFileSelectors);
     if (!paths.length) {
@@ -422,6 +424,7 @@ async function plotCombinedSelection() {
 
     const figs = [];
     for (const rel of paths) {
+      if (gen !== _plotUpdateGen) return;
       let usedSeries = false;
       for (const ui of seriesUiBySelectorId.values()) {
         const st = ui.getState();
@@ -468,6 +471,7 @@ async function plotCombinedSelection() {
       );
     }
 
+    if (gen !== _plotUpdateGen) return;
     if (!figs.length) return;
     const combined = {
       data: [],
@@ -489,8 +493,16 @@ async function plotCombinedSelection() {
         return { ...tr, y: y2 };
       });
     }
-    Plotly.react(plotDiv, combined.data, combined.layout, { responsive: true });
+    // Await Plotly's async update so overlapping refreshes / resize cannot blank the plot.
+    try {
+      await Plotly.react(plotDiv, combined.data, combined.layout, { responsive: true });
+    } catch {
+      if (gen !== _plotUpdateGen) return;
+      Plotly.purge(plotDiv);
+      await Plotly.newPlot(plotDiv, combined.data, combined.layout, { responsive: true });
+    }
   } catch (e) {
+    if (gen !== _plotUpdateGen) return;
     showError(String(e && e.message ? e.message : e));
   }
 }

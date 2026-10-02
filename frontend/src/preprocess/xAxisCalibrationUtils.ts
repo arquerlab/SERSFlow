@@ -78,6 +78,7 @@ export function fittingPosKeysForStep(step: EditorStep): string[] {
     const type = asStr(o.component_type).toLowerCase();
     if (type === "polynomial_background") return;
     if (type === "shirley_bg" || type === "tougaard_bg" || type === "slope_bg") return;
+    if (type === "fermi_edge") return;
     let paramKeys: string[] = [];
     if (isPeakComponentType(type)) {
       paramKeys = [...FALLBACK_PEAK_KEYS[type]];

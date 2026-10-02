@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type TickDropdownProps = {
   label?: string;
@@ -16,8 +17,12 @@ export type TickDropdownProps = {
   appearance?: "button" | "select";
 };
 
+type PanelPos = { top: number; left: number; minWidth: number };
+
 /**
  * Compact multi-select: summary trigger + checkbox panel.
+ * Panel is portaled to document.body so it is not clipped or covered by sibling
+ * `.card` stacking contexts (backdrop-filter) or overflow:auto ancestors.
  */
 export function TickDropdown({
   label,
@@ -30,17 +35,51 @@ export function TickDropdown({
   appearance = "button",
 }: TickDropdownProps) {
   const [open, setOpen] = useState(false);
+  const [panelPos, setPanelPos] = useState<PanelPos | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const listId = useId();
   const selectedSet = new Set(selected);
   const asSelect = appearance === "select";
 
+  useLayoutEffect(() => {
+    if (!open) {
+      setPanelPos(null);
+      return;
+    }
+    const place = () => {
+      const el = triggerRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const maxH = 220;
+      const gap = 4;
+      const spaceBelow = window.innerHeight - r.bottom - 8;
+      const openUp = spaceBelow < Math.min(maxH, 120) && r.top > spaceBelow;
+      const minWidth = Math.max(r.width, Math.min(240, window.innerWidth * 0.8));
+      setPanelPos({
+        top: openUp ? Math.max(8, r.top - maxH - gap) : r.bottom + gap,
+        left: Math.max(8, Math.min(r.left, window.innerWidth - minWidth - 8)),
+        minWidth,
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      const el = rootRef.current;
-      if (!el) return;
-      if (e.target instanceof Node && !el.contains(e.target)) setOpen(false);
+      const t = e.target;
+      if (!(t instanceof Node)) return;
+      if (rootRef.current?.contains(t)) return;
+      if (panelRef.current?.contains(t)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
@@ -60,6 +99,7 @@ export function TickDropdown({
 
   const trigger = (
     <button
+      ref={triggerRef}
       type="button"
       className={asSelect ? undefined : "mini"}
       disabled={disabled || options.length === 0}
@@ -93,6 +133,60 @@ export function TickDropdown({
     </button>
   );
 
+  const panel =
+    open && panelPos
+      ? createPortal(
+          <div
+            ref={panelRef}
+            id={listId}
+            role="listbox"
+            aria-multiselectable="true"
+            className="tick-dropdown-panel"
+            style={{
+              position: "fixed",
+              zIndex: 10050,
+              top: panelPos.top,
+              left: panelPos.left,
+              minWidth: panelPos.minWidth,
+              maxHeight: "220px",
+              overflow: "auto",
+              padding: "8px",
+              borderRadius: "12px",
+              // Fully opaque: parent .card uses backdrop-filter blur; translucent panels look washed out.
+              background: "#12182a",
+              color: "var(--text)",
+              border: "1px solid var(--border)",
+              boxShadow: "0 10px 28px rgba(0, 0, 0, 0.55)",
+            }}
+          >
+            <div className="row" style={{ marginBottom: "6px", gap: "6px" }}>
+              <button type="button" className="mini" onClick={() => onChange([])} disabled={!selected.length}>
+                Clear
+              </button>
+            </div>
+            {options.map((opt) => (
+              <label
+                key={opt}
+                className="inline"
+                style={{
+                  display: "flex",
+                  gap: "8px",
+                  alignItems: "center",
+                  margin: "2px 0",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                }}
+              >
+                <input type="checkbox" checked={selectedSet.has(opt)} onChange={() => toggle(opt)} />
+                <span style={{ fontFamily: "var(--mono)", fontSize: "12px", color: "var(--text)" }}>{opt}</span>
+              </label>
+            ))}
+            {!options.length ? <div className="hint">No options</div> : null}
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
     <div
       ref={rootRef}
@@ -102,8 +196,6 @@ export function TickDropdown({
         display: "inline-flex",
         alignItems: "center",
         gap: label && !asSelect ? undefined : "8px",
-        // Raise whole control above later siblings (upload picker, cards) while open.
-        zIndex: open ? 300 : undefined,
       }}
       title={title}
     >
@@ -122,54 +214,7 @@ export function TickDropdown({
           {trigger}
         </>
       )}
-      {open ? (
-        <div
-          id={listId}
-          role="listbox"
-          aria-multiselectable="true"
-          className="tick-dropdown-panel"
-          style={{
-            position: "absolute",
-            zIndex: 1,
-            top: "calc(100% + 4px)",
-            left: 0,
-            minWidth: "min(240px, 80vw)",
-            maxHeight: "220px",
-            overflow: "auto",
-            padding: "8px",
-            borderRadius: "12px",
-            // Fully opaque: parent .card uses backdrop-filter blur; translucent panels look washed out.
-            background: "#12182a",
-            color: "var(--text)",
-            border: "1px solid var(--border)",
-            boxShadow: "0 10px 28px rgba(0, 0, 0, 0.55)",
-          }}
-        >
-          <div className="row" style={{ marginBottom: "6px", gap: "6px" }}>
-            <button type="button" className="mini" onClick={() => onChange([])} disabled={!selected.length}>
-              Clear
-            </button>
-          </div>
-          {options.map((opt) => (
-            <label
-              key={opt}
-              className="inline"
-              style={{
-                display: "flex",
-                gap: "8px",
-                alignItems: "center",
-                margin: "2px 0",
-                color: "var(--text)",
-                cursor: "pointer",
-              }}
-            >
-              <input type="checkbox" checked={selectedSet.has(opt)} onChange={() => toggle(opt)} />
-              <span style={{ fontFamily: "var(--mono)", fontSize: "12px", color: "var(--text)" }}>{opt}</span>
-            </label>
-          ))}
-          {!options.length ? <div className="hint">No options</div> : null}
-        </div>
-      ) : null}
+      {panel}
     </div>
   );
 }

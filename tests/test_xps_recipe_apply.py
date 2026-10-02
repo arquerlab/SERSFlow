@@ -67,9 +67,18 @@ def test_apply_multiplet_cr2o3() -> None:
     assert any(l["mode"] == "scale" for l in out["param_links"])
 
 
-def test_apply_unknown_recipe() -> None:
-    with pytest.raises(KeyError):
-        apply_recipe_id("does_not_exist")
+def test_apply_fermi_edge_valence_recipe() -> None:
+    by_q = list_compound_fits(q="Fermi")
+    assert any(f.id == "fermi_edge_valence" for f in by_q)
+    out = apply_recipe_id("fermi_edge_valence")
+    assert out["components"] == [{"component_id": "Fermi_edge", "component_type": "fermi_edge"}]
+    # amplitude, center, sigma, temperature_K
+    assert out["p0"] == [0.0, 0.0, 0.25, 298.0]
+    assert out["bounds_lower"] == [0.0, -3.0, 0.05, None]
+    assert out["bounds_upper"] == [1.0e7, 3.0, 0.4, None]
+    assert out["vary"] == [True, True, True, False]
+    assert out.get("param_links") == []
+    assert "shirley_bg" not in [c["component_type"] for c in out["components"]]
 
 
 def test_apply_invalid_pass_energy() -> None:

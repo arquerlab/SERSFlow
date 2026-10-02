@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   applyFittingRecipe,
@@ -110,6 +111,8 @@ export function FittingRecipePicker({
   const [warnings, setWarnings] = useState<string[]>([]);
   const [showMethods, setShowMethods] = useState(false);
   const blurTimer = useRef<number | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const indexQ = useQuery({
     queryKey: ["xps-fitting-recipes-index"],
@@ -127,6 +130,36 @@ export function FittingRecipePicker({
 
   const items = indexQ.data?.items ?? [];
   const matches = useMemo(() => filterIndex(items, query), [items, query]);
+  const showPanel = open && matches.length > 0;
+
+  useLayoutEffect(() => {
+    if (!showPanel) {
+      setPanelPos(null);
+      return;
+    }
+    const place = () => {
+      const el = inputRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const maxH = 220;
+      const gap = 2;
+      const spaceBelow = window.innerHeight - r.bottom - 8;
+      const openUp = spaceBelow < Math.min(maxH, 120) && r.top > spaceBelow;
+      setPanelPos({
+        top: openUp ? Math.max(8, r.top - maxH - gap) : r.bottom + gap,
+        left: Math.max(8, Math.min(r.left, window.innerWidth - r.width - 8)),
+        width: r.width,
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [showPanel, matches.length, query]);
+
   const elementChips = useMemo(() => {
     const set = new Set<string>();
     for (const it of items) {
@@ -211,14 +244,9 @@ export function FittingRecipePicker({
       ) : null}
       <label className="inline" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
         <span className="hint">Search / browse</span>
-        <div
-          style={{
-            position: "relative",
-            width: "260px",
-            zIndex: open && matches.length > 0 ? 200 : undefined,
-          }}
-        >
+        <div style={{ position: "relative", width: "260px" }}>
           <input
+            ref={inputRef}
             type="text"
             value={query}
             placeholder="Browse or type C 1s, NiO…"
@@ -254,58 +282,60 @@ export function FittingRecipePicker({
             style={{ width: "100%" }}
             title="Focus with empty query to browse; type to search"
           />
-          {open && matches.length > 0 ? (
-            <div
-              role="listbox"
-              style={{
-                position: "absolute",
-                zIndex: 1,
-                left: 0,
-                right: 0,
-                top: "100%",
-                maxHeight: "220px",
-                overflow: "auto",
-                marginTop: "2px",
-                padding: "4px 0",
-                borderRadius: "12px",
-                background: "#12182a",
-                color: "var(--text)",
-                border: "1px solid var(--border)",
-                boxShadow: "0 10px 28px rgba(0, 0, 0, 0.55)",
-              }}
-            >
-              {!query.trim() ? (
-                <div className="hint" style={{ padding: "4px 10px" }}>
-                  Browse (top {DROPDOWN_CAP})
-                </div>
-              ) : null}
-              {matches.map((it, i) => (
-                <button
-                  key={it.id}
-                  type="button"
-                  className="mini"
+          {showPanel && panelPos
+            ? createPortal(
+                <div
+                  role="listbox"
                   style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
-                    border: "none",
-                    borderRadius: 0,
+                    position: "fixed",
+                    zIndex: 10050,
+                    left: panelPos.left,
+                    top: panelPos.top,
+                    width: panelPos.width,
+                    maxHeight: "220px",
+                    overflow: "auto",
+                    padding: "4px 0",
+                    borderRadius: "12px",
+                    background: "#12182a",
                     color: "var(--text)",
-                    background: i === highlight ? "rgba(255,255,255,0.12)" : "transparent",
-                    fontWeight: i === highlight ? 700 : 400,
+                    border: "1px solid var(--border)",
+                    boxShadow: "0 10px 28px rgba(0, 0, 0, 0.55)",
                   }}
-                  onMouseDown={(ev) => ev.preventDefault()}
-                  onClick={() => onPick(it)}
-                  onMouseEnter={() => setHighlight(i)}
                 >
-                  {it.label}
-                  {it.pass_energies?.length ? (
-                    <span className="hint"> · PE {it.pass_energies.join("/")}</span>
+                  {!query.trim() ? (
+                    <div className="hint" style={{ padding: "4px 10px" }}>
+                      Browse (top {DROPDOWN_CAP})
+                    </div>
                   ) : null}
-                </button>
-              ))}
-            </div>
-          ) : null}
+                  {matches.map((it, i) => (
+                    <button
+                      key={it.id}
+                      type="button"
+                      className="mini"
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        border: "none",
+                        borderRadius: 0,
+                        color: "var(--text)",
+                        background: i === highlight ? "rgba(255,255,255,0.12)" : "transparent",
+                        fontWeight: i === highlight ? 700 : 400,
+                      }}
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      onClick={() => onPick(it)}
+                      onMouseEnter={() => setHighlight(i)}
+                    >
+                      {it.label}
+                      {it.pass_energies?.length ? (
+                        <span className="hint"> · PE {it.pass_energies.join("/")}</span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>,
+                document.body
+              )
+            : null}
         </div>
       </label>
       <label className="inline" style={{ justifyContent: "space-between" }}>

@@ -136,18 +136,26 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
   const ac = new AbortController();
   explorePlotAbortRef.current = ac;
   const signal = ac.signal;
+  // Claim this run immediately so overlapping starts cannot both pass stale-seq checks.
+  const seq = ++runSeq.current;
 
   const aborted = () => signal.aborted;
   const isAbortErr = (e: unknown) =>
     aborted() ||
     (e instanceof DOMException && e.name === "AbortError") ||
     (e as Error)?.name === "AbortError";
+  const isStale = () => aborted() || seq !== runSeq.current;
+  const commitFigure = (next: unknown) => {
+    if (isStale()) return;
+    setPreviousFigure(currentFigure);
+    setCurrentFigure(next);
+  };
 
   try {
     setLastError(null);
     setExplorePlotStatus("Saving pipeline…");
     await ensurePipelineSaved();
-    if (aborted()) return;
+    if (isStale()) return;
     if (!subsetIndices.length) {
       throw new Error("No active subset. Create or apply a saved subset to start plotting.");
     }
@@ -189,8 +197,6 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       batchMetrics: ["peak_height", "fwhm"],
     });
 
-    const seq = ++runSeq.current;
-
     async function inputsAfterQc(): Promise<SpectrumRef[]> {
       const all = subsetInputsFromIndices(subsetIndices);
       const hasQc = steps.some((s) => s.enabled !== false && QC_STEP_NAMES.has(s.name));
@@ -200,6 +206,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         { scope: "subset", return: { kind: "final" }, up_to_step: "__raw__" },
         { signal }
       );
+      if (isStale()) return [];
       const keep = new Set(((filtered as SessionRunFinalResponse).items ?? []).map((it) => it.spectrum_id));
       return all.filter((r) => keep.has(r.spectrum_id));
     }
@@ -207,7 +214,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
     if (wantsSourceOrQcRaw) {
       setExplorePlotStatus(wantsTrueRaw ? "Loading subset spectra…" : "Applying filters…");
       const out = await runSession(sessionId, payload, { signal });
-      if (seq !== runSeq.current) return;
+      if (isStale()) return;
       const items = ((out as SessionRunFinalResponse).items ?? []).filter(hasPlottableXy);
       const traces = capTraceCount(items, subsetSize).map((it) => ({
         type: "scatter",
@@ -222,8 +229,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
             ? "No spectra in the active subset."
             : "No spectra remain after cohort QC for this subset."
         );
-        setPreviousFigure(currentFigure);
-        setCurrentFigure({
+        commitFigure({
           data: [],
           layout: {
             xaxis: { title: { text: xAxisTitle } },
@@ -243,8 +249,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         });
         return;
       }
-      setPreviousFigure(currentFigure);
-      setCurrentFigure({
+      commitFigure({
         data: traces,
         layout: {
           xaxis: { title: { text: xAxisTitle } },
@@ -272,7 +277,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       }
 
       const inputs = await inputsAfterQc();
-      if (seq !== runSeq.current) return;
+      if (isStale()) return;
 
       const slice = steps.slice(0, prevEnabledIdx >= 0 ? prevEnabledIdx + 1 : 0);
       const pipelineToInput: Pipeline = {
@@ -305,7 +310,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       } catch (err) {
         throw err;
       }
-      if (seq !== runSeq.current) return;
+      if (isStale()) return;
 
       const rawItems = capTraceCount(rawIn.items ?? [], subsetSize);
       const baseById = new Map((baseOut.items ?? []).map((it) => [it.spectrum_id, it] as const));
@@ -319,8 +324,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         return out;
       });
 
-      setPreviousFigure(currentFigure);
-      setCurrentFigure({
+      commitFigure({
         data: traces,
         layout: {
           xaxis: { title: { text: xAxisTitle } },
@@ -362,7 +366,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       }
 
       const inputs = await inputsAfterQc();
-      if (seq !== runSeq.current) return;
+      if (isStale()) return;
 
       const wantedRegion =
         typeof flat.xps_region === "string" && flat.xps_region.trim() ? flat.xps_region.trim() : "";
@@ -395,8 +399,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       }
       if (wantedRegion && gatedInputs.length === 0) {
         setExplorePlotStatus(`No spectra match fitting region ${wantedRegion} in the QC cohort.`);
-        setPreviousFigure(currentFigure);
-        setCurrentFigure({
+        commitFigure({
           data: [],
           layout: {
             xaxis: { title: { text: xAxisTitle } },
@@ -432,7 +435,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         },
         { signal }
       );
-      if (seq !== runSeq.current) return;
+      if (isStale()) return;
 
       const rawItems = capTraceCount(rawIn.items ?? [], subsetSize);
       const fillOpacity = Math.max(0, Math.min(1, typeof fp.fill_opacity === "number" ? fp.fill_opacity : 0.15));
@@ -441,7 +444,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       const figures: FitStackFigure["figures"] = [];
       for (let si = 0; si < rawItems.length; si++) {
         const it = rawItems[si]!;
-        if (aborted()) return;
+        if (isStale()) return;
         setExplorePlotStatus(`Fitting: spectrum ${si + 1}/${nSpectra} (${it.spectrum_id.slice(0, 14)}…) — calling /fitting/fit`);
         let fitResp;
         try {
@@ -488,14 +491,13 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       }
 
       setExplorePlotStatus(`Fitting preview: ${figures.length} spectra (stacked)`);
-      setPreviousFigure(currentFigure);
-      setCurrentFigure({ kind: "fit_stack", figures } satisfies FitStackFigure);
+      commitFigure({ kind: "fit_stack", figures } satisfies FitStackFigure);
       return;
     }
 
     setExplorePlotStatus("Rendering plot…");
     const out = await runSession(sessionId, payload, { signal });
-    if (seq !== runSeq.current) return;
+    if (isStale()) return;
 
     if ((payload.return as { kind?: string }).kind === "intermediates") {
       const stepName = afterStep ?? "";
@@ -513,8 +515,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
             : "No plottable spectra after this step."
         );
       }
-      setPreviousFigure(currentFigure);
-      setCurrentFigure({
+      commitFigure({
         data: traces,
         layout: {
           xaxis: { title: { text: xAxisTitle } },
@@ -534,8 +535,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       y: it.y,
       name: it.spectrum_id,
     }));
-    setPreviousFigure(currentFigure);
-    setCurrentFigure({
+    commitFigure({
       data: traces,
       layout: {
         xaxis: { title: { text: xAxisTitle } },
@@ -545,9 +545,12 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       },
     });
   } catch (e) {
-    if (isAbortErr(e)) return;
+    if (isAbortErr(e) || isStale()) return;
     setLastError(String((e as Error)?.message ?? e));
   } finally {
-    setExplorePlotStatus(null);
+    // Only the latest run owns the status line (aborted/stale runs must not clear a newer run's status).
+    if (seq === runSeq.current && explorePlotAbortRef.current === ac) {
+      setExplorePlotStatus(null);
+    }
   }
 }

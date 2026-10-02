@@ -75,6 +75,8 @@ import {
   upsertParamLink,
   xpsBgComponentTypesFromCatalog,
   xpsBgTypeLabel,
+  xpsSpecialComponentTypesFromCatalog,
+  xpsSpecialTypeLabel,
   type FittingEditorParams,
   type FittingParamLink,
 } from "./preprocess/fittingUtils";
@@ -184,12 +186,12 @@ export default function PreprocessingWorkspace() {
   const [selectedUploads, setSelectedUploads] = useState<string[]>([]);
   const [selectedRecordIndices, setSelectedRecordIndices] = useState<Record<string, number[]>>({});
   const [newDatasetName, setNewDatasetName] = useState("");
-  const [vmsSpectrumMode, setVmsSpectrumMode] = useState<"averages" | "individuals" | "all">("averages");
   const [createXpsRegions, setCreateXpsRegions] = useState<string[]>([]);
   const [regionSubsetPicks, setRegionSubsetPicks] = useState<string[]>([]);
   const formatsQ = useFormatsCatalog();
   const { ui: selectedFormatUi } = useMergedFormatUi(selectedUploads);
   const uploadAccept = acceptFromFormats(formatsQ.data?.items);
+  /** Multi-block XPS files: region filter (and optional explicit block ticks). Spectrum mode UI is hidden for now. */
   const selectedHasMulti =
     selectedFormatUi.show_spectrum_mode || selectedFormatUi.show_region_filter;
   // Block picker lives in the uploads list; do not OR show_block_picker into Prepare mode/region UI.
@@ -1389,7 +1391,8 @@ export default function PreprocessingWorkspace() {
               createFromUploadsM.mutate({
                 paths: selectedUploads,
                 name: newDatasetName,
-                vms_spectrum_mode: selectedHasMulti ? (selectedHasExplicitBlocks ? "all" : vmsSpectrumMode) : undefined,
+                // Default to averaged blocks; explicit block ticks imply "all" for those paths.
+                vms_spectrum_mode: selectedHasMulti ? (selectedHasExplicitBlocks ? "all" : "averages") : undefined,
                 xps_regions: selectedHasMulti && createXpsRegions.length ? createXpsRegions : undefined,
                 record_indices: selectedHasExplicitBlocks ? selectedRecordIndices : undefined,
               })
@@ -1398,34 +1401,7 @@ export default function PreprocessingWorkspace() {
           >
             {createFromUploadsM.isPending ? "Creating…" : "Create dataset"}
           </button>
-          {selectedHasMulti ? (
-            <>
-              {selectedFormatUi.show_spectrum_mode ? (
-              <label
-                className="inline"
-                style={{ margin: 0, opacity: selectedHasExplicitBlocks ? 0.55 : 1 }}
-                title={
-                  selectedHasExplicitBlocks
-                    ? "Specific spectra are ticked — those blocks are used (mode ignored)"
-                    : "Multi-spectrum files may contain averaged and individual replicate blocks per region"
-                }
-              >
-                Multi-spectrum blocks
-                <select
-                  value={vmsSpectrumMode}
-                  disabled={selectedHasExplicitBlocks}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setVmsSpectrumMode(v === "individuals" ? "individuals" : v === "all" ? "all" : "averages");
-                  }}
-                >
-                  <option value="averages">Averaged</option>
-                  <option value="individuals">Individual</option>
-                  <option value="all">All</option>
-                </select>
-              </label>
-              ) : null}
-              {selectedFormatUi.show_region_filter ? (
+          {selectedHasMulti && selectedFormatUi.show_region_filter ? (
               <TickDropdown
                 label="Regions"
                 options={createRegionOptions}
@@ -1434,8 +1410,6 @@ export default function PreprocessingWorkspace() {
                 title="Optional: keep only selected XPS regions when creating the dataset"
                 onChange={setCreateXpsRegions}
               />
-              ) : null}
-            </>
           ) : null}
           <label className="inline" style={{ margin: 0, display: "flex", width: "100%", maxWidth: "420px" }}>
             Dataset name (optional)
@@ -1888,6 +1862,7 @@ export default function PreprocessingWorkspace() {
                   return (
                     <>
                       {isXpsPipeline ? (
+                        <div className="pipeline-fitting-xps-chrome" style={{ display: "grid", gap: "8px", position: "relative", zIndex: 5 }}>
                         <FittingRecipePicker
                           fittingParams={fp}
                           fittingCatalog={fittingCatalog}
@@ -1895,8 +1870,6 @@ export default function PreprocessingWorkspace() {
                           preferredPassEnergy={preferredPassEnergy}
                           onApply={(next) => updateSelectedFittingParams(next)}
                         />
-                      ) : null}
-                      {isXpsPipeline ? (
                         <label className="inline" style={{ justifyContent: "space-between", alignItems: "center" }}>
                           Region / band
                           <span style={{ display: "flex", gap: "6px", alignItems: "center" }}>
@@ -1951,6 +1924,7 @@ export default function PreprocessingWorkspace() {
                             </datalist>
                           </span>
                         </label>
+                        </div>
                       ) : null}
                       <label className="inline" style={{ justifyContent: "space-between" }}>
                         Peak amplitude (initial guess)
@@ -2046,6 +2020,13 @@ export default function PreprocessingWorkspace() {
                                 ))}
                                 <option value="polynomial_background">Polynomial</option>
                                 {isXpsPipeline
+                                  ? xpsSpecialComponentTypesFromCatalog(fittingCatalog).map((t) => (
+                                      <option key={t} value={t}>
+                                        {xpsSpecialTypeLabel(t, fittingCatalog)}
+                                      </option>
+                                    ))
+                                  : null}
+                                {isXpsPipeline
                                   ? xpsBgComponentTypesFromCatalog(fittingCatalog).map((t) => (
                                       <option key={t} value={t}>
                                         {xpsBgTypeLabel(t, fittingCatalog)}
@@ -2097,6 +2078,13 @@ export default function PreprocessingWorkspace() {
                             </div>
                             {comp.rows.map((row, ri) => {
                               const existingLink = findParamLink(fp.param_links, comp.component_id, row.key);
+                              const isTempK = row.key === "temperature_K";
+                              const isFermiAmp = comp.component_type === "fermi_edge" && row.key === "amplitude";
+                              const ampAuto = Boolean(isFermiAmp && row.auto);
+                              const peakAmpAuto =
+                                fp.initial_guess_mode === "auto" &&
+                                isPeakComponentType(comp.component_type) &&
+                                row.key === "amp";
                               return (
                               <div
                                 key={row.key}
@@ -2109,19 +2097,52 @@ export default function PreprocessingWorkspace() {
                                   alignItems: "center",
                                 }}
                               >
-                                <span>{row.label}</span>
+                                <span>{row.label}{isTempK ? " (K)" : ""}</span>
+                                {isFermiAmp ? (
+                                  <div className="row" style={{ gap: "4px", alignItems: "center" }}>
+                                    <label className="inline" style={{ margin: 0, gap: "4px" }} title="Estimate step height from the spectrum at fit time">
+                                      <input
+                                        type="checkbox"
+                                        checked={ampAuto}
+                                        onChange={(e) => {
+                                          const on = e.target.checked;
+                                          const next = fp.components.slice();
+                                          const rows = next[ci]!.rows.slice();
+                                          rows[ri] = on
+                                            ? { ...row, auto: true, p0: 0 }
+                                            : { ...row, auto: false, p0: row.p0 > 0 ? row.p0 : 1 };
+                                          next[ci] = { ...next[ci]!, rows };
+                                          updateSelectedFittingParams({ ...fp, components: next });
+                                        }}
+                                      />
+                                      Auto
+                                    </label>
+                                    {!ampAuto ? (
+                                      <DraftNumberInput
+                                        min={0}
+                                        max={1e7}
+                                        value={row.p0}
+                                        onChange={(n) => {
+                                          if (n == null) return;
+                                          const next = fp.components.slice();
+                                          const rows = next[ci]!.rows.slice();
+                                          rows[ri] = { ...row, auto: false, p0: n };
+                                          next[ci] = { ...next[ci]!, rows };
+                                          updateSelectedFittingParams({ ...fp, components: next });
+                                        }}
+                                        style={{ width: "72px" }}
+                                      />
+                                    ) : null}
+                                  </div>
+                                ) : (
                                 <DraftNumberInput
-                                  disabled={
-                                    fp.initial_guess_mode === "auto" &&
-                                    isPeakComponentType(comp.component_type) &&
-                                    row.key === "amp"
-                                  }
+                                  disabled={peakAmpAuto}
                                   title={
-                                    fp.initial_guess_mode === "auto" &&
-                                    isPeakComponentType(comp.component_type) &&
-                                    row.key === "amp"
+                                    peakAmpAuto
                                       ? "Auto mode: backend uses intensity at the center (pos) as initial amplitude."
-                                      : undefined
+                                      : isTempK
+                                        ? "Sample temperature in Kelvin (converted to kt = kB·T for the Fermi–Dirac edge). Fixed during fit."
+                                        : undefined
                                   }
                                   value={row.p0}
                                   onChange={(n) => {
@@ -2133,7 +2154,12 @@ export default function PreprocessingWorkspace() {
                                     updateSelectedFittingParams({ ...fp, components: next });
                                   }}
                                 />
+                                )}
                                 <div className="row" style={{ gap: "6px", justifyContent: "flex-start" }}>
+                                  {isTempK ? (
+                                    <span className="hint" style={{ fontSize: "11px" }}>no limits</span>
+                                  ) : (
+                                    <>
                                   <DraftNumberInput
                                     nullable
                                     placeholder="lower"
@@ -2160,11 +2186,14 @@ export default function PreprocessingWorkspace() {
                                     }}
                                     style={{ width: "68px" }}
                                   />
+                                    </>
+                                  )}
                                 </div>
                                 {isXpsPipeline ? (
                                   <input
                                     type="checkbox"
                                     checked={row.vary !== false}
+                                    disabled={isTempK}
                                     onChange={(e) => {
                                       const next = fp.components.slice();
                                       const rows = next[ci]!.rows.slice();
@@ -2172,7 +2201,11 @@ export default function PreprocessingWorkspace() {
                                       next[ci] = { ...next[ci]!, rows };
                                       updateSelectedFittingParams({ ...fp, components: next });
                                     }}
-                                    title="When unchecked, parameter is held fixed during the fit"
+                                    title={
+                                      isTempK
+                                        ? "Temperature is fixed (not a free fit parameter)"
+                                        : "When unchecked, parameter is held fixed during the fit"
+                                    }
                                   />
                                 ) : null}
                                 {isXpsPipeline ? (

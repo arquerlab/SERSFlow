@@ -85,6 +85,8 @@ function fittingFeatureKeys(params: Record<string, unknown> | null | undefined):
       if (!INFINITE_AREA_PEAK_TYPES.has(type)) {
         keys.push(`fit_${id}_area`);
       }
+    } else if (type === "fermi_edge") {
+      keys.push(`fit_${id}_amplitude`, `fit_${id}_center`, `fit_${id}_sigma`, `fit_${id}_temperature_K`);
     } else {
       keys.push(`fit_${id}_pos`, `fit_${id}_amp`, `fit_${id}_fwhm`, `fit_${id}_area`);
     }

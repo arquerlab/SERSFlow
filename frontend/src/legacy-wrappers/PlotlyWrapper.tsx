@@ -175,20 +175,40 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
       responsive: true,
       scrollZoom: false,
     } as const;
-    // Plotly.react often fails to introduce secondary-axis domains when switching from a
-    // single-panel figure; purge + newPlot is reliable for fit/residual subplots.
-    if (hasSubplots) {
-      Plotly.purge(el);
-      Plotly.newPlot(el, themed.data, themed.layout, opts);
-    } else {
-      Plotly.react(el, themed.data, themed.layout, opts);
-    }
-    constrainPlotDom(el);
-    try {
-      Plotly.Plots.resize(el);
-    } catch {
-      // ignore
-    }
+
+    let cancelled = false;
+    const draw = async () => {
+      try {
+        // Plotly.react/newPlot return promises — resizing or a second update before they
+        // settle can leave the plot blank (often shows up as every-other refresh failing).
+        if (hasSubplots || !(el as any).data) {
+          Plotly.purge(el);
+          if (cancelled) return;
+          await Plotly.newPlot(el, themed.data, themed.layout, opts);
+        } else {
+          await Plotly.react(el, themed.data, themed.layout, opts);
+        }
+      } catch {
+        if (cancelled) return;
+        try {
+          Plotly.purge(el);
+          await Plotly.newPlot(el, themed.data, themed.layout, opts);
+        } catch {
+          return;
+        }
+      }
+      if (cancelled) return;
+      constrainPlotDom(el);
+      try {
+        Plotly.Plots.resize(el);
+      } catch {
+        // ignore
+      }
+    };
+    void draw();
+    return () => {
+      cancelled = true;
+    };
   }, [themed]);
 
   useEffect(() => {

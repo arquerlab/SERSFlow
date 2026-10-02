@@ -14,6 +14,7 @@ SUPPORTED_COMPONENT_KINDS = frozenset(
         "pseudo_voigt",
         "voigt",
         "apv",
+        "fermi_edge",
     }
 )
 

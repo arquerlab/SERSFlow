@@ -81,19 +81,11 @@
 }
 
 .preprocess-grid.analyze-layout .section-title {
-  /* In Analyze, headings need to stand out from helper text. */
-  font-size: 16px;
-  font-weight: 900;
-  color: var(--text);
-  letter-spacing: 0.2px;
+  /* Inherited from global .section-title; keep selector for layout-specific tweaks. */
   margin: 0 0 10px;
 }
 
 .preprocess-grid.analyze-layout .subsection-title {
-  font-size: 14px;
-  font-weight: 900;
-  color: var(--text);
-  opacity: 0.95;
   margin: 0 0 8px;
 }
 

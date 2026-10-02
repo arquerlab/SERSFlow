@@ -35,7 +35,12 @@ export async function plotFromEndpoint({ plotDiv, endpoint, payload, showError, 
   clearError();
   try {
     const fig = await fetchFigure(endpoint, payload);
-    Plotly.react(plotDiv, fig.data, fig.layout, { responsive: true });
+    try {
+      await Plotly.react(plotDiv, fig.data, fig.layout, { responsive: true });
+    } catch {
+      Plotly.purge(plotDiv);
+      await Plotly.newPlot(plotDiv, fig.data, fig.layout, { responsive: true });
+    }
   } catch (e) {
     showError(String(e && e.message ? e.message : e));
   }

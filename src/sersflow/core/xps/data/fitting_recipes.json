@@ -508,6 +508,42 @@
   ],
   "compound_fits": [
     {
+      "id": "fermi_edge_valence",
+      "element": "VB",
+      "region": "valence_band",
+      "compound": "Fermi edge (valence / metallic edge)",
+      "source_table": null,
+      "pdf_page": null,
+      "pass_energies": [],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "Fermi edge",
+          "be_eV": 0.0,
+          "required": true,
+          "lineshape": {
+            "kind": "fermi_edge",
+            "params": {
+              "sigma": 0.25,
+              "temperature_K": 298
+            },
+            "note": "lmfitxps FermiEdgeModel: Gaussian-broadened Fermi–Dirac step. Amplitude auto-estimated from step height; Temperature (K) converts to kt internally."
+          }
+        }
+      ],
+      "footnotes": [
+        "Default sigma = 0.25 eV (bounds 0.05–0.4). Center (Ef) defaults to 0 eV (bounds −3…+3). Temperature defaults to 298 K and is held fixed."
+      ],
+      "procedure_markdown": "## Fermi edge fit\n\n1. Select a valence-band / Fermi-edge region spectrum.\n2. Apply this recipe (or add a **Fermi edge** component).\n3. Set **Temperature (K)** for the sample (default 298 K). The engine converts to kt = kB·T.\n4. Leave **Amplitude** on Auto unless you need a manual seed (bounds 0…1e7).\n5. Fit; report **center** as the Fermi level and **sigma** as Gaussian broadening.\n",
+      "aliases": [
+        "Fermi",
+        "Fermi edge",
+        "VB",
+        "valence band",
+        "fermi_edge"
+      ]
+    },
+    {
       "id": "c_1s_adventitious",
       "element": "C",
       "region": "C_1s",

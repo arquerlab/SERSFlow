@@ -15,7 +15,11 @@ from sersflow.core.preprocess.fitting import (
     _apply_auto_peak_amplitudes,
     _validate_vectors,
 )
-from sersflow.core.preprocess.fitting_specs import XPS_BACKGROUND_COMPONENT_TYPES, build_component_function
+from sersflow.core.preprocess.fitting_specs import (
+    BOLTZMANN_EV_PER_K,
+    XPS_BACKGROUND_COMPONENT_TYPES,
+    build_component_function,
+)
 
 _SAFE = re.compile(r"[^0-9a-zA-Z_]+")
 
@@ -34,6 +38,67 @@ def _make_peak_model(fn: Callable[..., np.ndarray], keys: list[str], prefix: str
     local: dict[str, Any] = {"fn": fn}
     exec(f"def _peak(x, {arg_list}):\n    return fn(x, {arg_list})\n", local)
     return Model(local["_peak"], independent_vars=["x"], prefix=prefix)
+
+
+def _fermi_edge_model(prefix: str):
+    """Wrap lmfitxps.fermi_edge so Temperature (K) is the stored parameter (converted to kt)."""
+    from lmfit import Model
+    from lmfitxps.models import fermi_edge  # type: ignore
+
+    def _peak(x, amplitude, center, sigma, temperature_K):
+        kt = float(BOLTZMANN_EV_PER_K) * float(temperature_K)
+        return fermi_edge(x, amplitude=amplitude, center=center, kt=kt, sigma=sigma)
+
+    return Model(_peak, independent_vars=["x"], prefix=prefix), [
+        "amplitude",
+        "center",
+        "sigma",
+        "temperature_K",
+    ]
+
+
+def _auto_fermi_amplitude(y: np.ndarray) -> float:
+    """Estimate Fermi-edge step height from end medians."""
+    yy = np.asarray(y, dtype=float).ravel()
+    if yy.size < 4:
+        return float(max(np.ptp(yy), 1.0))
+    n = max(3, yy.size // 10)
+    left = float(np.median(yy[:n]))
+    right = float(np.median(yy[-n:]))
+    step = abs(left - right)
+    if not np.isfinite(step) or step <= 0:
+        step = float(max(np.ptp(yy), 1.0))
+    return step
+
+
+def _apply_auto_fermi_amplitudes(
+    y: np.ndarray,
+    p0: list[float],
+    components: list[FitComponent],
+    slices: list[tuple[int, int]],
+    param_keys_per_comp: list[list[str]],
+    bounds_lower: list[float | None] | None = None,
+    bounds_upper: list[float | None] | None = None,
+) -> list[float]:
+    """Replace non-positive amplitude seeds with an estimated step height."""
+    out = list(p0)
+    for comp, (s, _e), keys in zip(components, slices, param_keys_per_comp):
+        if comp.component_type.strip().lower() != "fermi_edge":
+            continue
+        try:
+            amp_i = keys.index("amplitude")
+        except ValueError:
+            continue
+        gamp = s + amp_i
+        if float(out[gamp]) > 0:
+            continue
+        amp = _auto_fermi_amplitude(y)
+        if bounds_lower is not None and bounds_lower[gamp] is not None:
+            amp = max(amp, float(bounds_lower[gamp]))
+        if bounds_upper is not None and bounds_upper[gamp] is not None:
+            amp = min(amp, float(bounds_upper[gamp]))
+        out[gamp] = amp
+    return out
 
 
 def _xps_bg_model(component_type: str, prefix: str, y0: float):
@@ -170,6 +235,12 @@ def _assemble_lmfit_model(
             except ImportError as e:
                 raise ImportError("Active XPS backgrounds require lmfitxps>=4.2.0") from e
             peak_fns.append(None)
+        elif ct == "fermi_edge":
+            try:
+                m, param_keys = _fermi_edge_model(prefix)
+            except ImportError as e:
+                raise ImportError("Fermi-edge fitting requires lmfitxps>=4.2.0") from e
+            peak_fns.append(None)
         else:
             f, param_specs = build_component_function(comp.component_type, degree=comp.degree)
             param_keys = [p.key for p in param_specs]
@@ -260,6 +331,15 @@ def fit_curve_lmfit(problem: FitProblem) -> FitResult:
             lo_list,
             hi_list,
         )
+    p0_list = _apply_auto_fermi_amplitudes(
+        problem.y,
+        p0_list,
+        problem.components,
+        slices,
+        param_keys_per_comp,
+        lo_list,
+        hi_list,
+    )
 
     params = model.make_params()
     flat_names: list[str] = []
@@ -267,6 +347,7 @@ def fit_curve_lmfit(problem: FitProblem) -> FitResult:
     for comp, keys, (s, _e), prefix in zip(
         problem.components, param_keys_per_comp, slices, prefixes
     ):
+        ct = comp.component_type.strip().lower()
         for j, key in enumerate(keys):
             idx = s + j
             name = f"{prefix}{key}"
@@ -277,6 +358,11 @@ def fit_curve_lmfit(problem: FitProblem) -> FitResult:
             vary = True
             if problem.vary is not None and idx < len(problem.vary):
                 vary = bool(problem.vary[idx])
+            # Temperature is a fixed experimental setting (converted to kt inside the model).
+            if ct == "fermi_edge" and key == "temperature_K":
+                vary = False
+                lo = None
+                hi = None
             if name not in params:
                 params.add(name)
             params[name].set(

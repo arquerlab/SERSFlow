@@ -199,12 +199,12 @@ def fit_curve(problem: FitProblem) -> FitResult:
 
         return fit_curve_lmfit(problem)
 
-    from sersflow.core.preprocess.fitting_specs import XPS_BACKGROUND_COMPONENT_TYPES
+    from sersflow.core.preprocess.fitting_specs import XPS_LMFITXPS_COMPONENT_TYPES
 
     for comp in problem.components:
-        if comp.component_type.strip().lower() in XPS_BACKGROUND_COMPONENT_TYPES:
+        if comp.component_type.strip().lower() in XPS_LMFITXPS_COMPONENT_TYPES:
             raise ValueError(
-                f"Active XPS background {comp.component_type!r} requires an XPS pipeline (lmfit engine)"
+                f"XPS component {comp.component_type!r} requires an XPS pipeline (lmfit engine)"
             )
     if problem.param_links:
         raise ValueError("Parameter links require an XPS pipeline (lmfit engine)")
@@ -235,12 +235,12 @@ def evaluate_fit_curves(
 
         return evaluate_curve_lmfit(problem, p, diagnostics=diagnostics)
 
-    from sersflow.core.preprocess.fitting_specs import XPS_BACKGROUND_COMPONENT_TYPES
+    from sersflow.core.preprocess.fitting_specs import XPS_LMFITXPS_COMPONENT_TYPES
 
     for comp in problem.components:
-        if comp.component_type.strip().lower() in XPS_BACKGROUND_COMPONENT_TYPES:
+        if comp.component_type.strip().lower() in XPS_LMFITXPS_COMPONENT_TYPES:
             raise ValueError(
-                f"Active XPS background {comp.component_type!r} requires an XPS pipeline (lmfit engine)"
+                f"XPS component {comp.component_type!r} requires an XPS pipeline (lmfit engine)"
             )
     return _evaluate_curve_scipy(problem, p, diagnostics=diagnostics)
 

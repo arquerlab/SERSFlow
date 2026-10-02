@@ -231,6 +231,84 @@ def _peak_param_values(
     return values
 
 
+def _is_fermi_edge_recipe(peaks: list[dict[str, Any]]) -> bool:
+    if not peaks:
+        return False
+    for peak in peaks:
+        ls = peak.get("lineshape")
+        kind = ""
+        if isinstance(ls, dict):
+            kind = normalize_lineshape_kind(str(ls.get("kind") or ""))
+        if kind != "fermi_edge":
+            return False
+    return True
+
+
+def _apply_fermi_edge_recipe(
+    fit: CompoundFit,
+    peaks: list[dict[str, Any]],
+    warnings: list[str],
+) -> dict[str, Any]:
+    """Build a single-component Fermi-edge fitting step (no Shirley / peak FWHM logic)."""
+    labels = [str(p.get("label") or f"fermi{i + 1}") for i, p in enumerate(peaks)]
+    ids = _unique_ids(labels)
+    components: list[dict[str, Any]] = []
+    p0: list[float] = []
+    bounds_lower: list[float | None] = []
+    bounds_upper: list[float | None] = []
+    vary: list[bool] = []
+
+    specs = component_param_specs("fermi_edge")
+    for i, peak in enumerate(peaks):
+        ls_params = _lineshape_params(peak)
+        components.append({"component_id": ids[i], "component_type": "fermi_edge"})
+        defaults = _default_row_values("fermi_edge")
+        # Amplitude: auto by default (≤0 sentinel); optional override from recipe params.
+        amp_raw = ls_params.get("amplitude", ls_params.get("amp"))
+        if isinstance(amp_raw, (int, float)) and math.isfinite(float(amp_raw)) and float(amp_raw) > 0:
+            defaults["amplitude"] = float(amp_raw)
+        else:
+            defaults["amplitude"] = 0.0
+        center_raw = peak.get("be_eV", ls_params.get("center"))
+        if isinstance(center_raw, (int, float)) and math.isfinite(float(center_raw)):
+            defaults["center"] = float(center_raw)
+        sigma_raw = ls_params.get("sigma")
+        if isinstance(sigma_raw, (int, float)) and math.isfinite(float(sigma_raw)):
+            defaults["sigma"] = float(sigma_raw)
+        temp_raw = ls_params.get("temperature_K", ls_params.get("temperature"))
+        if isinstance(temp_raw, (int, float)) and math.isfinite(float(temp_raw)):
+            defaults["temperature_K"] = float(temp_raw)
+
+        for s in specs:
+            val = float(defaults.get(s.key, 0.0))
+            p0.append(val)
+            if s.key == "temperature_K":
+                bounds_lower.append(None)
+                bounds_upper.append(None)
+                vary.append(False)
+            else:
+                bounds_lower.append(s.lower_default)
+                bounds_upper.append(s.upper_default)
+                vary.append(True)
+
+    region = str(fit.region or "").strip() or "valence_band"
+    out: dict[str, Any] = {
+        "output_mode": "fit",
+        "fill_opacity": 0.15,
+        "initial_guess_mode": "default",
+        "xps_region": region.replace("_", " "),
+        "components": components,
+        "p0": p0,
+        "bounds_lower": bounds_lower,
+        "bounds_upper": bounds_upper,
+        "vary": vary,
+        "param_links": [],
+        "recipe_id": fit.id,
+        "warnings": warnings,
+    }
+    return out
+
+
 def apply_compound_fit_to_fitting_params(
     fit: CompoundFit,
     *,
@@ -239,13 +317,6 @@ def apply_compound_fit_to_fitting_params(
     preferred_pass_energy: int | None = None,
 ) -> dict[str, Any]:
     warnings: list[str] = []
-    pe = _prefer_pass_energy(
-        fit, pass_energy, preferred_from_acquisition=preferred_pass_energy
-    )
-    if fit.pass_energies and pe not in fit.pass_energies:
-        allowed = ", ".join(str(x) for x in fit.pass_energies)
-        raise ValueError(f"pass_energy {pe} not in recipe pass_energies [{allowed}]")
-
     peaks = list(fit.peaks)
     if not peaks:
         raise ValueError(f"recipe {fit.id} has no peaks")
@@ -256,6 +327,16 @@ def apply_compound_fit_to_fitting_params(
             warnings.append(f"footnote: {text}")
     if fit.source_table:
         warnings.append(f"provenance: {fit.source_table}" + (f" p.{fit.pdf_page}" if fit.pdf_page else ""))
+
+    if _is_fermi_edge_recipe(peaks):
+        return _apply_fermi_edge_recipe(fit, peaks, warnings)
+
+    pe = _prefer_pass_energy(
+        fit, pass_energy, preferred_from_acquisition=preferred_pass_energy
+    )
+    if fit.pass_energies and pe not in fit.pass_energies:
+        allowed = ", ".join(str(x) for x in fit.pass_energies)
+        raise ValueError(f"pass_energy {pe} not in recipe pass_energies [{allowed}]")
 
     labels = [str(p.get("label") or f"p{i + 1}") for i, p in enumerate(peaks)]
     ids = _unique_ids(labels)
