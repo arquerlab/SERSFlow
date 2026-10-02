@@ -205,6 +205,7 @@ export function buildScoresPcVsMetaSubplots(
   opts: {
     pcs: number[];
     xMeta: { values: (number | null)[]; label: string };
+    colorBy?: { values: (number | string | null)[]; label: string };
     maxPcs?: number;
   }
 ): { figure: PlotlyFigure; csvRows: CsvRow[]; title: string; defaultName: string } | null {
@@ -228,11 +229,35 @@ export function buildScoresPcVsMetaSubplots(
   const cellW = (1 - gapX * (cols - 1)) / cols;
   const cellH = (1 - gapY * (rows - 1)) / rows;
 
+  const colorVals =
+    opts.colorBy?.values?.length === ids.length ? opts.colorBy.values : null;
+  const numericColor =
+    !!colorVals && colorVals.some((v) => typeof v === "number" && Number.isFinite(v));
+  const categoricalColor =
+    !!colorVals &&
+    !numericColor &&
+    colorVals.some((v) => v != null && String(v).trim() !== "");
+  let categoryIndex: number[] | null = null;
+  let categoryLabels: string[] = [];
+  if (categoricalColor && colorVals) {
+    const labels = Array.from(
+      new Set(colorVals.map((v) => (v == null || String(v).trim() === "" ? "" : String(v))).filter(Boolean))
+    );
+    categoryLabels = labels;
+    const idx = new Map(labels.map((lab, i) => [lab, i]));
+    categoryIndex = colorVals.map((v) => {
+      if (v == null || String(v).trim() === "") return -1;
+      return idx.get(String(v)) ?? -1;
+    });
+  }
+
   const data: any[] = [];
   const layout: Record<string, any> = {
-    title: `PC vs ${opts.xMeta.label}${scalerTitleSuffix(result)}`,
+    title: `PC vs ${opts.xMeta.label}${
+      opts.colorBy?.label ? ` (color: ${opts.colorBy.label})` : ""
+    }${scalerTitleSuffix(result)}`,
     height: Math.max(420, rows * 320),
-    margin: { l: 60, r: 20, t: 30, b: 60 },
+    margin: { l: 60, r: numericColor || categoricalColor ? 80 : 20, t: 30, b: 60 },
     annotations: [],
     showlegend: false,
   };
@@ -269,14 +294,45 @@ export function buildScoresPcVsMetaSubplots(
       font: { size: 13, color: "black" },
     });
 
+    const marker: Record<string, unknown> = { size: 6 };
+    if (numericColor && colorVals) {
+      marker.color = colorVals;
+      marker.colorscale = "Viridis";
+      marker.showscale = idx === 0;
+      if (idx === 0) marker.colorbar = { title: opts.colorBy?.label };
+    } else if (categoricalColor && categoryIndex) {
+      marker.color = categoryIndex;
+      marker.colorscale = [
+        [0, "#0B2E6D"],
+        [0.25, "#C0392B"],
+        [0.5, "#1E8449"],
+        [0.75, "#6C3483"],
+        [1, "#7D6608"],
+      ];
+      marker.cmin = 0;
+      marker.cmax = Math.max(1, categoryLabels.length - 1);
+      marker.showscale = idx === 0;
+      if (idx === 0) {
+        marker.colorbar = {
+          title: opts.colorBy?.label,
+          tickmode: "array",
+          tickvals: categoryLabels.map((_, i) => i),
+          ticktext: categoryLabels,
+        };
+      }
+    }
+
     data.push({
       type: "scatter",
       mode: "markers",
       x: opts.xMeta.values,
       y: scores.map((r) => (typeof r[pc0] === "number" ? r[pc0] : null)),
       text: ids,
-      marker: { size: 6 },
-      hovertemplate: "%{text}<br>x=%{x}<br>y=%{y}<extra></extra>",
+      customdata: colorVals,
+      marker,
+      hovertemplate: opts.colorBy?.label
+        ? `%{text}<br>x=%{x}<br>y=%{y}<br>${opts.colorBy.label}=%{customdata}<extra></extra>`
+        : "%{text}<br>x=%{x}<br>y=%{y}<extra></extra>",
       xaxis: `x${axisSuffix}`,
       yaxis: `y${axisSuffix}`,
       showlegend: false,
@@ -288,13 +344,14 @@ export function buildScoresPcVsMetaSubplots(
     for (const pc1 of validPcs) {
       row[`PC${pc1}`] = scores[i]?.[pcIndex1To0(pc1)] ?? null;
     }
+    if (opts.colorBy?.label && colorVals) row[opts.colorBy.label] = colorVals[i] ?? null;
     return row;
   });
 
   return {
     figure: { data, layout },
     csvRows,
-    title: `PC vs ${opts.xMeta.label}`,
+    title: `PC vs ${opts.xMeta.label}${opts.colorBy?.label ? ` · color ${opts.colorBy.label}` : ""}`,
     defaultName: `pc_vs_${safeKey(opts.xMeta.label)}_${validPcs.map((pc) => `PC${pc}`).join("_")}`,
   };
 }

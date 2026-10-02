@@ -622,6 +622,7 @@ export default function AnalyzeWorkspace() {
       .map((n: number) => Math.floor(n))
   );
   const [pcVsMetaX, setPcVsMetaX] = useState<string>(() => String((analyzeUiLoaded as any).pcVsMetaX ?? ""));
+  const [pcVsMetaColor, setPcVsMetaColor] = useState<string>(() => String((analyzeUiLoaded as any).pcVsMetaColor ?? ""));
   const [pairplotPcs, setPairplotPcs] = useState<number[]>(() =>
     Array.isArray(analyzeUiLoaded.pairplotPcs) && analyzeUiLoaded.pairplotPcs.length ? analyzeUiLoaded.pairplotPcs : [2, 3, 4, 5, 6]
   );
@@ -720,6 +721,7 @@ export default function AnalyzeWorkspace() {
       scoresColorMeta,
       pcVsMetaPcs,
       pcVsMetaX,
+      pcVsMetaColor,
       pairplotPcs,
       loadingsPc,
       loadingsTopN,
@@ -744,6 +746,7 @@ export default function AnalyzeWorkspace() {
     scoresColorMeta,
     pcVsMetaPcs,
     pcVsMetaX,
+    pcVsMetaColor,
     pairplotPcs,
     loadingsPc,
     loadingsTopN,
@@ -806,7 +809,7 @@ export default function AnalyzeWorkspace() {
   // Load axis/metadata for PCA coloring, PC-vs-meta plots, and scores CSV enrichment.
   useEffect(() => {
     if (!runId || selectedRun?.status !== "completed") return;
-    const selected = [scoresColorMeta, pcVsMetaX].map((s) => String(s || "").trim()).filter(Boolean);
+    const selected = [scoresColorMeta, pcVsMetaX, pcVsMetaColor].map((s) => String(s || "").trim()).filter(Boolean);
     const schemaCols = [...(schemaQ.data?.axis_keys ?? []), ...(schemaQ.data?.meta_keys ?? [])];
     // Prefer full axis+meta when available so scores CSV downloads stay interpretable.
     const uniq = Array.from(new Set(schemaCols.length ? schemaCols : selected));
@@ -840,7 +843,7 @@ export default function AnalyzeWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [runId, selectedRun?.status, scoresColorMeta, pcVsMetaX, schemaQ.data?.axis_keys, schemaQ.data?.meta_keys]);
+  }, [runId, selectedRun?.status, scoresColorMeta, pcVsMetaX, pcVsMetaColor, schemaQ.data?.axis_keys, schemaQ.data?.meta_keys]);
 
   const fittingStepsQ = useQuery({
     queryKey: ["fittingSteps", runId],
@@ -1567,6 +1570,23 @@ export default function AnalyzeWorkspace() {
       });
     }
 
+    function metaRawValuesFor(result: PcaLikeResult | null, col: string): (number | string | null)[] | null {
+      if (!result) return null;
+      const ids = Array.isArray((result as any).spectrum_ids) ? ((result as any).spectrum_ids as any[]).map(String) : null;
+      if (!ids?.length) return null;
+      const c = String(col || "").trim();
+      if (!c) return null;
+      return ids.map((sid) => {
+        const v = scoresMetaById?.[sid]?.[c];
+        if (v == null) return null;
+        if (typeof v === "number" && Number.isFinite(v)) return v;
+        const asNum = cellToNumber(v);
+        if (asNum != null) return asNum;
+        const s = String(v).trim();
+        return s || null;
+      });
+    }
+
     const colorBy = scoresColorMeta
       ? { values: metaValuesFor(pca ?? fpcaD ?? fpcaF, scoresColorMeta) ?? [], label: scoresColorMeta }
       : undefined;
@@ -1585,7 +1605,14 @@ export default function AnalyzeWorkspace() {
         pushBuilt(
           "pca",
           "pca",
-          buildScoresPcVsMetaSubplots(pca, { pcs: pcVsMetaPcs, xMeta, maxPcs: 12 }),
+          buildScoresPcVsMetaSubplots(pca, {
+            pcs: pcVsMetaPcs,
+            xMeta,
+            colorBy: pcVsMetaColor
+              ? { values: metaRawValuesFor(pca, pcVsMetaColor) ?? [], label: pcVsMetaColor }
+              : undefined,
+            maxPcs: 12,
+          }),
           "PCA",
           { enrichMeta: true }
         );
@@ -1623,7 +1650,14 @@ export default function AnalyzeWorkspace() {
         pushBuilt(
           "fpca_discrete",
           "fpca_discrete",
-          buildScoresPcVsMetaSubplots(fpcaD, { pcs: pcVsMetaPcs, xMeta, maxPcs: 12 }),
+          buildScoresPcVsMetaSubplots(fpcaD, {
+            pcs: pcVsMetaPcs,
+            xMeta,
+            colorBy: pcVsMetaColor
+              ? { values: metaRawValuesFor(fpcaD, pcVsMetaColor) ?? [], label: pcVsMetaColor }
+              : undefined,
+            maxPcs: 12,
+          }),
           "FPCA discrete",
           { enrichMeta: true }
         );
@@ -1664,7 +1698,14 @@ export default function AnalyzeWorkspace() {
         pushBuilt(
           "fpca_fda",
           "fpca_fda",
-          buildScoresPcVsMetaSubplots(fpcaF, { pcs: pcVsMetaPcs, xMeta, maxPcs: 12 }),
+          buildScoresPcVsMetaSubplots(fpcaF, {
+            pcs: pcVsMetaPcs,
+            xMeta,
+            colorBy: pcVsMetaColor
+              ? { values: metaRawValuesFor(fpcaF, pcVsMetaColor) ?? [], label: pcVsMetaColor }
+              : undefined,
+            maxPcs: 12,
+          }),
           "FPCA fda",
           { enrichMeta: true }
         );
@@ -1734,6 +1775,7 @@ export default function AnalyzeWorkspace() {
     scoresMetaById,
     pcVsMetaPcs,
     pcVsMetaX,
+    pcVsMetaColor,
   ]);
 
   function PlotCard({ card }: { card: PlotCardModel }) {
@@ -2775,6 +2817,17 @@ export default function AnalyzeWorkspace() {
                       ))}
                     </select>
                   </label>
+                  <label className="inline" title="Optional: color PC vs metadata points by another metadata / axis column.">
+                    Color by (metadata)
+                    <select value={pcVsMetaColor} onChange={(e) => setPcVsMetaColor(String(e.target.value || ""))}>
+                      <option value="">—</option>
+                      {selectableColumns.map((c) => (
+                        <option key={`pc-vs-meta-color-${c}`} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
 
                 <div className="row" style={{ gap: "14px", flexWrap: "wrap", alignItems: "center", marginTop: "8px" }}>
@@ -2933,14 +2986,16 @@ export default function AnalyzeWorkspace() {
             <div className="row" style={{ gap: "8px", marginBottom: "10px" }}>
               <button
                 type="button"
-                className={plotsSubTab === "param" ? "mini" : "mini ghost"}
+                className={plotsSubTab === "param" ? "mini is-active" : "mini ghost"}
+                aria-pressed={plotsSubTab === "param"}
                 onClick={() => setPlotsSubTab("param")}
               >
                 Parameter vs parameter
               </button>
               <button
                 type="button"
-                className={plotsSubTab === "fit" ? "mini" : "mini ghost"}
+                className={plotsSubTab === "fit" ? "mini is-active" : "mini ghost"}
+                aria-pressed={plotsSubTab === "fit"}
                 onClick={() => setPlotsSubTab("fit")}
               >
                 Fit diagnostics
@@ -3924,6 +3979,17 @@ export default function AnalyzeWorkspace() {
                       <option value="">—</option>
                       {selectableColumns.map((c) => (
                         <option key={`spec-pc-vs-meta-x-${c}`} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="inline" title="Optional: color PC vs metadata points by another metadata / axis column.">
+                    Color by (metadata)
+                    <select value={pcVsMetaColor} onChange={(e) => setPcVsMetaColor(String(e.target.value || ""))}>
+                      <option value="">—</option>
+                      {selectableColumns.map((c) => (
+                        <option key={`spec-pc-vs-meta-color-${c}`} value={c}>
                           {c}
                         </option>
                       ))}

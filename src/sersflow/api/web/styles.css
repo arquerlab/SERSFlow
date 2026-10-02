@@ -218,6 +218,33 @@ button.mini {
   font-weight: 800;
 }
 
+button.ghost,
+button.mini.ghost {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-weight: 650;
+  opacity: 0.72;
+}
+
+button.ghost:hover,
+button.mini.ghost:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--text);
+  opacity: 0.9;
+}
+
+button.is-active,
+button.mini.is-active {
+  border-color: rgba(124, 92, 255, 0.75);
+  background: rgba(124, 92, 255, 0.32);
+  color: var(--text);
+  font-weight: 900;
+  opacity: 1;
+  box-shadow: 0 0 0 1px rgba(124, 92, 255, 0.25);
+}
+
 button.danger {
   border-color: rgba(255, 77, 109, 0.6);
   background: rgba(255, 77, 109, 0.14);

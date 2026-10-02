@@ -69,6 +69,7 @@ export type AnalyzeUiPrefsV1 = {
   scoresColorMeta?: string;
   pcVsMetaPcs?: number[];
   pcVsMetaX?: string;
+  pcVsMetaColor?: string;
   pairplotPcs?: number[];
   loadingsPc?: number;
   loadingsTopN?: number;
