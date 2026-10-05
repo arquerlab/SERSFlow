@@ -86,7 +86,13 @@ function fittingFeatureKeys(params: Record<string, unknown> | null | undefined):
         keys.push(`fit_${id}_area`);
       }
     } else if (type === "fermi_edge") {
-      keys.push(`fit_${id}_amplitude`, `fit_${id}_center`, `fit_${id}_sigma`, `fit_${id}_temperature_K`);
+      keys.push(
+        `fit_${id}_amplitude`,
+        `fit_${id}_center`,
+        `fit_${id}_sigma`,
+        `fit_${id}_temperature_K`,
+        `fit_${id}_const`
+      );
     } else {
       keys.push(`fit_${id}_pos`, `fit_${id}_amp`, `fit_${id}_fwhm`, `fit_${id}_area`);
     }

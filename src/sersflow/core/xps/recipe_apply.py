@@ -291,12 +291,17 @@ def _apply_fermi_edge_recipe(
                 bounds_upper.append(s.upper_default)
                 vary.append(True)
 
-    region = str(fit.region or "").strip() or "valence_band"
+    # Prefer the "all valence bands" gate — literal "valence band" rarely exists as a region label.
+    region_raw = str(fit.region or "").strip().lower().replace(" ", "_")
+    if not region_raw or region_raw in ("valence_band", "valence", "vb"):
+        xps_region = "all valence bands"
+    else:
+        xps_region = str(fit.region or "").strip().replace("_", " ")
     out: dict[str, Any] = {
         "output_mode": "fit",
         "fill_opacity": 0.15,
         "initial_guess_mode": "default",
-        "xps_region": region.replace("_", " "),
+        "xps_region": xps_region,
         "components": components,
         "p0": p0,
         "bounds_lower": bounds_lower,

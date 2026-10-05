@@ -222,7 +222,7 @@ export type FittingParamRow = {
 export function isAutoAmplitudeParam(componentType: string, key: string): boolean {
   const ct = String(componentType ?? "").trim().toLowerCase();
   const k = String(key ?? "").trim().toLowerCase();
-  if (ct === "fermi_edge" && k === "amplitude") return true;
+  if (ct === "fermi_edge" && (k === "amplitude" || k === "const")) return true;
   if (isPeakComponentType(ct) && k === "amp") return true;
   return false;
 }

@@ -72,13 +72,14 @@ def test_apply_fermi_edge_valence_recipe() -> None:
     assert any(f.id == "fermi_edge_valence" for f in by_q)
     out = apply_recipe_id("fermi_edge_valence")
     assert out["components"] == [{"component_id": "Fermi_edge", "component_type": "fermi_edge"}]
-    # amplitude, center, sigma, temperature_K
-    assert out["p0"] == [0.0, 0.0, 0.25, 298.0]
-    assert out["bounds_lower"] == [0.0, -3.0, 0.05, None]
-    assert out["bounds_upper"] == [1.0e7, 3.0, 0.4, None]
-    assert out["vary"] == [True, True, True, False]
+    # amplitude, center, sigma, temperature_K, const
+    assert out["p0"] == [0.0, 0.0, 0.25, 298.0, 0.0]
+    assert out["bounds_lower"] == [0.0, -3.0, 0.05, None, 0.0]
+    assert out["bounds_upper"] == [1.0e7, 3.0, 0.4, None, 1.0e7]
+    assert out["vary"] == [True, True, True, False, True]
     assert out.get("param_links") == []
     assert out.get("recipe_pass_energy") is None
+    assert out.get("xps_region") == "all valence bands"
     assert "shirley_bg" not in [c["component_type"] for c in out["components"]]
 
 

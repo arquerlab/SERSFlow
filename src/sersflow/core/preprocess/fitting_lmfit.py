@@ -41,33 +41,51 @@ def _make_peak_model(fn: Callable[..., np.ndarray], keys: list[str], prefix: str
 
 
 def _fermi_edge_model(prefix: str):
-    """Wrap lmfitxps.fermi_edge so Temperature (K) is the stored parameter (converted to kt)."""
+    """Wrap lmfitxps.fermi_edge so Temperature (K) is the stored parameter (converted to kt).
+
+    Adds a constant ``const`` offset: lmfitxps' Fermi edge alone goes to ~0 on the
+    unoccupied side, but real valence spectra often sit on a non-zero floor.
+    """
     from lmfit import Model
     from lmfitxps.models import fermi_edge  # type: ignore
 
-    def _peak(x, amplitude, center, sigma, temperature_K):
+    def _peak(x, amplitude, center, sigma, temperature_K, const):
         kt = float(BOLTZMANN_EV_PER_K) * float(temperature_K)
-        return fermi_edge(x, amplitude=amplitude, center=center, kt=kt, sigma=sigma)
+        return fermi_edge(x, amplitude=amplitude, center=center, kt=kt, sigma=sigma) + float(const)
 
     return Model(_peak, independent_vars=["x"], prefix=prefix), [
         "amplitude",
         "center",
         "sigma",
         "temperature_K",
+        "const",
     ]
+
+
+def _auto_fermi_step_and_const(y: np.ndarray) -> tuple[float, float]:
+    """Estimate Fermi-edge step height and constant floor from end medians."""
+    yy = np.asarray(y, dtype=float).ravel()
+    if yy.size < 4:
+        ptp = float(max(np.ptp(yy), 1.0))
+        return ptp, 0.0
+    n = max(3, yy.size // 10)
+    left = float(np.median(yy[:n]))
+    right = float(np.median(yy[-n:]))
+    lo = min(left, right)
+    hi = max(left, right)
+    step = hi - lo
+    if not np.isfinite(step) or step <= 0:
+        step = float(max(np.ptp(yy), 1.0))
+    const = lo if np.isfinite(lo) else 0.0
+    # Intensity floors are usually non-negative; allow a tiny negative for noise.
+    if const < 0:
+        const = 0.0
+    return step, float(const)
 
 
 def _auto_fermi_amplitude(y: np.ndarray) -> float:
     """Estimate Fermi-edge step height from end medians."""
-    yy = np.asarray(y, dtype=float).ravel()
-    if yy.size < 4:
-        return float(max(np.ptp(yy), 1.0))
-    n = max(3, yy.size // 10)
-    left = float(np.median(yy[:n]))
-    right = float(np.median(yy[-n:]))
-    step = abs(left - right)
-    if not np.isfinite(step) or step <= 0:
-        step = float(max(np.ptp(yy), 1.0))
+    step, _const = _auto_fermi_step_and_const(y)
     return step
 
 
@@ -80,7 +98,7 @@ def _apply_auto_fermi_amplitudes(
     bounds_lower: list[float | None] | None = None,
     bounds_upper: list[float | None] | None = None,
 ) -> list[float]:
-    """Replace non-positive amplitude seeds with an estimated step height."""
+    """Replace non-positive amplitude / const seeds with estimated step height and floor."""
     out = list(p0)
     for comp, (s, _e), keys in zip(components, slices, param_keys_per_comp):
         if comp.component_type.strip().lower() != "fermi_edge":
@@ -90,14 +108,32 @@ def _apply_auto_fermi_amplitudes(
         except ValueError:
             continue
         gamp = s + amp_i
-        if float(out[gamp]) > 0:
+        need_amp = float(out[gamp]) <= 0
+        gconst: int | None = None
+        need_const = False
+        try:
+            const_i = keys.index("const")
+            gconst = s + const_i
+            need_const = float(out[gconst]) <= 0
+        except ValueError:
+            pass
+        if not need_amp and not need_const:
             continue
-        amp = _auto_fermi_amplitude(y)
-        if bounds_lower is not None and bounds_lower[gamp] is not None:
-            amp = max(amp, float(bounds_lower[gamp]))
-        if bounds_upper is not None and bounds_upper[gamp] is not None:
-            amp = min(amp, float(bounds_upper[gamp]))
-        out[gamp] = amp
+        step, floor = _auto_fermi_step_and_const(y)
+        if need_amp:
+            amp = step
+            if bounds_lower is not None and bounds_lower[gamp] is not None:
+                amp = max(amp, float(bounds_lower[gamp]))
+            if bounds_upper is not None and bounds_upper[gamp] is not None:
+                amp = min(amp, float(bounds_upper[gamp]))
+            out[gamp] = amp
+        if need_const and gconst is not None:
+            c = floor
+            if bounds_lower is not None and bounds_lower[gconst] is not None:
+                c = max(c, float(bounds_lower[gconst]))
+            if bounds_upper is not None and bounds_upper[gconst] is not None:
+                c = min(c, float(bounds_upper[gconst]))
+            out[gconst] = c
     return out
 
 

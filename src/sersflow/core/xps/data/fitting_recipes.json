@@ -527,14 +527,14 @@
               "sigma": 0.25,
               "temperature_K": 298
             },
-            "note": "lmfitxps FermiEdgeModel: Gaussian-broadened Fermi–Dirac step. Amplitude auto-estimated from step height; Temperature (K) converts to kt internally."
+            "note": "lmfitxps FermiEdgeModel: Gaussian-broadened Fermi-Dirac step plus a constant intensity floor (const). Amplitude and const auto-estimated from end medians; Temperature (K) converts to kt internally."
           }
         }
       ],
       "footnotes": [
-        "Default sigma = 0.25 eV (bounds 0.05–0.4). Center (Ef) defaults to 0 eV (bounds −3…+3). Temperature defaults to 298 K and is held fixed."
+        "Default sigma = 0.25 eV (bounds 0.05-0.4). Center (Ef) defaults to 0 eV (bounds -3…+3). Temperature defaults to 298 K and is held fixed. Const (floor) auto-estimates residual intensity below Ef when the edge does not drop to zero."
       ],
-      "procedure_markdown": "## Fermi edge fit\n\n1. Select a valence-band / Fermi-edge region spectrum.\n2. Apply this recipe (or add a **Fermi edge** component).\n3. Set **Temperature (K)** for the sample (default 298 K). The engine converts to kt = kB·T.\n4. Leave **Amplitude** on Auto unless you need a manual seed (bounds 0…1e7).\n5. Fit; report **center** as the Fermi level and **sigma** as Gaussian broadening.\n",
+      "procedure_markdown": "## Fermi edge fit\n\n1. Select a valence-band / Fermi-edge region spectrum.\n2. Apply this recipe (or add a **Fermi edge** component).\n3. Set **Temperature (K)** for the sample (default 298 K). The engine converts to kt = kB·T.\n4. Leave **Amplitude** and **Const (floor)** on Auto unless you need manual seeds (bounds 0…1e7). Const absorbs non-zero intensity below Ef.\n5. Fit; report **center** as the Fermi level and **sigma** as Gaussian broadening.\n",
       "aliases": [
         "Fermi",
         "Fermi edge",

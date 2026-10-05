@@ -26,18 +26,19 @@ def test_xps_fermi_edge_smoke() -> None:
             x=x,
             y=y,
             components=[FitComponent(component_type="fermi_edge", component_id="edge")],
-            p0=[0.0, 0.0, 0.25, 298.0],
-            bounds_lower=[0.0, -3.0, 0.05, None],
-            bounds_upper=[1.0e7, 3.0, 0.4, None],
-            vary=[True, True, True, False],
+            p0=[0.0, 0.0, 0.25, 298.0, 0.0],
+            bounds_lower=[0.0, -3.0, 0.05, None, 0.0],
+            bounds_upper=[1.0e7, 3.0, 0.4, None, 1.0e7],
+            vary=[True, True, True, False, True],
             technique_family="xps",
         )
     )
-    amp, center, sigma, temp = [float(v) for v in res.p_opt]
+    amp, center, sigma, temp, const = [float(v) for v in res.p_opt]
     assert amp > 50.0
     assert abs(center) < 0.15
     assert 0.05 <= sigma <= 0.4
     assert abs(temp - 298.0) < 1e-6
+    assert const > 1.0
 
 
 def test_vibrational_engine_rejects_xps_background() -> None:

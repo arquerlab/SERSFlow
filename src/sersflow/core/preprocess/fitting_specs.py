@@ -490,10 +490,12 @@ def _slope_bg_spec() -> ComponentSpec:
 
 def _fermi_edge_spec() -> ComponentSpec:
     """
-    lmfitxps FermiEdgeModel (Gaussian ⊗ Fermi–Dirac).
+    lmfitxps FermiEdgeModel (Gaussian-broadened Fermi-Dirac) plus a constant intensity floor.
 
-    ``temperature_K`` is shown to the user; the fit engine converts to kt = kB·T.
-    Amplitude defaults to auto (engine estimates step height when initial amp ≤ 0).
+    ``temperature_K`` is shown to the user; the fit engine converts to kt = kB*T.
+    Amplitude and ``const`` default to auto (engine estimates step height / floor when
+    initial values are <= 0). ``const`` is required when intensity below Ef does not
+    drop to zero.
     """
     return ComponentSpec(
         component_type="fermi_edge",
@@ -533,6 +535,14 @@ def _fermi_edge_spec() -> ComponentSpec:
                 upper_default=None,
                 unit="K",
                 ui={"step": 1.0, "vary_default": False, "bounds_editable": False},
+            ),
+            ParamSpec(
+                key="const",
+                label="Const (floor)",
+                default=0.0,
+                lower_default=0.0,
+                upper_default=1.0e7,
+                ui={"step": 1.0, "auto_default": True, "auto_sentinel": True},
             ),
         ],
     )
