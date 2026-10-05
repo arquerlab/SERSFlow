@@ -688,6 +688,8 @@ export default function PreprocessingWorkspace() {
       const sameIndices = (s.indices || []).join(",") === subsetIndices.join(",");
       await updateSessionSubset(sessionId, { kind: "indices", indices: s.indices });
       setSubsetIndices(s.indices);
+      // Keep the size control aligned with what this saved subset actually holds.
+      if (Number.isFinite(s.size) && s.size > 0) setSubsetSize(s.size);
       setActiveSubsetId(s.id);
       setSubsetSource(s.label);
       // Auto-run only reacts to index changes; re-selecting the same subset must force a plot.
@@ -1292,7 +1294,7 @@ export default function PreprocessingWorkspace() {
                       ? regionsPayload.spectrum_regions
                       : [];
                     const indices: number[] = [];
-                    spectra.forEach((s, i) => {
+                    spectra.forEach((_s, i) => {
                       const region = String(spectrumRegions[i] ?? "").trim() || undefined;
                       const matched = !!(region && spectrumRegionMatchesPicks(region, picks));
                       if (matched) indices.push(i);
@@ -1301,14 +1303,26 @@ export default function PreprocessingWorkspace() {
                       setLastError("No spectra match the selected XPS regions.");
                       return;
                     }
-                    await updateSessionSubset(sessionId, { kind: "indices", indices });
-                    setSubsetIndices(indices);
+                    // Respect subset size (same idea as random subsets): keep a plottable slice,
+                    // not every matching region — otherwise every "vb-all" tile is identical and
+                    // session runs load dozens of spectra only to discard them client-side.
+                    const want = Math.max(
+                      1,
+                      Math.min(
+                        Number(subsetSize) || 1,
+                        DEFAULT_GUARDRAILS.maxPlotSpectraHardCap,
+                        indices.length
+                      )
+                    );
+                    const kept = indices.slice(0, want);
+                    await updateSessionSubset(sessionId, { kind: "indices", indices: kept });
+                    setSubsetIndices(kept);
                     const label = regionSubsetDisplayName(picks);
                     const subset = {
                       id: crypto.randomUUID(),
                       label,
-                      indices,
-                      size: indices.length,
+                      indices: kept,
+                      size: kept.length,
                       createdAt: Date.now(),
                     };
                     const next = addSavedSubset(datasetId, subset, 15);

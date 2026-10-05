@@ -67,6 +67,8 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
   const drawIdRef = useRef(0);
   /** Serialize Plotly calls — a cancelled newPlot/react must finish before the next starts. */
   const drawChainRef = useRef<Promise<void>>(Promise.resolve());
+  const drawingRef = useRef(false);
+  const lastTraceCountRef = useRef<number | null>(null);
   useImperativeHandle(ref, () => divRef.current as HTMLDivElement);
 
   const combined = useMemo(() => {
@@ -174,10 +176,13 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
         .catch(() => undefined)
         .then(async () => {
           if (drawId !== drawIdRef.current) return;
+          drawingRef.current = true;
           try {
             Plotly.purge(el);
           } catch {
             // ignore
+          } finally {
+            drawingRef.current = false;
           }
         });
       return;
@@ -193,34 +198,40 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
     } as const;
 
     const drawId = ++drawIdRef.current;
-    let cancelled = false;
     const payload = themed;
+    const traceCount = Array.isArray(payload.data) ? payload.data.length : 0;
+    const prevCount = lastTraceCountRef.current;
+    // Trace-count changes (subset switch 2↔4) are unreliable with Plotly.react — force newPlot.
+    const forceNew = hasSubplots || !(el as any).data || prevCount !== traceCount;
 
     drawChainRef.current = drawChainRef.current
       .catch(() => undefined)
       .then(async () => {
-        if (cancelled || drawId !== drawIdRef.current) return;
+        // Superseded before start: do not purge (that left a blank plot when cleanup raced).
+        if (drawId !== drawIdRef.current) return;
+        drawingRef.current = true;
         try {
-          // Prefer react when possible; fall back to purge+newPlot for subplots / empty host.
-          // Always await so a superseded draw cannot finish after the next one started.
-          if (hasSubplots || !(el as any).data) {
+          if (forceNew) {
+            // Purge+newPlot must be atomic: never return between purge and newPlot or the DOM stays blank.
             Plotly.purge(el);
-            if (cancelled || drawId !== drawIdRef.current) return;
             await Plotly.newPlot(el, payload.data, payload.layout, opts);
           } else {
             await Plotly.react(el, payload.data, payload.layout, opts);
           }
+          lastTraceCountRef.current = traceCount;
         } catch {
-          if (cancelled || drawId !== drawIdRef.current) return;
+          if (drawId !== drawIdRef.current) return;
           try {
             Plotly.purge(el);
-            if (cancelled || drawId !== drawIdRef.current) return;
             await Plotly.newPlot(el, payload.data, payload.layout, opts);
+            lastTraceCountRef.current = traceCount;
           } catch {
             return;
           }
+        } finally {
+          drawingRef.current = false;
         }
-        if (cancelled || drawId !== drawIdRef.current) return;
+        if (drawId !== drawIdRef.current) return;
         constrainPlotDom(el);
         try {
           Plotly.Plots.resize(el);
@@ -229,9 +240,7 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
         }
       });
 
-    return () => {
-      cancelled = true;
-    };
+    // No cancelled flag: supersession is drawId-only. Cancelling after purge was leaving a blank plot.
   }, [themed]);
 
   // Observe host size once — recreating the observer on every figure change races with Plotly.react.
@@ -240,6 +249,7 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
     const host = wrapRef.current ?? el;
     if (!el || !host) return;
     const ro = new ResizeObserver(() => {
+      if (drawingRef.current) return;
       try {
         constrainPlotDom(el);
         Plotly.Plots.resize(el);
