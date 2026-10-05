@@ -9,6 +9,7 @@ import {
   type FittingRecipeIndexItem,
 } from "./api";
 import {
+  defaultFittingEditorParams,
   isPeakComponentType,
   isXpsBgComponentType,
   migrateFittingParamsToEditor,
@@ -30,7 +31,6 @@ function normalizeRecipeNeedle(s: string): string {
 function filterIndex(items: FittingRecipeIndexItem[], q: string): FittingRecipeIndexItem[] {
   const raw = q.trim().toLowerCase();
   if (!raw) {
-    // Browse mode: first DROPDOWN_CAP items from the index (stable catalog order).
     return items.slice(0, DROPDOWN_CAP);
   }
   const needle = normalizeRecipeNeedle(raw);
@@ -51,7 +51,7 @@ function filterIndex(items: FittingRecipeIndexItem[], q: string): FittingRecipeI
   return matched.slice(0, DROPDOWN_CAP);
 }
 
-function recipeIdsOf(fp: FittingEditorParams): string[] {
+export function recipeIdsOf(fp: FittingEditorParams): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   const push = (s: string) => {
@@ -63,6 +63,13 @@ function recipeIdsOf(fp: FittingEditorParams): string[] {
   for (const id of fp.recipe_ids ?? []) push(String(id ?? ""));
   push(String(fp.recipe_id ?? ""));
   return out;
+}
+
+function nonBgComponentIds(fp: FittingEditorParams): string[] {
+  return fp.components
+    .filter((c) => !isXpsBgComponentType(c.component_type))
+    .map((c) => String(c.component_id ?? "").trim())
+    .filter(Boolean);
 }
 
 /** True when the editor looks like an untouched default single gaussian. */
@@ -96,6 +103,7 @@ export function mergeRecipeApplyIntoEditor(
     catalog
   );
   const rid = String(applied.recipe_id ?? "").trim();
+  const peakIds = nonBgComponentIds(migrated);
   return {
     ...migrated,
     output_mode: current.output_mode,
@@ -103,6 +111,7 @@ export function mergeRecipeApplyIntoEditor(
     initial_guess_mode: "default",
     recipe_id: rid,
     recipe_ids: rid ? [rid] : [],
+    recipe_components: rid && peakIds.length ? { [rid]: peakIds } : {},
     recipe_pass_energy: applied.recipe_pass_energy ?? undefined,
     fit_min_x: current.fit_min_x ?? null,
     fit_max_x: current.fit_max_x ?? null,
@@ -166,6 +175,10 @@ export function appendRecipeApplyIntoEditor(
   const existingIds = recipeIdsOf(current);
   const rid = String(applied.recipe_id ?? "").trim();
   const recipe_ids = rid && !existingIds.includes(rid) ? [...existingIds, rid] : [...existingIds];
+  const recipe_components = { ...(current.recipe_components ?? {}) };
+  if (rid) {
+    recipe_components[rid] = addedComps.map((c) => c.component_id);
+  }
 
   return {
     ...current,
@@ -174,8 +187,71 @@ export function appendRecipeApplyIntoEditor(
     xps_region: String(current.xps_region ?? "").trim() || migrated.xps_region || "",
     recipe_id: recipe_ids[0] ?? rid,
     recipe_ids,
+    recipe_components,
     recipe_pass_energy: applied.recipe_pass_energy ?? current.recipe_pass_energy,
     initial_guess_mode: "default",
+  };
+}
+
+/** Remove one stacked recipe and the peaks it contributed (shared baseline kept if others remain). */
+export function removeRecipeFromEditor(
+  current: FittingEditorParams,
+  recipeId: string,
+  catalog: FittingComponentSpecPublic[] | undefined
+): FittingEditorParams {
+  const rid = recipeId.trim();
+  if (!rid) return current;
+  const owned = new Set((current.recipe_components?.[rid] ?? []).map((x) => x.trim()).filter(Boolean));
+  const recipe_ids = recipeIdsOf(current).filter((id) => id !== rid);
+  const recipe_components = { ...(current.recipe_components ?? {}) };
+  delete recipe_components[rid];
+
+  if (!recipe_ids.length) {
+    const cleared = defaultFittingEditorParams(catalog);
+    return {
+      ...cleared,
+      output_mode: current.output_mode,
+      fill_opacity: current.fill_opacity,
+      fit_min_x: current.fit_min_x ?? null,
+      fit_max_x: current.fit_max_x ?? null,
+      xps_region: current.xps_region ?? "",
+    };
+  }
+
+  const dropIds = owned.size
+    ? owned
+    : new Set<string>(); // unknown ownership: only drop provenance, keep components
+  const components = current.components.filter((c) => {
+    const id = String(c.component_id ?? "").trim();
+    if (!id) return true;
+    if (isXpsBgComponentType(c.component_type)) return true;
+    return !dropIds.has(id);
+  });
+  const keepIds = new Set(components.map((c) => String(c.component_id ?? "").trim()).filter(Boolean));
+  const param_links = (current.param_links ?? []).filter(
+    (l) => keepIds.has(l.source_component_id) && keepIds.has(l.target_component_id)
+  );
+
+  const stillHasPeaks = components.some((c) => !isXpsBgComponentType(c.component_type));
+  if (!stillHasPeaks) {
+    const cleared = defaultFittingEditorParams(catalog);
+    return {
+      ...cleared,
+      output_mode: current.output_mode,
+      fill_opacity: current.fill_opacity,
+      fit_min_x: current.fit_min_x ?? null,
+      fit_max_x: current.fit_max_x ?? null,
+      xps_region: current.xps_region ?? "",
+    };
+  }
+
+  return {
+    ...current,
+    components,
+    param_links,
+    recipe_id: recipe_ids[0] ?? "",
+    recipe_ids,
+    recipe_components,
   };
 }
 
@@ -225,6 +301,17 @@ export function FittingRecipePicker({
   const loadedRecipeIds = recipeIdsOf(fittingParams);
   const multiRecipes = loadedRecipeIds.length > 1;
 
+  const activeRecipes = useMemo(() => {
+    return loadedRecipeIds.map((id) => {
+      const it = items.find((x) => x.id === id);
+      return {
+        id,
+        label: it?.label ?? id,
+        peakCount: (fittingParams.recipe_components?.[id] ?? []).length,
+      };
+    });
+  }, [loadedRecipeIds, items, fittingParams.recipe_components]);
+
   useLayoutEffect(() => {
     if (!showPanel) {
       setPanelPos(null);
@@ -262,11 +349,11 @@ export function FittingRecipePicker({
     return [...set].sort().slice(0, 12);
   }, [items]);
 
-  const selectedId = loadedRecipeIds[loadedRecipeIds.length - 1] ?? "";
+  const selectedId = loadedRecipeIds.length === 1 ? loadedRecipeIds[0]! : "";
   const selectedItem = items.find((it) => it.id === selectedId);
   const passEnergies = selectedItem?.pass_energies?.length
     ? selectedItem.pass_energies
-    : fittingParams.recipe_pass_energy
+    : !multiRecipes && fittingParams.recipe_pass_energy
       ? [fittingParams.recipe_pass_energy]
       : [];
 
@@ -312,7 +399,7 @@ export function FittingRecipePicker({
         notes.push(`Added peaks from ${id} (background skipped)`);
       }
       setWarnings(notes);
-      setQuery(id);
+      setQuery("");
       setOpen(false);
       onApply(next, notes);
     } catch (e) {
@@ -331,156 +418,225 @@ export function FittingRecipePicker({
     void loadRecipe(selectedId, pe, "replace");
   }
 
+  function onRemoveRecipe(id: string) {
+    const next = removeRecipeFromEditor(fittingParams, id, fittingCatalog);
+    setWarnings([`Removed recipe ${id}`]);
+    onApply(next, [`Removed recipe ${id}`]);
+  }
+
   if (!enabled) return null;
 
   return (
-    <div style={{ display: "grid", gap: "6px" }}>
+    <div style={{ display: "grid", gap: "8px" }}>
       <div className="hint" style={{ fontWeight: 800 }}>
         XPS fitting recipe
       </div>
-      {elementChips.length ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-          {elementChips.map((el) => (
-            <button
-              key={el}
-              type="button"
-              className="mini"
-              disabled={busy}
-              onClick={() => {
-                setQuery(el);
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(180px, 1.2fr) minmax(160px, 1fr)",
+          gap: "12px",
+          alignItems: "start",
+        }}
+      >
+        {/* Left: search / browse */}
+        <div style={{ display: "grid", gap: "6px", minWidth: 0 }}>
+          <div className="hint">Search / browse</div>
+          {elementChips.length ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+              {elementChips.map((el) => (
+                <button
+                  key={el}
+                  type="button"
+                  className="mini"
+                  disabled={busy}
+                  onClick={() => {
+                    setQuery(el);
+                    setOpen(true);
+                    setHighlight(0);
+                  }}
+                  title={`Filter recipes for ${el}`}
+                >
+                  {el}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div style={{ position: "relative", width: "100%" }}>
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              placeholder="Browse or type C 1s, NiO…"
+              disabled={busy || indexQ.isLoading}
+              onChange={(e) => {
+                setQuery(e.target.value);
                 setOpen(true);
                 setHighlight(0);
               }}
-              title={`Filter recipes for ${el}`}
-            >
-              {el}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      <label className="inline" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-        <span className="hint">Search / browse</span>
-        <div style={{ position: "relative", width: "260px" }}>
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            placeholder="Browse or type C 1s, NiO…"
-            disabled={busy || indexQ.isLoading}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setOpen(true);
-              setHighlight(0);
-            }}
-            onFocus={() => {
-              if (blurTimer.current) window.clearTimeout(blurTimer.current);
-              setOpen(true);
-            }}
-            onBlur={() => {
-              blurTimer.current = window.setTimeout(() => setOpen(false), 150);
-            }}
-            onKeyDown={(e) => {
-              if (!open || matches.length === 0) return;
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                setHighlight((h) => Math.min(h + 1, matches.length - 1));
-              } else if (e.key === "ArrowUp") {
-                e.preventDefault();
-                setHighlight((h) => Math.max(h - 1, 0));
-              } else if (e.key === "Enter") {
-                e.preventDefault();
-                const item = matches[highlight];
-                if (item) onPick(item);
-              } else if (e.key === "Escape") {
-                setOpen(false);
+              onFocus={() => {
+                if (blurTimer.current) window.clearTimeout(blurTimer.current);
+                setOpen(true);
+              }}
+              onBlur={() => {
+                blurTimer.current = window.setTimeout(() => setOpen(false), 150);
+              }}
+              onKeyDown={(e) => {
+                if (!open || matches.length === 0) return;
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setHighlight((h) => Math.min(h + 1, matches.length - 1));
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setHighlight((h) => Math.max(h - 1, 0));
+                } else if (e.key === "Enter") {
+                  e.preventDefault();
+                  const item = matches[highlight];
+                  if (item) onPick(item);
+                } else if (e.key === "Escape") {
+                  setOpen(false);
+                }
+              }}
+              style={{ width: "100%" }}
+              title="Focus with empty query to browse; type to search"
+            />
+            {showPanel && panelPos
+              ? createPortal(
+                  <div
+                    role="listbox"
+                    style={{
+                      position: "fixed",
+                      zIndex: 10050,
+                      left: panelPos.left,
+                      top: panelPos.top,
+                      width: panelPos.width,
+                      maxHeight: "220px",
+                      overflow: "auto",
+                      padding: "4px 0",
+                      borderRadius: "12px",
+                      background: "#12182a",
+                      color: "var(--text)",
+                      border: "1px solid var(--border)",
+                      boxShadow: "0 10px 28px rgba(0, 0, 0, 0.55)",
+                    }}
+                  >
+                    {!query.trim() ? (
+                      <div className="hint" style={{ padding: "4px 10px" }}>
+                        Browse (top {DROPDOWN_CAP})
+                      </div>
+                    ) : null}
+                    {matches.map((it, i) => (
+                      <button
+                        key={it.id}
+                        type="button"
+                        className="mini"
+                        style={{
+                          display: "block",
+                          width: "100%",
+                          textAlign: "left",
+                          border: "none",
+                          borderRadius: 0,
+                          color: "var(--text)",
+                          background: i === highlight ? "rgba(255,255,255,0.12)" : "transparent",
+                          fontWeight: i === highlight ? 700 : 400,
+                        }}
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => onPick(it)}
+                        onMouseEnter={() => setHighlight(i)}
+                      >
+                        {it.label}
+                        {it.pass_energies?.length ? (
+                          <span className="hint"> · PE {it.pass_energies.join("/")}</span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>,
+                  document.body
+                )
+              : null}
+          </div>
+          <label className="inline" style={{ justifyContent: "space-between" }}>
+            Pass energy (eV)
+            <select
+              value={!multiRecipes ? (fittingParams.recipe_pass_energy ?? "") : ""}
+              disabled={!selectedId || busy || passEnergies.length === 0 || multiRecipes}
+              onChange={(e) => {
+                const pe = Number(e.target.value);
+                if (Number.isFinite(pe)) onPassEnergyChange(pe);
+              }}
+              style={{ width: "100px" }}
+              title={
+                multiRecipes
+                  ? "Pass energy re-apply is disabled while multiple recipes are loaded"
+                  : undefined
               }
-            }}
-            style={{ width: "100%" }}
-            title="Focus with empty query to browse; type to search"
-          />
-          {showPanel && panelPos
-            ? createPortal(
+            >
+              <option value="">—</option>
+              {passEnergies.map((pe) => (
+                <option key={pe} value={pe}>
+                  {pe}
+                </option>
+              ))}
+            </select>
+          </label>
+          {multiRecipes ? (
+            <div className="hint">PE locked with multiple recipes (remove extras or Replace).</div>
+          ) : null}
+        </div>
+
+        {/* Right: active recipes */}
+        <div style={{ display: "grid", gap: "6px", minWidth: 0 }}>
+          <div className="hint">Active recipes</div>
+          {activeRecipes.length === 0 ? (
+            <div className="hint" style={{ opacity: 0.8 }}>
+              None loaded — pick a recipe on the left.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: "4px" }}>
+              {activeRecipes.map((r, idx) => (
                 <div
-                  role="listbox"
+                  key={r.id}
                   style={{
-                    position: "fixed",
-                    zIndex: 10050,
-                    left: panelPos.left,
-                    top: panelPos.top,
-                    width: panelPos.width,
-                    maxHeight: "220px",
-                    overflow: "auto",
-                    padding: "4px 0",
-                    borderRadius: "12px",
-                    background: "#12182a",
-                    color: "var(--text)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "8px",
+                    padding: "4px 8px",
+                    borderRadius: "8px",
                     border: "1px solid var(--border)",
-                    boxShadow: "0 10px 28px rgba(0, 0, 0, 0.55)",
+                    background: "rgba(255,255,255,0.03)",
                   }}
                 >
-                  {!query.trim() ? (
-                    <div className="hint" style={{ padding: "4px 10px" }}>
-                      Browse (top {DROPDOWN_CAP})
+                  <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+                    <div style={{ fontWeight: 700, fontSize: "12px", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {idx === 0 ? "Base · " : "Added · "}
+                      {r.label}
                     </div>
-                  ) : null}
-                  {matches.map((it, i) => (
-                    <button
-                      key={it.id}
-                      type="button"
-                      className="mini"
-                      style={{
-                        display: "block",
-                        width: "100%",
-                        textAlign: "left",
-                        border: "none",
-                        borderRadius: 0,
-                        color: "var(--text)",
-                        background: i === highlight ? "rgba(255,255,255,0.12)" : "transparent",
-                        fontWeight: i === highlight ? 700 : 400,
-                      }}
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => onPick(it)}
-                      onMouseEnter={() => setHighlight(i)}
-                    >
-                      {it.label}
-                      {it.pass_energies?.length ? (
-                        <span className="hint"> · PE {it.pass_energies.join("/")}</span>
-                      ) : null}
-                    </button>
-                  ))}
-                </div>,
-                document.body
-              )
-            : null}
+                    <div className="hint" style={{ fontSize: "11px" }}>
+                      <code>{r.id}</code>
+                      {r.peakCount ? ` · ${r.peakCount} peak${r.peakCount === 1 ? "" : "s"}` : ""}
+                      {idx === 0 && fittingParams.recipe_pass_energy != null
+                        ? ` · PE ${fittingParams.recipe_pass_energy}`
+                        : ""}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="mini danger"
+                    disabled={busy}
+                    title={`Remove ${r.id}`}
+                    onClick={() => onRemoveRecipe(r.id)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      </label>
-      <label className="inline" style={{ justifyContent: "space-between" }}>
-        Pass energy (eV)
-        <select
-          value={fittingParams.recipe_pass_energy ?? ""}
-          disabled={!selectedId || busy || passEnergies.length === 0 || multiRecipes}
-          onChange={(e) => {
-            const pe = Number(e.target.value);
-            if (Number.isFinite(pe)) onPassEnergyChange(pe);
-          }}
-          style={{ width: "100px" }}
-          title={
-            multiRecipes
-              ? "Pass energy re-apply is disabled while multiple recipes are loaded; Replace to change PE"
-              : undefined
-          }
-        >
-          <option value="">—</option>
-          {passEnergies.map((pe) => (
-            <option key={pe} value={pe}>
-              {pe}
-            </option>
-          ))}
-        </select>
-      </label>
-      {multiRecipes ? (
-        <div className="hint">Pass energy locked while multiple recipes are stacked (Replace to change).</div>
-      ) : null}
+      </div>
+
       <button type="button" className="mini" onClick={() => setShowMethods((v) => !v)}>
         {showMethods ? "Hide method defaults" : "Show method defaults / charge-ref"}
       </button>
@@ -534,17 +690,6 @@ export function FittingRecipePicker({
               </div>
             </div>
           ))}
-        </div>
-      ) : null}
-      {loadedRecipeIds.length ? (
-        <div className="hint">
-          Loaded:{" "}
-          {loadedRecipeIds.map((id) => (
-            <code key={id} style={{ marginRight: 6 }}>
-              {id}
-            </code>
-          ))}
-          {fittingParams.recipe_pass_energy != null ? ` @ ${fittingParams.recipe_pass_energy} eV` : ""}
         </div>
       ) : null}
       {busy ? <div className="hint">Loading recipe…</div> : null}

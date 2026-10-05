@@ -254,6 +254,11 @@ export type FittingEditorParams = {
   recipe_id?: string;
   /** All applied XPS fitting recipe ids in order (multi-recipe). */
   recipe_ids?: string[];
+  /**
+   * Non-background component ids contributed by each applied recipe.
+   * Used to remove a stacked recipe and its peaks without touching the shared baseline.
+   */
+  recipe_components?: Record<string, string[]>;
   /** Pass energy used when applying the recipe (eV). */
   recipe_pass_energy?: number;
   /** Optional internal fit window lower bound (inclusive). Empty/undefined = full spectrum. */
@@ -286,6 +291,18 @@ function normalizeRecipeIds(raw: unknown, fallbackId?: string): string[] {
     for (const x of raw) push(String(x ?? ""));
   }
   if (fallbackId) push(fallbackId);
+  return out;
+}
+
+function normalizeRecipeComponents(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [rid, ids] of Object.entries(raw as Record<string, unknown>)) {
+    const key = String(rid || "").trim();
+    if (!key || !Array.isArray(ids)) continue;
+    const cleaned = ids.map((x) => String(x ?? "").trim()).filter(Boolean);
+    if (cleaned.length) out[key] = cleaned;
+  }
   return out;
 }
 
@@ -523,6 +540,7 @@ export function defaultFittingEditorParams(catalog: FittingComponentSpecPublic[]
     param_links: [],
     recipe_id: "",
     recipe_ids: [],
+    recipe_components: {},
     recipe_pass_energy: undefined,
     fit_min_x: null,
     fit_max_x: null,
@@ -608,6 +626,8 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
     out.recipe_id = recipeIds[0];
     out.recipe_ids = recipeIds;
   }
+  const recipeComponents = normalizeRecipeComponents(fp.recipe_components);
+  if (Object.keys(recipeComponents).length) out.recipe_components = recipeComponents;
   if (typeof fp.recipe_pass_energy === "number" && Number.isFinite(fp.recipe_pass_energy)) {
     out.recipe_pass_energy = fp.recipe_pass_energy;
   }
@@ -633,6 +653,7 @@ export function migrateFittingParamsToEditor(
       param_links: normalizeParamLinks(r.param_links),
       recipe_id,
       recipe_ids: normalizeRecipeIds(r.recipe_ids, recipe_id || undefined),
+      recipe_components: normalizeRecipeComponents(r.recipe_components),
       recipe_pass_energy:
         typeof r.recipe_pass_energy === "number" && Number.isFinite(r.recipe_pass_energy)
           ? r.recipe_pass_energy
@@ -670,6 +691,7 @@ export function migrateFittingParamsToEditor(
   const param_links = normalizeParamLinks(p.param_links);
   const recipe_id = typeof p.recipe_id === "string" ? p.recipe_id : "";
   const recipe_ids = normalizeRecipeIds(p.recipe_ids, recipe_id || undefined);
+  const recipe_components = normalizeRecipeComponents(p.recipe_components);
   const recipe_pass_energy =
     typeof p.recipe_pass_energy === "number" && Number.isFinite(p.recipe_pass_energy)
       ? Number(p.recipe_pass_energy)
@@ -759,6 +781,7 @@ export function migrateFittingParamsToEditor(
     param_links,
     recipe_id: recipe_ids[0] ?? recipe_id,
     recipe_ids,
+    recipe_components,
     recipe_pass_energy,
     fit_min_x,
     fit_max_x,
