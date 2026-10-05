@@ -474,6 +474,10 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
               xps_region: typeof flat.xps_region === "string" ? flat.xps_region : undefined,
               fit_min_x: typeof flat.fit_min_x === "number" ? flat.fit_min_x : undefined,
               fit_max_x: typeof flat.fit_max_x === "number" ? flat.fit_max_x : undefined,
+              initial_area_ratios:
+                typeof flat.initial_area_ratios === "string" && flat.initial_area_ratios.trim()
+                  ? flat.initial_area_ratios.trim()
+                  : undefined,
             },
             { signal }
           );

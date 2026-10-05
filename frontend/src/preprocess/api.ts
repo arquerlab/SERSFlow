@@ -487,6 +487,8 @@ export type FitRequest = {
   fit_min_x?: number | null;
   /** Optional internal fit window upper bound (inclusive). */
   fit_max_x?: number | null;
+  /** Optional Area1:Area2:… ratios for amp Auto seeding. */
+  initial_area_ratios?: string | null;
 };
 
 export type FitComponentResult = {

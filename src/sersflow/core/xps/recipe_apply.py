@@ -180,6 +180,14 @@ def _should_include_shirley(fit: CompoundFit, include_background: bool) -> bool:
 
 
 def _find_so_pair(labels: list[str]) -> tuple[int, int] | None:
+    """
+    Return ``(i_2p3/2, i_2p1/2)`` when peak *labels* name both SO components.
+
+    Only recipes that literally label peaks ``2p3/2`` / ``2p1/2`` (or 2p32/2p12)
+    qualify — e.g. Sc/Ti doublets in Biesinger Tables 2.x. Multiplet packs that
+    use ``peak_1``…``peak_N`` (Co 2p3/2 Table 3.5, etc.) return None even when
+    the region name contains ``2p3/2``.
+    """
     i3 = i1 = None
     for i, lab in enumerate(labels):
         low = lab.lower().replace(" ", "")
@@ -504,6 +512,9 @@ def apply_compound_fit_to_fitting_params(
             f"recipe has spin_orbit_split_eV={so_split} but no 2p3/2+2p1/2 peak pair "
             "was found in labels; SO constraints were not applied"
         )
+    # Spin-orbit doublet constraints: ONLY when both labeled SO peaks exist AND
+    # spin_orbit_split_eV is set. Never inferred from region names like Co_2p3/2.
+    # Relative amplitudes are seeded (above) but not locked — only pos/FWHM links.
     if so is not None and isinstance(so_split, (int, float)) and math.isfinite(float(so_split)):
         i3, i1 = so
         id3, id1 = peak_comp_ids[i3], peak_comp_ids[i1]
@@ -587,6 +598,7 @@ def apply_compound_fit_to_fitting_params(
                 add_link(peak_comp_ids[i], "fwhm", peak_comp_ids[0], "fwhm", "equal")
 
     _FWHM_KEYS = frozenset({"fwhm", "fwhm_g", "fwhm_l", "fwhm_lorentz", "fwhm_gauss"})
+    _SHAPE_KEYS = frozenset({"m", "eta", "alpha", "beta", "a", "n", "m_asym"})
 
     vary_out: list[bool] = []
     for comp, keys in zip(components, param_keys_per):
@@ -597,6 +609,9 @@ def apply_compound_fit_to_fitting_params(
             if is_peak and k in _FWHM_KEYS:
                 # Recipe FWHM is a fixed instrument/resolution seed by default.
                 vary_out.append(False)
+            elif is_peak and k in _SHAPE_KEYS:
+                # CasaXPS lineshape mix (e.g. GL(30) → m=30) stays fixed.
+                vary_out.append(False)
             else:
                 vary_out.append((cid, k) not in driven)
 
@@ -606,6 +621,12 @@ def apply_compound_fit_to_fitting_params(
         for c, keys in zip(components, param_keys_per)
     ):
         warnings.append("peak FWHM parameters are fixed (vary=false) from the recipe")
+    if any(
+        (not _is_background_component(str(c.get("component_type") or "")))
+        and any(k in _SHAPE_KEYS for k in keys)
+        for c, keys in zip(components, param_keys_per)
+    ):
+        warnings.append("peak lineshape mix parameters are fixed (vary=false) from the recipe")
 
     out: dict[str, Any] = {
         "recipe_id": fit.id,

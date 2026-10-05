@@ -38,6 +38,23 @@ def test_get_compound_fit() -> None:
     assert fit.compound.startswith("Sc")
 
 
+def test_co_multiplet_recipes_do_not_get_spin_orbit_links() -> None:
+    """Co 2p3/2 packs (Table 3.5) use peak_1…N + area_pct, not SO 2p3/2+2p1/2."""
+    from sersflow.core.xps.fitting_recipes import get_compound_fit, list_compound_fits
+    from sersflow.core.xps.recipe_apply import _find_so_pair
+
+    co_ids = [f.id for f in list_compound_fits(q="co_2p") if f.id.startswith("co_2p32_")]
+    assert co_ids
+    for rid in co_ids:
+        fit = get_compound_fit(rid)
+        assert fit is not None
+        assert fit.raw.get("spin_orbit_split_eV") is None
+        labs = [str(p.get("label") or "") for p in fit.peaks]
+        assert _find_so_pair(labs) is None
+        out = apply_recipe_id(rid, pass_energy=20, include_background=False)
+        assert not any(L.get("source_key") == "amp" for L in out["param_links"])
+
+
 def test_apply_sc0_la_so_links() -> None:
     out = apply_recipe_id("sc_2p_sc0", pass_energy=20, include_background=True)
     types = [c["component_type"] for c in out["components"]]
@@ -69,7 +86,7 @@ def test_apply_multiplet_cr2o3() -> None:
     assert not any(l.get("source_key") == "amp" for l in out["param_links"])
 
 
-def test_recipe_fwhm_fixed_amps_free() -> None:
+def test_recipe_fwhm_and_m_fixed_amps_free() -> None:
     out = apply_recipe_id("co_2p32_co_oh2", pass_energy=20, include_background=False)
     from sersflow.core.preprocess.fitting_specs import component_param_specs
 
@@ -77,17 +94,18 @@ def test_recipe_fwhm_fixed_amps_free() -> None:
     for comp in out["components"]:
         keys = [s.key for s in component_param_specs(comp["component_type"])]
         for k, vflag in zip(keys, out["vary"][off : off + len(keys)]):
-            if k in {"fwhm", "fwhm_g", "fwhm_l"}:
+            if k in {"fwhm", "fwhm_g", "fwhm_l", "m"}:
                 assert vflag is False, f"{comp['component_id']}.{k} should be fixed"
             if k == "amp":
                 assert vflag is True, f"{comp['component_id']}.amp should vary"
         off += len(keys)
     assert not any(l.get("source_key") == "amp" for l in out["param_links"])
     assert any("FWHM" in w or "fwhm" in w.lower() for w in out.get("warnings") or [])
+    assert any("lineshape" in w.lower() or "mix" in w.lower() for w in out.get("warnings") or [])
     ratios = out.get("initial_area_ratios")
     assert isinstance(ratios, str) and ":" in ratios
     parts = [float(p) for p in ratios.split(":")]
-    assert len(parts) == len([c for c in out["components"] if c["component_type"] != "shirley_bg"])
+    assert len(parts) == len(out["components"])
     assert all(p > 0 for p in parts)
 
 
