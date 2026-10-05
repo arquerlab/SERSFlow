@@ -73,6 +73,8 @@ import {
   isAutoAmplitudeParam,
   migrateFittingParamsToEditor,
   parseFittingComponentType,
+  regionSubsetDisplayName,
+  spectrumRegionMatchesPicks,
   upsertParamLink,
   xpsBgComponentTypesFromCatalog,
   xpsBgTypeLabel,
@@ -483,7 +485,8 @@ export default function PreprocessingWorkspace() {
         if (t) set.add(t);
       }
     }
-    return [...set].sort();
+    const regions = [...set].sort();
+    return [ALL_VALENCE_BANDS_REGION, ...regions];
   }, [selectedUploads, uploadsMetaQ.data?.items]);
 
   const xpsRegionsQ = useQuery({
@@ -1261,10 +1264,13 @@ export default function PreprocessingWorkspace() {
                 <TickDropdown
                   label="Regions"
                   appearance="select"
-                  options={(xpsRegionsQ.data?.regions ?? []).map((r) => r.region)}
+                  options={[
+                    ALL_VALENCE_BANDS_REGION,
+                    ...(xpsRegionsQ.data?.regions ?? []).map((r) => r.region),
+                  ]}
                   selected={regionSubsetPicks}
                   emptySummary="Select regions…"
-                  title="Select one or more XPS regions for the subset"
+                  title="Select one or more XPS regions for the subset. 'all valence bands' matches any region with valence, fermi, or vb in the name."
                   disabled={!sessionId || !datasetId || subsetLocked}
                   onChange={setRegionSubsetPicks}
                 />
@@ -1274,7 +1280,7 @@ export default function PreprocessingWorkspace() {
                   onClick={async () => {
                     if (!sessionId || !datasetId) return;
                     const spectra = datasetQ.data?.dataset?.spectra ?? [];
-                    const wanted = new Set(regionSubsetPicks);
+                    const picks = regionSubsetPicks;
                     const labJson = await fetchUploadsList(5000);
                     const byPath = new Map<string, any>(
                       (labJson.items ?? []).map((it: any) => [String(it.relative_path), it.labels || {}])
@@ -1290,7 +1296,7 @@ export default function PreprocessingWorkspace() {
                       } else if (typeof labels.xps_region === "string") {
                         region = labels.xps_region;
                       }
-                      if (region && wanted.has(region)) indices.push(i);
+                      if (region && spectrumRegionMatchesPicks(region, picks)) indices.push(i);
                     });
                     if (!indices.length) {
                       setLastError("No spectra match the selected XPS regions.");
@@ -1298,9 +1304,7 @@ export default function PreprocessingWorkspace() {
                     }
                     await updateSessionSubset(sessionId, { kind: "indices", indices });
                     setSubsetIndices(indices);
-                    const names = [...wanted].sort().join(", ");
-                    const label =
-                      wanted.size === 1 ? `Region ${names} (${indices.length})` : `Regions ${names} (${indices.length})`;
+                    const label = regionSubsetDisplayName(picks);
                     const subset = {
                       id: crypto.randomUUID(),
                       label,
@@ -1416,7 +1420,7 @@ export default function PreprocessingWorkspace() {
                 options={createRegionOptions}
                 selected={createXpsRegions}
                 emptySummary="All regions"
-                title="Optional: keep only selected XPS regions when creating the dataset"
+                title="Optional: keep only selected XPS regions when creating the dataset. 'all valence bands' matches any region with valence, fermi, or vb in the name."
                 onChange={setCreateXpsRegions}
               />
           ) : null}

@@ -232,6 +232,17 @@ def filter_meta_indices(meta: tuple[dict[str, Any], ...] | list[dict[str, Any]],
     return inds if inds else avgs
 
 
+_ALL_VALENCE_BANDS_REGION = "all valence bands"
+
+
+def _is_valence_band_region_name(name: str | None) -> bool:
+    """True when a region label looks like valence-band / Fermi-edge / VB."""
+    s = str(name or "").strip().lower()
+    if not s:
+        return False
+    return "valence" in s or "fermi" in s or "vb" in s
+
+
 def filter_indices_by_xps_regions(
     meta: tuple[dict[str, Any], ...] | list[dict[str, Any]],
     indices: list[int],
@@ -241,11 +252,22 @@ def filter_indices_by_xps_regions(
     Further restrict block indices to those whose ``xps_region`` is in ``regions``.
 
     Empty / None ``regions`` leaves ``indices`` unchanged.
+    The sentinel ``all valence bands`` matches any region whose name contains
+    ``valence``, ``fermi``, or ``vb`` (same rule as fitting region gates).
     """
     if not regions:
         return list(indices)
-    allowed = {str(r) for r in regions if str(r).strip()}
-    if not allowed:
+    want_all_vb = False
+    allowed: set[str] = set()
+    for r in regions:
+        t = str(r).strip()
+        if not t:
+            continue
+        if t.lower() == _ALL_VALENCE_BANDS_REGION:
+            want_all_vb = True
+            continue
+        allowed.add(t)
+    if not allowed and not want_all_vb:
         return list(indices)
     out: list[int] = []
     n = len(meta)
@@ -253,7 +275,7 @@ def filter_indices_by_xps_regions(
         if i < 0 or i >= n:
             continue
         region = str((meta[i] or {}).get("xps_region") or "")
-        if region in allowed:
+        if region in allowed or (want_all_vb and _is_valence_band_region_name(region)):
             out.append(i)
     return out
 

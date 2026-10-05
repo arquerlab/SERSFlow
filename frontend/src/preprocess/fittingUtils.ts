@@ -106,6 +106,56 @@ export function isValenceBandRegionName(name: string | null | undefined): boolea
   return s.includes("valence") || s.includes("fermi") || s.includes("vb");
 }
 
+/**
+ * Compact label for region subset tiles / status line.
+ * Core level → region name; all valence bands → ``vb-all``; a VB region → ``vb-{token}``.
+ */
+export function shortXpsRegionLabel(region: string | null | undefined): string {
+  const t = String(region ?? "").trim();
+  if (!t) return "";
+  if (t.toLowerCase() === ALL_VALENCE_BANDS_REGION) return "vb-all";
+  if (!isValenceBandRegionName(t)) return t;
+  const vbPrefixed = t.match(/^vb[-_](.+)$/i);
+  if (vbPrefixed) return `vb-${vbPrefixed[1].trim()}`;
+  if (/^vb$/i.test(t)) return "vb";
+  const cleaned = t
+    .replace(/valence\s*bands?/gi, "")
+    .replace(/fermi(?:\s*edge)?/gi, "")
+    .replace(/\bvb\b/gi, "")
+    .replace(/^[-_\s]+|[-_\s]+$/g, "")
+    .trim();
+  return cleaned ? `vb-${cleaned}` : "vb";
+}
+
+/** Join short region labels for a multi-pick subset name (e.g. ``C1s+vb-all``). */
+export function regionSubsetDisplayName(picks: Iterable<string>): string {
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  for (const p of picks) {
+    const short = shortXpsRegionLabel(p);
+    if (!short || seen.has(short)) continue;
+    seen.add(short);
+    parts.push(short);
+  }
+  return parts.join("+") || "region";
+}
+
+/** Whether a spectrum region matches any region-picker selection (incl. all valence bands). */
+export function spectrumRegionMatchesPicks(spectrumRegion: string | null | undefined, picks: Iterable<string>): boolean {
+  const region = String(spectrumRegion ?? "").trim();
+  if (!region) return false;
+  for (const p of picks) {
+    const wanted = String(p ?? "").trim();
+    if (!wanted) continue;
+    if (wanted.toLowerCase() === ALL_VALENCE_BANDS_REGION) {
+      if (isValenceBandRegionName(region)) return true;
+      continue;
+    }
+    if (wanted.toLowerCase() === region.toLowerCase()) return true;
+  }
+  return false;
+}
+
 /** Match fitting step ``xps_region`` against a spectrum region label (same rules as backend). */
 export function fittingRegionMatches(wanted: string | null | undefined, spectrumRegion: string | null | undefined): boolean {
   const w = String(wanted ?? "").trim();

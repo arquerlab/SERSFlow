@@ -352,6 +352,18 @@ def test_filter_averages_and_individuals(tmp_path: Path) -> None:
     assert filter_indices_by_xps_regions(ds.meta, [0, 3], []) == [0, 3]
 
 
+def test_filter_indices_by_xps_regions_all_valence_bands() -> None:
+    meta = (
+        {"xps_region": "C1s"},
+        {"xps_region": "vb-O1s"},
+        {"xps_region": "valence band"},
+        {"xps_region": "O1s"},
+        {"xps_region": "Fermi edge"},
+    )
+    assert filter_indices_by_xps_regions(meta, [0, 1, 2, 3, 4], ["all valence bands"]) == [1, 2, 4]
+    assert filter_indices_by_xps_regions(meta, [0, 1, 2, 3, 4], ["C1s", "all valence bands"]) == [0, 1, 2, 4]
+
+
 def test_filter_when_only_one_role_present(tmp_path: Path) -> None:
     only_avg_lines = _legacy_header(n_blocks=1) + _legacy_block(
         block_name="C 1s_spectrum",
