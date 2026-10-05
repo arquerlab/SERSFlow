@@ -620,6 +620,247 @@ def np_clip_m(m: float) -> float:
     return max(0.0, min(100.0, float(m)))
 
 
+_TRAILING_NUM = re.compile(r"^(.*?)([-_ ]?)(\d+)$")
+
+
+def _is_background_component(component_type: str) -> bool:
+    ct = str(component_type or "").strip().lower()
+    return ct.endswith("_bg") or ct in {"shirley_bg", "tougaard_bg", "slope_bg"}
+
+
+def unique_component_id(label: str, used: set[str], *, fallback: str = "p") -> str:
+    """
+    Return a component id unique against ``used`` (case-insensitive).
+
+    When the base already ends with a number (e.g. Peak_1), increment that number.
+    Otherwise append ``_2``, ``_3``, …
+    """
+    base = _sanitize_id(label, fallback)
+    low_used = {u.lower() for u in used}
+
+    def take(cand: str) -> str:
+        used.add(cand)
+        low_used.add(cand.lower())
+        return cand
+
+    if base.lower() not in low_used:
+        return take(base)
+
+    m = _TRAILING_NUM.match(base)
+    if m:
+        prefix, sep, num_s = m.group(1), m.group(2) or "_", m.group(3)
+        n = int(num_s) + 1
+        while True:
+            cand = f"{prefix}{sep}{n}" if prefix else f"{fallback}{n}"
+            if cand.lower() not in low_used:
+                return take(cand)
+            n += 1
+
+    n = 2
+    while True:
+        cand = f"{base}_{n}"
+        if cand.lower() not in low_used:
+            return take(cand)
+        n += 1
+
+
+def _component_param_count(comp: dict[str, Any]) -> int:
+    ctype = str(comp.get("component_type") or "").strip()
+    deg_raw = comp.get("degree")
+    degree = int(deg_raw) if deg_raw is not None else None
+    return len(component_param_specs(ctype, degree=degree))
+
+
+def _slice_component_vectors(
+    components: list[dict[str, Any]],
+    p0: list[Any],
+    lo: list[Any],
+    hi: list[Any],
+    vary: list[Any] | None,
+) -> list[dict[str, Any]]:
+    """Split flat vectors into per-component bundles."""
+    out: list[dict[str, Any]] = []
+    off = 0
+    for comp in components:
+        n = _component_param_count(comp)
+        if off + n > len(p0) or off + n > len(lo) or off + n > len(hi):
+            raise ValueError(
+                f"vector length mismatch while slicing component {comp.get('component_id')!r}"
+            )
+        row_vary: list[bool] | None = None
+        if isinstance(vary, list) and vary:
+            if off + n > len(vary):
+                raise ValueError(
+                    f"vary length mismatch while slicing component {comp.get('component_id')!r}"
+                )
+            row_vary = [bool(v) for v in vary[off : off + n]]
+        out.append(
+            {
+                "component": dict(comp),
+                "p0": [float(x) for x in p0[off : off + n]],
+                "bounds_lower": [None if v is None else float(v) for v in lo[off : off + n]],
+                "bounds_upper": [None if v is None else float(v) for v in hi[off : off + n]],
+                "vary": row_vary if row_vary is not None else [True] * n,
+            }
+        )
+        off += n
+    if off != len(p0):
+        raise ValueError(f"p0 length mismatch: consumed {off}, got {len(p0)}")
+    return out
+
+
+def merge_fitting_recipe_params(
+    base: dict[str, Any],
+    added: dict[str, Any],
+    *,
+    skip_background_from_added: bool = True,
+) -> dict[str, Any]:
+    """
+    Merge a second recipe-apply payload into an existing fitting params dict.
+
+    Keeps baseline(s) from ``base``. From ``added``, appends non-background components
+    (peaks / fermi_edge / …), renames colliding component ids, remaps param_links,
+    and concatenates ``recipe_ids``.
+    """
+    base_comps = list(base.get("components") or [])
+    added_comps = list(added.get("components") or [])
+    if not base_comps:
+        raise ValueError("base fitting params require components")
+    if not added_comps:
+        raise ValueError("added fitting params require components")
+
+    base_rows = _slice_component_vectors(
+        base_comps,
+        list(base.get("p0") or []),
+        list(base.get("bounds_lower") or []),
+        list(base.get("bounds_upper") or []),
+        list(base["vary"]) if isinstance(base.get("vary"), list) else None,
+    )
+    added_rows = _slice_component_vectors(
+        added_comps,
+        list(added.get("p0") or []),
+        list(added.get("bounds_lower") or []),
+        list(added.get("bounds_upper") or []),
+        list(added["vary"]) if isinstance(added.get("vary"), list) else None,
+    )
+
+    used: set[str] = set()
+    for row in base_rows:
+        cid = str(row["component"].get("component_id") or "").strip()
+        if cid:
+            used.add(cid)
+
+    id_map: dict[str, str] = {}
+    id_map_lower: dict[str, str] = {}
+    kept_added: list[dict[str, Any]] = []
+    for row in added_rows:
+        ctype = str(row["component"].get("component_type") or "").strip()
+        if skip_background_from_added and _is_background_component(ctype):
+            continue
+        old_id = str(row["component"].get("component_id") or "").strip() or "p"
+        new_id = unique_component_id(old_id, used)
+        id_map[old_id] = new_id
+        id_map_lower[old_id.lower()] = new_id
+        comp = dict(row["component"])
+        comp["component_id"] = new_id
+        kept_added.append({**row, "component": comp})
+
+    if not kept_added:
+        raise ValueError("added recipe contributed no non-background components to merge")
+
+    components: list[dict[str, Any]] = [dict(r["component"]) for r in base_rows] + [
+        dict(r["component"]) for r in kept_added
+    ]
+    p0: list[float] = []
+    bounds_lower: list[float | None] = []
+    bounds_upper: list[float | None] = []
+    vary: list[bool] = []
+    for r in base_rows + kept_added:
+        p0.extend(r["p0"])
+        bounds_lower.extend(r["bounds_lower"])
+        bounds_upper.extend(r["bounds_upper"])
+        vary.extend(r["vary"])
+
+    def remap_cid(cid: str) -> str:
+        if cid in id_map:
+            return id_map[cid]
+        low = cid.lower()
+        if low in id_map_lower:
+            return id_map_lower[low]
+        return cid
+
+    def remap_links(links: list[Any]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        known = {str(c.get("component_id") or "") for c in components}
+        for link in links:
+            if not isinstance(link, dict):
+                continue
+            mapped = dict(link)
+            mapped["source_component_id"] = remap_cid(str(link.get("source_component_id") or ""))
+            mapped["target_component_id"] = remap_cid(str(link.get("target_component_id") or ""))
+            sid = str(mapped.get("source_component_id") or "")
+            tid = str(mapped.get("target_component_id") or "")
+            if sid not in known or tid not in known:
+                continue
+            out.append(mapped)
+        return out
+
+    base_links = list(base.get("param_links") or []) if isinstance(base.get("param_links"), list) else []
+    added_links = list(added.get("param_links") or []) if isinstance(added.get("param_links"), list) else []
+    # Base links keep original ids; only remap added links.
+    param_links = [dict(x) for x in base_links if isinstance(x, dict)] + remap_links(added_links)
+
+    def recipe_ids_of(payload: dict[str, Any]) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        raw = payload.get("recipe_ids")
+        if isinstance(raw, list):
+            for x in raw:
+                t = str(x or "").strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    out.append(t)
+        rid = str(payload.get("recipe_id") or "").strip()
+        if rid and rid not in seen:
+            out.append(rid)
+        return out
+
+    recipe_ids = recipe_ids_of(base) + [r for r in recipe_ids_of(added) if r not in set(recipe_ids_of(base))]
+
+    warnings: list[str] = []
+    for src in (base, added):
+        w = src.get("warnings")
+        if isinstance(w, list):
+            warnings.extend(str(x) for x in w if str(x).strip())
+    orig_added_ids = {str(r["component"].get("component_id") or "") for r in added_rows}
+    for old, new in id_map.items():
+        if old in orig_added_ids and old != new:
+            warnings.append(f"renamed component {old!r} -> {new!r}")
+
+    out: dict[str, Any] = {
+        "components": components,
+        "p0": p0,
+        "bounds_lower": bounds_lower,
+        "bounds_upper": bounds_upper,
+        "vary": vary,
+        "param_links": param_links,
+        "initial_guess_mode": base.get("initial_guess_mode") or added.get("initial_guess_mode") or "auto",
+        "warnings": warnings,
+    }
+    if recipe_ids:
+        out["recipe_id"] = recipe_ids[0]
+        out["recipe_ids"] = recipe_ids
+    # Prefer last-applied pass energy when present.
+    pe = added.get("recipe_pass_energy")
+    if pe is None:
+        pe = base.get("recipe_pass_energy")
+    out["recipe_pass_energy"] = pe
+    region = str(base.get("xps_region") or "").strip() or str(added.get("xps_region") or "").strip()
+    if region:
+        out["xps_region"] = region
+    return out
+
+
 def apply_recipe_id(
     recipe_id: str,
     *,
@@ -630,9 +871,14 @@ def apply_recipe_id(
     fit = get_compound_fit(recipe_id)
     if fit is None:
         raise KeyError(f"Unknown fitting recipe id: {recipe_id}")
-    return apply_compound_fit_to_fitting_params(
+    out = apply_compound_fit_to_fitting_params(
         fit,
         pass_energy=pass_energy,
         include_background=include_background,
         preferred_pass_energy=preferred_pass_energy,
     )
+    rid = str(out.get("recipe_id") or recipe_id).strip()
+    if rid:
+        out["recipe_ids"] = [rid]
+    return out
+

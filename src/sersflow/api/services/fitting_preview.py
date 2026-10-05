@@ -18,7 +18,7 @@ from sersflow.api.services.sessions_service import resolve_subset_indices
 from sersflow.core.metrics.fitting_features import p_opt_and_gof_from_features
 from sersflow.core.pipeline.engine import EngineConfig, fitting_region_applies, run_pipeline_parallel_no_cache
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
-from sersflow.core.preprocess.fitting import evaluate_fit_curves, fit_problem_from_step_params
+from sersflow.core.preprocess.fitting import evaluate_fit_curves, expand_fit_curves_to_full, fit_problem_from_step_params
 from sersflow.infra.analysis_store import get_run as store_get_run
 from sersflow.infra.analysis_store import get_spectrum_features_for_ids
 from sersflow.infra.datasets_store import get_dataset_internal
@@ -273,12 +273,15 @@ def fitting_preview_for_run(
             )
             continue
 
+        y_hat, comps_full = expand_fit_curves_to_full(
+            xy, step_params, res.y_hat, res.component_y_hat
+        )
         comps_out = []
         for idx, m in enumerate(res.mapping):
             s, e = m["index_range"]
             keys = m["param_keys"]
             vals = res.p_opt[s:e].astype(float).tolist()
-            yc = res.component_y_hat[idx].astype(float).tolist() if return_curve else None
+            yc = comps_full[idx].astype(float).tolist() if return_curve else None
             comps_out.append(
                 {
                     "component_id": m["component_id"],
@@ -289,7 +292,6 @@ def fitting_preview_for_run(
                     "y_hat": yc,
                 }
             )
-        y_hat = res.y_hat.astype(float)
         y_in = xy.y.astype(float)
         items.append(
             {

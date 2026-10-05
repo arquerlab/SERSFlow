@@ -1972,6 +1972,28 @@ export default function PreprocessingWorkspace() {
                           }}
                         />
                       </label>
+                      <label className="inline" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                        Fit window (internal crop)
+                        <span style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                          <DraftNumberInput
+                            nullable
+                            placeholder="from"
+                            value={fp.fit_min_x ?? null}
+                            onChange={(n) => updateSelectedFittingParams({ ...fp, fit_min_x: n })}
+                            style={{ width: "72px" }}
+                            title="Lower x bound for fitting only; leave empty for full spectrum"
+                          />
+                          <span className="hint">–</span>
+                          <DraftNumberInput
+                            nullable
+                            placeholder="to"
+                            value={fp.fit_max_x ?? null}
+                            onChange={(n) => updateSelectedFittingParams({ ...fp, fit_max_x: n })}
+                            style={{ width: "72px" }}
+                            title="Upper x bound for fitting only; leave empty for full spectrum"
+                          />
+                        </span>
+                      </label>
                       {fittingModelsQ.isLoading ? <div className="hint">Loading model catalog…</div> : null}
                       {fittingModelsQ.isError ? (
                         <div className="err">Could not load /fitting/models: {String((fittingModelsQ.error as Error)?.message ?? fittingModelsQ.error)}</div>

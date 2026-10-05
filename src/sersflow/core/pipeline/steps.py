@@ -13,7 +13,7 @@ from sersflow.core.pipeline.hashing import canonical_json
 from sersflow.core.preprocess.baseline import baseline_kwargs, correct_baseline
 from sersflow.core.preprocess.cosmic_ray import remove_cosmic_rays
 from sersflow.core.metrics.intensity_probes import parse_probes
-from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
+from sersflow.core.preprocess.fitting import expand_fit_curves_to_full, fit_curve, fit_problem_from_step_params
 from sersflow.core.preprocess.noise import apply_savitzky_golay
 from sersflow.core.preprocess.x_axis_calibration import apply_x_axis_calibration
 from sersflow.core.qc.metadata_filter import evaluate_filters
@@ -215,18 +215,20 @@ def _fitting(xy: XY, params: dict[str, Any]) -> XY:
     - p0: list[float]
     - bounds_lower, bounds_upper: list[float | null] (null = unbounded)
     - initial_guess_mode: "default" | "auto" (legacy; prefer per-peak amp ≤0 sentinel for Auto)
+    - fit_min_x / fit_max_x: optional internal fit window (outside points keep original y)
     """
     try:
         prob = fit_problem_from_step_params(xy, params)
         if prob is None:
             return xy
         res = fit_curve(prob)
+        y_hat, _ = expand_fit_curves_to_full(xy, params, res.y_hat)
     except (ValueError, RuntimeError) as e:
         # Mixed multi-region XPS pipelines may run an O1s recipe on a C1s spectrum (or vice versa).
         # Do not fail the whole session run — pass the spectrum through unchanged.
         logger.info("Fitting step skipped (pass-through unchanged spectrum): %s", e)
         return xy
-    return XY(x=xy.x, y=res.y_hat)
+    return XY(x=xy.x, y=y_hat)
 
 
 def _spectral_intensities(xy: XY, params: dict[str, Any]) -> XY:

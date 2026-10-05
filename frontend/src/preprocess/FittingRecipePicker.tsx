@@ -10,8 +10,11 @@ import {
 } from "./api";
 import {
   isPeakComponentType,
+  isXpsBgComponentType,
   migrateFittingParamsToEditor,
+  uniqueComponentIdAgainst,
   type FittingEditorParams,
+  type FittingParamLink,
 } from "./fittingUtils";
 import type { FittingComponentSpecPublic } from "./api";
 import { preferPassEnergy } from "./passEnergyUtils";
@@ -48,13 +51,27 @@ function filterIndex(items: FittingRecipeIndexItem[], q: string): FittingRecipeI
   return matched.slice(0, DROPDOWN_CAP);
 }
 
+function recipeIdsOf(fp: FittingEditorParams): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (s: string) => {
+    const t = s.trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    out.push(t);
+  };
+  for (const id of fp.recipe_ids ?? []) push(String(id ?? ""));
+  push(String(fp.recipe_id ?? ""));
+  return out;
+}
+
 /** True when the editor looks like an untouched default single gaussian. */
 export function isDefaultFittingEditor(fp: FittingEditorParams): boolean {
   if (fp.components.length !== 1) return false;
   const c = fp.components[0]!;
   if (c.component_type !== "gaussian") return false;
   if ((fp.param_links ?? []).length > 0) return false;
-  if (String(fp.recipe_id ?? "").trim()) return false;
+  if (recipeIdsOf(fp).length > 0) return false;
   const id = String(c.component_id ?? "").trim();
   return !id || id === "p1";
 }
@@ -78,13 +95,87 @@ export function mergeRecipeApplyIntoEditor(
     },
     catalog
   );
+  const rid = String(applied.recipe_id ?? "").trim();
   return {
     ...migrated,
     output_mode: current.output_mode,
     fill_opacity: current.fill_opacity,
     initial_guess_mode: "default",
-    recipe_id: applied.recipe_id,
+    recipe_id: rid,
+    recipe_ids: rid ? [rid] : [],
     recipe_pass_energy: applied.recipe_pass_energy ?? undefined,
+    fit_min_x: current.fit_min_x ?? null,
+    fit_max_x: current.fit_max_x ?? null,
+  };
+}
+
+/** Append peaks from a second recipe; skip backgrounds; rename colliding ids. */
+export function appendRecipeApplyIntoEditor(
+  current: FittingEditorParams,
+  applied: FittingRecipeApplyResponse,
+  catalog: FittingComponentSpecPublic[] | undefined
+): FittingEditorParams {
+  const migrated = migrateFittingParamsToEditor(
+    {
+      components: applied.components,
+      p0: applied.p0,
+      bounds_lower: applied.bounds_lower,
+      bounds_upper: applied.bounds_upper,
+      vary: applied.vary,
+      param_links: applied.param_links,
+      xps_region: applied.xps_region,
+      recipe_id: applied.recipe_id,
+      recipe_pass_energy: applied.recipe_pass_energy ?? undefined,
+    },
+    catalog
+  );
+
+  const used = new Set<string>();
+  for (const c of current.components) {
+    const id = String(c.component_id ?? "").trim();
+    if (id) used.add(id.toLowerCase());
+  }
+
+  const idMap = new Map<string, string>();
+  const addedComps = migrated.components
+    .filter((c) => !isXpsBgComponentType(c.component_type))
+    .map((c) => {
+      const oldId = String(c.component_id ?? "").trim() || "p";
+      const newId = uniqueComponentIdAgainst(oldId, used);
+      idMap.set(oldId, newId);
+      idMap.set(oldId.toLowerCase(), newId);
+      return { ...c, component_id: newId };
+    });
+
+  if (!addedComps.length) {
+    throw new Error("Added recipe contributed no non-background components");
+  }
+
+  const remap = (cid: string): string => idMap.get(cid) ?? idMap.get(cid.toLowerCase()) ?? cid;
+  const known = new Set(
+    [...current.components, ...addedComps].map((c) => String(c.component_id ?? "").trim())
+  );
+  const remappedLinks: FittingParamLink[] = (migrated.param_links ?? [])
+    .map((l) => ({
+      ...l,
+      source_component_id: remap(l.source_component_id),
+      target_component_id: remap(l.target_component_id),
+    }))
+    .filter((l) => known.has(l.source_component_id) && known.has(l.target_component_id));
+
+  const existingIds = recipeIdsOf(current);
+  const rid = String(applied.recipe_id ?? "").trim();
+  const recipe_ids = rid && !existingIds.includes(rid) ? [...existingIds, rid] : [...existingIds];
+
+  return {
+    ...current,
+    components: [...current.components, ...addedComps],
+    param_links: [...(current.param_links ?? []), ...remappedLinks],
+    xps_region: String(current.xps_region ?? "").trim() || migrated.xps_region || "",
+    recipe_id: recipe_ids[0] ?? rid,
+    recipe_ids,
+    recipe_pass_energy: applied.recipe_pass_energy ?? current.recipe_pass_energy,
+    initial_guess_mode: "default",
   };
 }
 
@@ -131,6 +222,8 @@ export function FittingRecipePicker({
   const items = indexQ.data?.items ?? [];
   const matches = useMemo(() => filterIndex(items, query), [items, query]);
   const showPanel = open && matches.length > 0;
+  const loadedRecipeIds = recipeIdsOf(fittingParams);
+  const multiRecipes = loadedRecipeIds.length > 1;
 
   useLayoutEffect(() => {
     if (!showPanel) {
@@ -169,7 +262,7 @@ export function FittingRecipePicker({
     return [...set].sort().slice(0, 12);
   }, [items]);
 
-  const selectedId = String(fittingParams.recipe_id ?? "").trim();
+  const selectedId = loadedRecipeIds[loadedRecipeIds.length - 1] ?? "";
   const selectedItem = items.find((it) => it.id === selectedId);
   const passEnergies = selectedItem?.pass_energies?.length
     ? selectedItem.pass_energies
@@ -181,24 +274,47 @@ export function FittingRecipePicker({
     return preferPassEnergy(item.pass_energies ?? [], preferredPassEnergy);
   }
 
-  async function loadRecipe(id: string, passEnergy?: number, skipConfirm?: boolean) {
-    if (!skipConfirm && !isDefaultFittingEditor(fittingParams)) {
-      const ok = window.confirm(`Replace current peaks with recipe ${id}?`);
-      if (!ok) return;
+  async function loadRecipe(
+    id: string,
+    passEnergy?: number,
+    mode: "replace" | "add" | "auto" = "auto"
+  ) {
+    let resolved: "replace" | "add" = mode === "auto" ? "replace" : mode;
+    if (mode === "auto" && !isDefaultFittingEditor(fittingParams)) {
+      const add = window.confirm(
+        `Current fitting already has components.\n\n` +
+          `OK = ADD peaks from ${id} (no extra baseline)\n` +
+          `Cancel = choose Replace or abort`
+      );
+      if (add) {
+        resolved = "add";
+      } else {
+        const replace = window.confirm(`Replace all peaks with recipe ${id}?`);
+        if (!replace) return;
+        resolved = "replace";
+      }
     }
+
     setBusy(true);
     setErr(null);
     try {
       const applied = await applyFittingRecipe(id, {
         pass_energy: passEnergy,
-        include_background: true,
+        include_background: resolved === "replace",
         preferred_pass_energy: preferredPassEnergy ?? undefined,
       });
-      const next = mergeRecipeApplyIntoEditor(fittingParams, applied, fittingCatalog);
-      setWarnings(applied.warnings ?? []);
-      setQuery(applied.recipe_id);
+      const next =
+        resolved === "add"
+          ? appendRecipeApplyIntoEditor(fittingParams, applied, fittingCatalog)
+          : mergeRecipeApplyIntoEditor(fittingParams, applied, fittingCatalog);
+      const notes = [...(applied.warnings ?? [])];
+      if (resolved === "add") {
+        notes.push(`Added peaks from ${id} (background skipped)`);
+      }
+      setWarnings(notes);
+      setQuery(id);
       setOpen(false);
-      onApply(next, applied.warnings ?? []);
+      onApply(next, notes);
     } catch (e) {
       setErr(String((e as Error)?.message ?? e));
     } finally {
@@ -207,12 +323,12 @@ export function FittingRecipePicker({
   }
 
   function onPick(item: FittingRecipeIndexItem) {
-    void loadRecipe(item.id, defaultPassEnergy(item), false);
+    void loadRecipe(item.id, defaultPassEnergy(item), "auto");
   }
 
   function onPassEnergyChange(pe: number) {
-    if (!selectedId) return;
-    void loadRecipe(selectedId, pe, true);
+    if (!selectedId || multiRecipes) return;
+    void loadRecipe(selectedId, pe, "replace");
   }
 
   if (!enabled) return null;
@@ -342,12 +458,17 @@ export function FittingRecipePicker({
         Pass energy (eV)
         <select
           value={fittingParams.recipe_pass_energy ?? ""}
-          disabled={!selectedId || busy || passEnergies.length === 0}
+          disabled={!selectedId || busy || passEnergies.length === 0 || multiRecipes}
           onChange={(e) => {
             const pe = Number(e.target.value);
             if (Number.isFinite(pe)) onPassEnergyChange(pe);
           }}
           style={{ width: "100px" }}
+          title={
+            multiRecipes
+              ? "Pass energy re-apply is disabled while multiple recipes are loaded; Replace to change PE"
+              : undefined
+          }
         >
           <option value="">—</option>
           {passEnergies.map((pe) => (
@@ -357,6 +478,9 @@ export function FittingRecipePicker({
           ))}
         </select>
       </label>
+      {multiRecipes ? (
+        <div className="hint">Pass energy locked while multiple recipes are stacked (Replace to change).</div>
+      ) : null}
       <button type="button" className="mini" onClick={() => setShowMethods((v) => !v)}>
         {showMethods ? "Hide method defaults" : "Show method defaults / charge-ref"}
       </button>
@@ -412,9 +536,14 @@ export function FittingRecipePicker({
           ))}
         </div>
       ) : null}
-      {selectedId ? (
+      {loadedRecipeIds.length ? (
         <div className="hint">
-          Loaded: <code>{selectedId}</code>
+          Loaded:{" "}
+          {loadedRecipeIds.map((id) => (
+            <code key={id} style={{ marginRight: 6 }}>
+              {id}
+            </code>
+          ))}
           {fittingParams.recipe_pass_energy != null ? ` @ ${fittingParams.recipe_pass_energy} eV` : ""}
         </div>
       ) : null}

@@ -19,7 +19,11 @@ from sersflow.api.services.fitting_preview import (
 from sersflow.api.services.observation_export import _labels_for_spectrum
 from sersflow.core.metrics.fitting_features import p_opt_and_gof_from_features
 from sersflow.core.pipeline.engine import fitting_region_applies
-from sersflow.core.preprocess.fitting import evaluate_fit_curves, fit_problem_from_step_params
+from sersflow.core.preprocess.fitting import (
+    evaluate_fit_curves,
+    expand_fit_curves_to_full,
+    fit_problem_from_step_params,
+)
 from sersflow.infra.analysis_store import (
     get_fit_curve_job,
     get_run,
@@ -169,17 +173,20 @@ def execute_fit_curve_job(job_id: str) -> None:
                         update_fit_curve_job(job_id=job_id, progress_done=done, progress_total=total)
                     continue
 
+                y_hat_arr, comps_full = expand_fit_curves_to_full(
+                    xy, step_params, res.y_hat, res.component_y_hat
+                )
                 x = xy.x.astype(float).tolist()
                 y = xy.y.astype(float).tolist()
-                y_hat = res.y_hat.astype(float).tolist()
-                residual = (xy.y.astype(float) - res.y_hat.astype(float)).tolist()
+                y_hat = y_hat_arr.astype(float).tolist()
+                residual = (xy.y.astype(float) - y_hat_arr).tolist()
                 comps = []
                 for idx, m in enumerate(res.mapping):
                     comps.append(
                         {
                             "component_id": m["component_id"],
                             "component_type": m["component_type"],
-                            "y_hat": res.component_y_hat[idx].astype(float).tolist(),
+                            "y_hat": comps_full[idx].astype(float).tolist(),
                         }
                     )
                 safe = _safe_name(sid)

@@ -16,6 +16,103 @@ from sersflow.core.preprocess.fitting_specs import (
 from sersflow.core.spectrum import XY
 
 
+def parse_fit_window(params: dict[str, Any]) -> tuple[float | None, float | None]:
+    """
+    Optional internal fit window ``fit_min_x`` / ``fit_max_x``.
+
+    When both are unset (or null), the full spectrum is used. When only one bound
+    is set, the other is treated as unbounded on that side.
+    """
+    raw_lo = params.get("fit_min_x")
+    raw_hi = params.get("fit_max_x")
+    lo: float | None = None
+    hi: float | None = None
+    if raw_lo is not None and str(raw_lo).strip() != "":
+        lo = float(raw_lo)
+        if not np.isfinite(lo):
+            raise ValueError(f"fit_min_x must be finite; got {raw_lo!r}")
+    if raw_hi is not None and str(raw_hi).strip() != "":
+        hi = float(raw_hi)
+        if not np.isfinite(hi):
+            raise ValueError(f"fit_max_x must be finite; got {raw_hi!r}")
+    if lo is not None and hi is not None and lo > hi:
+        raise ValueError(f"fit_min_x ({lo}) must be <= fit_max_x ({hi})")
+    return lo, hi
+
+
+def fit_window_mask(x: np.ndarray, params: dict[str, Any]) -> np.ndarray:
+    """Boolean mask of points included in the optional fit window."""
+    lo, hi = parse_fit_window(params)
+    xf = np.asarray(x, dtype=float).ravel()
+    if lo is None and hi is None:
+        return np.ones(xf.shape, dtype=bool)
+    mask = np.ones(xf.shape, dtype=bool)
+    if lo is not None:
+        mask &= xf >= lo
+    if hi is not None:
+        mask &= xf <= hi
+    return mask
+
+
+def apply_fit_window_xy(xy: XY, params: dict[str, Any]) -> tuple[XY, np.ndarray]:
+    """
+    Crop ``xy`` to the optional fit window.
+
+    Returns ``(cropped_xy, mask)`` where ``mask`` indexes into the original arrays.
+    When no window is set, returns the original ``xy`` and an all-True mask.
+    """
+    mask = fit_window_mask(xy.x, params)
+    if bool(np.all(mask)):
+        return xy, mask
+    return XY(x=xy.x[mask], y=xy.y[mask]), mask
+
+
+def expand_fit_curves_to_full(
+    xy: XY,
+    params: dict[str, Any],
+    y_hat: np.ndarray,
+    component_y_hats: list[np.ndarray] | None = None,
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    """
+    Stitch windowed fit curves back onto the full spectrum length.
+
+    Outside the fit window: total ``y_hat`` keeps the original ``y`` (passthrough);
+    per-component curves are zero. Residual is then zero outside the window.
+    """
+    mask = fit_window_mask(xy.x, params)
+    y_fit = np.asarray(y_hat, dtype=float).ravel()
+    n = int(xy.x.size)
+    if bool(np.all(mask)) and y_fit.size == n:
+        comps = (
+            [np.asarray(c, dtype=float).ravel() for c in component_y_hats]
+            if component_y_hats is not None
+            else []
+        )
+        return y_fit, comps
+
+    if int(np.count_nonzero(mask)) != y_fit.size:
+        raise ValueError(
+            f"fit curve length {y_fit.size} does not match fit window "
+            f"({int(np.count_nonzero(mask))} points)"
+        )
+
+    y_full = np.asarray(xy.y, dtype=float).ravel().copy()
+    y_full[mask] = y_fit
+    comps_full: list[np.ndarray] = []
+    if component_y_hats is not None:
+        for cy in component_y_hats:
+            c_arr = np.asarray(cy, dtype=float).ravel()
+            if c_arr.size != y_fit.size:
+                raise ValueError(
+                    f"component curve length {c_arr.size} does not match fit window "
+                    f"({y_fit.size} points)"
+                )
+            c_full = np.zeros(n, dtype=float)
+            c_full[mask] = c_arr
+            comps_full.append(c_full)
+    return y_full, comps_full
+
+
 def _migrate_fitting_param_vectors(
     components: list[FitComponent],
     p0: list[float],
@@ -187,9 +284,14 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
     """
     Build a FitProblem from pipeline fitting step params (same contract as the fitting transform).
 
-    Returns None when x/y are empty (caller should pass through). Raises ValueError when params are invalid.
+    Applies optional ``fit_min_x`` / ``fit_max_x`` so the optimizer (and XPS backgrounds)
+    see only the fit window. Returns None when x/y are empty after cropping (caller should
+    pass through). Raises ValueError when params are invalid.
     """
     if xy.x.size == 0 or xy.y.size == 0:
+        return None
+    xy_fit, _mask = apply_fit_window_xy(xy, params)
+    if xy_fit.x.size == 0 or xy_fit.y.size == 0:
         return None
     igm = str(params.get("initial_guess_mode", "default")).strip().lower()
     if igm not in ("default", "auto"):
@@ -246,8 +348,8 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
             )
 
     return FitProblem(
-        x=xy.x.astype(float, copy=False),
-        y=xy.y.astype(float, copy=False),
+        x=xy_fit.x.astype(float, copy=False),
+        y=xy_fit.y.astype(float, copy=False),
         components=components,
         p0=p0_f,
         bounds_lower=lo_f,

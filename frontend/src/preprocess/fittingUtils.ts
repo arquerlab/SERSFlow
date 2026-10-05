@@ -250,11 +250,44 @@ export type FittingEditorParams = {
   xps_region?: string;
   /** XPS/lmfit parameter links (equal, scale, or offset). */
   param_links?: FittingParamLink[];
-  /** Provenance: applied XPS fitting recipe id. */
+  /** Provenance: first applied XPS fitting recipe id (backward compat). */
   recipe_id?: string;
+  /** All applied XPS fitting recipe ids in order (multi-recipe). */
+  recipe_ids?: string[];
   /** Pass energy used when applying the recipe (eV). */
   recipe_pass_energy?: number;
+  /** Optional internal fit window lower bound (inclusive). Empty/undefined = full spectrum. */
+  fit_min_x?: number | null;
+  /** Optional internal fit window upper bound (inclusive). Empty/undefined = full spectrum. */
+  fit_max_x?: number | null;
 };
+
+function optionalFiniteNumber(v: unknown): number | null | undefined {
+  if (v === null) return null;
+  if (v === undefined || v === "") return undefined;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
+function normalizeRecipeIds(raw: unknown, fallbackId?: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (s: string) => {
+    const t = s.trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    out.push(t);
+  };
+  if (Array.isArray(raw)) {
+    for (const x of raw) push(String(x ?? ""));
+  }
+  if (fallbackId) push(fallbackId);
+  return out;
+}
 
 export function polynomialParamKeys(degree: number): string[] {
   const d = Math.max(0, Math.min(MAX_POLY_DEGREE, Math.floor(degree)));
@@ -418,40 +451,59 @@ function sanitizePeakFragment(s: string): string {
  */
 export function assignPeakNames(components: FittingComponentEditor[]): FittingComponentEditor[] {
   const used = new Set<string>();
-  const has = (s: string) => used.has(s.toLowerCase());
-  const take = (s: string) => void used.add(s.toLowerCase());
-
-  const nextAuto = (): string => {
-    let k = 1;
-    while (has(`p${k}`)) k++;
-    const id = `p${k}`;
-    take(id);
-    return id;
-  };
-
-  const uniqueFromBase = (raw: string): string => {
-    const base = sanitizePeakFragment(raw) || "p";
-    if (!has(base)) {
-      take(base);
-      return base;
-    }
-    let i = 2;
-    let id = `${base}_${i}`;
-    while (has(id)) {
-      i++;
-      id = `${base}_${i}`;
-    }
-    take(id);
-    return id;
-  };
-
   return components.map((comp) => {
     const raw = String(comp.component_id ?? "").trim();
     if (!raw || looksLikeUuid(raw)) {
-      return { ...comp, component_id: nextAuto() };
+      return { ...comp, component_id: uniqueComponentIdAgainst("p", used, { preferAutoP: true }) };
     }
-    return { ...comp, component_id: uniqueFromBase(raw) };
+    return { ...comp, component_id: uniqueComponentIdAgainst(raw, used) };
   });
+}
+
+const TRAILING_NUM_RE = /^(.*?)([-_ ]?)(\d+)$/;
+
+/**
+ * Return a component id unique against ``used`` (case-insensitive).
+ * Increments a trailing number when present (Peak_1 → Peak_2); else ``base_2``.
+ */
+export function uniqueComponentIdAgainst(
+  label: string,
+  used: Set<string>,
+  opts?: { preferAutoP?: boolean }
+): string {
+  const has = (s: string) => used.has(s.toLowerCase());
+  const take = (s: string) => {
+    used.add(s.toLowerCase());
+    return s;
+  };
+
+  if (opts?.preferAutoP) {
+    let k = 1;
+    while (has(`p${k}`)) k++;
+    return take(`p${k}`);
+  }
+
+  const base = sanitizePeakFragment(label) || "p";
+  if (!has(base)) return take(base);
+
+  const m = TRAILING_NUM_RE.exec(base);
+  if (m) {
+    const prefix = m[1] ?? "";
+    const sep = m[2] || "_";
+    let n = Number(m[3]) + 1;
+    while (true) {
+      const cand = prefix ? `${prefix}${sep}${n}` : `p${n}`;
+      if (!has(cand)) return take(cand);
+      n++;
+    }
+  }
+
+  let i = 2;
+  while (true) {
+    const id = `${base}_${i}`;
+    if (!has(id)) return take(id);
+    i++;
+  }
 }
 
 export function defaultFittingEditorParams(catalog: FittingComponentSpecPublic[] | undefined): FittingEditorParams {
@@ -470,7 +522,10 @@ export function defaultFittingEditorParams(catalog: FittingComponentSpecPublic[]
     xps_region: "",
     param_links: [],
     recipe_id: "",
+    recipe_ids: [],
     recipe_pass_energy: undefined,
+    fit_min_x: null,
+    fit_max_x: null,
   };
 }
 
@@ -548,11 +603,18 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
   };
   if (region) out.xps_region = region;
   if (links.length) out.param_links = links;
-  const recipeId = String(fp.recipe_id ?? "").trim();
-  if (recipeId) out.recipe_id = recipeId;
+  const recipeIds = normalizeRecipeIds(fp.recipe_ids, String(fp.recipe_id ?? "").trim() || undefined);
+  if (recipeIds.length) {
+    out.recipe_id = recipeIds[0];
+    out.recipe_ids = recipeIds;
+  }
   if (typeof fp.recipe_pass_energy === "number" && Number.isFinite(fp.recipe_pass_energy)) {
     out.recipe_pass_energy = fp.recipe_pass_energy;
   }
+  const fitMin = optionalFiniteNumber(fp.fit_min_x);
+  const fitMax = optionalFiniteNumber(fp.fit_max_x);
+  if (fitMin != null) out.fit_min_x = fitMin;
+  if (fitMax != null) out.fit_max_x = fitMax;
   return out;
 }
 
@@ -563,16 +625,20 @@ export function migrateFittingParamsToEditor(
   if (isStructuredFittingParams(raw)) {
     const r = raw as FittingEditorParams;
     const legacyGlobalAuto = r.initial_guess_mode === "auto";
+    const recipe_id = typeof r.recipe_id === "string" ? r.recipe_id : "";
     return {
       ...r,
       initial_guess_mode: "default",
       xps_region: typeof r.xps_region === "string" ? r.xps_region : "",
       param_links: normalizeParamLinks(r.param_links),
-      recipe_id: typeof r.recipe_id === "string" ? r.recipe_id : "",
+      recipe_id,
+      recipe_ids: normalizeRecipeIds(r.recipe_ids, recipe_id || undefined),
       recipe_pass_energy:
         typeof r.recipe_pass_energy === "number" && Number.isFinite(r.recipe_pass_energy)
           ? r.recipe_pass_energy
           : undefined,
+      fit_min_x: optionalFiniteNumber(r.fit_min_x) ?? null,
+      fit_max_x: optionalFiniteNumber(r.fit_max_x) ?? null,
       components: r.components.map((c) => ({
         ...c,
         component_type: parseFittingComponentType(c.component_type),
@@ -603,10 +669,13 @@ export function migrateFittingParamsToEditor(
   const xps_region = typeof p.xps_region === "string" ? p.xps_region : "";
   const param_links = normalizeParamLinks(p.param_links);
   const recipe_id = typeof p.recipe_id === "string" ? p.recipe_id : "";
+  const recipe_ids = normalizeRecipeIds(p.recipe_ids, recipe_id || undefined);
   const recipe_pass_energy =
     typeof p.recipe_pass_energy === "number" && Number.isFinite(p.recipe_pass_energy)
       ? Number(p.recipe_pass_energy)
       : undefined;
+  const fit_min_x = optionalFiniteNumber(p.fit_min_x) ?? null;
+  const fit_max_x = optionalFiniteNumber(p.fit_max_x) ?? null;
   const comps = p.components;
   const p0 = p.p0;
   const lo = p.bounds_lower;
@@ -688,8 +757,11 @@ export function migrateFittingParamsToEditor(
     components: assignPeakNames(baseComps),
     xps_region,
     param_links,
-    recipe_id,
+    recipe_id: recipe_ids[0] ?? recipe_id,
+    recipe_ids,
     recipe_pass_energy,
+    fit_min_x,
+    fit_max_x,
   };
 }
 

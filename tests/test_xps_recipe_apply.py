@@ -109,3 +109,62 @@ def test_c1s_adventitious_searchable_and_apply_links() -> None:
     assert pos_links
     assert abs(float(pos_links[0]["offset"]) - 1.5) < 1e-9
     assert any(l["mode"] == "equal" and l["source_key"] == "fwhm" for l in out["param_links"])
+
+
+def test_unique_component_id_increments_trailing_number() -> None:
+    from sersflow.core.xps.recipe_apply import unique_component_id
+
+    used: set[str] = {"Peak_1", "Peak_2"}
+    assert unique_component_id("Peak_1", used) == "Peak_3"
+    assert unique_component_id("foo", used) == "foo"
+    assert unique_component_id("foo", used) == "foo_2"
+
+
+def test_merge_fitting_recipe_params_skips_second_baseline_and_renames() -> None:
+    from sersflow.core.preprocess.fitting_specs import component_param_specs
+    from sersflow.core.xps.recipe_apply import merge_fitting_recipe_params
+
+    a = apply_recipe_id("sc_2p_sc0", pass_energy=20, include_background=True)
+    b = apply_recipe_id("sc_2p_sc2o3", pass_energy=20, include_background=True)
+    a_peak = next(c for c in a["components"] if c["component_type"] != "shirley_bg")
+    b_peak = next(c for c in b["components"] if c["component_type"] != "shirley_bg")
+    old_b_id = b_peak["component_id"]
+    # Force a colliding peak id.
+    b2 = dict(b)
+    b2_comps = []
+    for c in b["components"]:
+        cc = dict(c)
+        if cc["component_id"] == old_b_id:
+            cc["component_id"] = a_peak["component_id"]
+        b2_comps.append(cc)
+    b2["components"] = b2_comps
+    new_links = []
+    for link in b.get("param_links") or []:
+        ll = dict(link)
+        if ll.get("source_component_id") == old_b_id:
+            ll["source_component_id"] = a_peak["component_id"]
+        if ll.get("target_component_id") == old_b_id:
+            ll["target_component_id"] = a_peak["component_id"]
+        new_links.append(ll)
+    b2["param_links"] = new_links
+
+    merged = merge_fitting_recipe_params(a, b2, skip_background_from_added=True)
+    types = [c["component_type"] for c in merged["components"]]
+    assert types.count("shirley_bg") == 1
+    assert types[0] == "shirley_bg"
+    assert len([t for t in types if t != "shirley_bg"]) == 4
+    ids = [c["component_id"] for c in merged["components"]]
+    assert len(ids) == len({i.lower() for i in ids})
+    assert merged["recipe_ids"] == ["sc_2p_sc0", "sc_2p_sc2o3"]
+    assert merged["recipe_id"] == "sc_2p_sc0"
+    assert ids.count(a_peak["component_id"]) == 1
+    assert any("renamed component" in w for w in merged.get("warnings") or [])
+    known = set(ids)
+    for link in merged.get("param_links") or []:
+        assert link["source_component_id"] in known
+        assert link["target_component_id"] in known
+    n = sum(len(component_param_specs(c["component_type"])) for c in merged["components"])
+    assert len(merged["p0"]) == n
+    assert len(merged["bounds_lower"]) == n
+    assert len(merged["bounds_upper"]) == n
+    assert len(merged["vary"]) == n
