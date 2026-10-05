@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   allBandAmplitudeAutosOn,
+  applyPeakShiftEv,
   defaultFittingEditorParams,
   flattenFittingForPipeline,
   migrateFittingParamsToEditor,
   parseInitialAreaRatios,
+  PEAK_SHIFT_STEP_EV,
   setBandAmplitudeAutos,
   syncAmpAutoBandsFlag,
   type FittingEditorParams,
@@ -114,5 +116,44 @@ describe("band amplitude auto master", () => {
       components: [{ ...fp.components[0]!, rows }, fp.components[1]!],
     });
     expect(fp.amp_auto_bands).toBe(false);
+  });
+});
+
+describe("peak shift", () => {
+  it("shifts peak pos seeds and bounds by delta and records cumulative shift", () => {
+    const base = twoPeakEditor();
+    const pos0 = base.components[0]!.rows.find((r) => r.key === "pos")!;
+    const withBounds: FittingEditorParams = {
+      ...base,
+      components: [
+        {
+          ...base.components[0]!,
+          rows: base.components[0]!.rows.map((r) =>
+            r.key === "pos" ? { ...r, p0: 780, lower: 778, upper: 782 } : r
+          ),
+        },
+        base.components[1]!,
+      ],
+      peak_shift_eV: 0,
+    };
+    const next = applyPeakShiftEv(withBounds, PEAK_SHIFT_STEP_EV);
+    expect(next.peak_shift_eV).toBe(0.2);
+    const pos = next.components[0]!.rows.find((r) => r.key === "pos")!;
+    expect(pos.p0).toBeCloseTo(780.2);
+    expect(pos.lower).toBeCloseTo(778.2);
+    expect(pos.upper).toBeCloseTo(782.2);
+    expect(pos0.p0).not.toBe(pos.p0);
+
+    const back = applyPeakShiftEv(next, 0);
+    expect(back.peak_shift_eV).toBe(0);
+    const posBack = back.components[0]!.rows.find((r) => r.key === "pos")!;
+    expect(posBack.p0).toBeCloseTo(780);
+  });
+
+  it("flatten persists non-zero peak_shift_eV", () => {
+    const flat = flattenFittingForPipeline({ ...twoPeakEditor(), peak_shift_eV: -0.4 });
+    expect(flat.peak_shift_eV).toBe(-0.4);
+    const ed = migrateFittingParamsToEditor(flat, undefined);
+    expect(ed.peak_shift_eV).toBe(-0.4);
   });
 });

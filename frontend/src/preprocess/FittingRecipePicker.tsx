@@ -9,6 +9,7 @@ import {
   type FittingRecipeIndexItem,
 } from "./api";
 import {
+  applyPeakShiftEv,
   defaultFittingEditorParams,
   isPeakComponentType,
   isXpsBgComponentType,
@@ -118,6 +119,7 @@ export function mergeRecipeApplyIntoEditor(
     fit_min_x: current.fit_min_x ?? null,
     fit_max_x: current.fit_max_x ?? null,
     initial_area_ratios: ratios,
+    peak_shift_eV: 0,
   };
   // Recipe apply: enable band amp Auto so chord+ratio guess runs on next fit.
   return setBandAmplitudeAutos(base, true);
@@ -151,7 +153,14 @@ export function appendRecipeApplyIntoEditor(
   }
 
   const idMap = new Map<string, string>();
-  const addedComps = migrated.components
+  const curShift =
+    typeof current.peak_shift_eV === "number" && Number.isFinite(current.peak_shift_eV)
+      ? current.peak_shift_eV
+      : 0;
+  // Newly applied peaks are at recipe BE (shift 0); align them to the editor's cumulative shift.
+  const migratedShifted =
+    curShift !== 0 ? applyPeakShiftEv({ ...migrated, peak_shift_eV: 0 }, curShift) : migrated;
+  const addedComps = migratedShifted.components
     .filter((c) => !isXpsBgComponentType(c.component_type))
     .map((c) => {
       const oldId = String(c.component_id ?? "").trim() || "p";
@@ -203,6 +212,7 @@ export function appendRecipeApplyIntoEditor(
     recipe_pass_energy: applied.recipe_pass_energy ?? current.recipe_pass_energy,
     initial_guess_mode: "default",
     initial_area_ratios,
+    peak_shift_eV: curShift,
   };
   return setBandAmplitudeAutos(base, true);
 }

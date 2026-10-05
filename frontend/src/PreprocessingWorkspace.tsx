@@ -76,6 +76,8 @@ import {
   parseFittingComponentType,
   parseInitialAreaRatios,
   regionSubsetDisplayName,
+  applyPeakShiftEv,
+  PEAK_SHIFT_STEP_EV,
   setBandAmplitudeAutos,
   spectrumRegionMatchesPicks,
   syncAmpAutoBandsFlag,
@@ -2055,6 +2057,56 @@ export default function PreprocessingWorkspace() {
                           </div>
                         );
                       })()}
+                      <label
+                        className="inline"
+                        style={{ margin: 0, gap: "6px", alignItems: "center" }}
+                        title="Rigid BE shift applied to all peak positions (and pos bounds) relative to the recipe. Useful when charge/calibration offset leaves recipe seeds slightly off."
+                      >
+                        Peak shift (eV):
+                        <DraftNumberInput
+                          value={
+                            typeof fp.peak_shift_eV === "number" && Number.isFinite(fp.peak_shift_eV)
+                              ? fp.peak_shift_eV
+                              : 0
+                          }
+                          onChange={(n) =>
+                            updateSelectedFittingParams(
+                              applyPeakShiftEv(fp, typeof n === "number" && Number.isFinite(n) ? n : 0)
+                            )
+                          }
+                          style={{ width: "72px" }}
+                        />
+                        <span style={{ display: "inline-flex", gap: "2px" }}>
+                          <button
+                            type="button"
+                            className="mini"
+                            title={`Decrease by ${PEAK_SHIFT_STEP_EV} eV`}
+                            onClick={() => {
+                              const cur =
+                                typeof fp.peak_shift_eV === "number" && Number.isFinite(fp.peak_shift_eV)
+                                  ? fp.peak_shift_eV
+                                  : 0;
+                              updateSelectedFittingParams(applyPeakShiftEv(fp, cur - PEAK_SHIFT_STEP_EV));
+                            }}
+                          >
+                            ▼
+                          </button>
+                          <button
+                            type="button"
+                            className="mini"
+                            title={`Increase by ${PEAK_SHIFT_STEP_EV} eV`}
+                            onClick={() => {
+                              const cur =
+                                typeof fp.peak_shift_eV === "number" && Number.isFinite(fp.peak_shift_eV)
+                                  ? fp.peak_shift_eV
+                                  : 0;
+                              updateSelectedFittingParams(applyPeakShiftEv(fp, cur + PEAK_SHIFT_STEP_EV));
+                            }}
+                          >
+                            ▲
+                          </button>
+                        </span>
+                      </label>
                       {fittingModelsQ.isLoading ? <div className="hint">Loading model catalog…</div> : null}
                       {fittingModelsQ.isError ? (
                         <div className="err">Could not load /fitting/models: {String((fittingModelsQ.error as Error)?.message ?? fittingModelsQ.error)}</div>

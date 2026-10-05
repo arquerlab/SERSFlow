@@ -335,7 +335,49 @@ export type FittingEditorParams = {
    * Used only when band amplitude Auto is on (initial guess; not locked).
    */
   initial_area_ratios?: string;
+  /**
+   * Cumulative rigid shift (eV) applied to all peak ``pos`` seeds/bounds vs the
+   * last recipe apply (0 = recipe BE as applied).
+   */
+  peak_shift_eV?: number;
 };
+
+/** Step used by Peak shift ▲/▼ controls. */
+export const PEAK_SHIFT_STEP_EV = 0.2;
+
+/**
+ * Set cumulative peak BE shift. Adjusts every peak ``pos`` p0 and bounds by
+ * ``nextShift - previous peak_shift_eV`` (relative links keep their offsets).
+ */
+export function applyPeakShiftEv(fp: FittingEditorParams, nextShiftRaw: number): FittingEditorParams {
+  const prev =
+    typeof fp.peak_shift_eV === "number" && Number.isFinite(fp.peak_shift_eV) ? fp.peak_shift_eV : 0;
+  const next = Number.isFinite(nextShiftRaw) ? Math.round(Number(nextShiftRaw) * 1000) / 1000 : 0;
+  const d = next - prev;
+  if (Math.abs(d) < 1e-12) {
+    return fp.peak_shift_eV === next ? fp : { ...fp, peak_shift_eV: next };
+  }
+  const components = fp.components.map((c) => {
+    if (!isPeakComponentType(c.component_type)) return c;
+    return {
+      ...c,
+      rows: c.rows.map((row) => {
+        if (String(row.key).trim().toLowerCase() !== "pos") return row;
+        const lower =
+          row.lower != null && Number.isFinite(row.lower) ? Number(row.lower) + d : row.lower;
+        const upper =
+          row.upper != null && Number.isFinite(row.upper) ? Number(row.upper) + d : row.upper;
+        return {
+          ...row,
+          p0: Number(row.p0) + d,
+          lower,
+          upper,
+        };
+      }),
+    };
+  });
+  return { ...fp, components, peak_shift_eV: next };
+}
 
 function optionalFiniteNumber(v: unknown): number | null | undefined {
   if (v === null) return null;
@@ -616,6 +658,7 @@ export function defaultFittingEditorParams(catalog: FittingComponentSpecPublic[]
     fit_max_x: null,
     amp_auto_bands: false,
     initial_area_ratios: "",
+    peak_shift_eV: 0,
   };
 }
 
@@ -710,6 +753,9 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
   if (fp.amp_auto_bands) out.amp_auto_bands = true;
   const ratios = String(fp.initial_area_ratios ?? "").trim();
   if (ratios && fp.amp_auto_bands) out.initial_area_ratios = ratios;
+  const peakShift =
+    typeof fp.peak_shift_eV === "number" && Number.isFinite(fp.peak_shift_eV) ? fp.peak_shift_eV : 0;
+  if (peakShift !== 0) out.peak_shift_eV = peakShift;
   return out;
 }
 
@@ -756,6 +802,8 @@ export function migrateFittingParamsToEditor(
       fit_min_x: optionalFiniteNumber(r.fit_min_x) ?? null,
       fit_max_x: optionalFiniteNumber(r.fit_max_x) ?? null,
       initial_area_ratios: typeof r.initial_area_ratios === "string" ? r.initial_area_ratios : "",
+      peak_shift_eV:
+        typeof r.peak_shift_eV === "number" && Number.isFinite(r.peak_shift_eV) ? r.peak_shift_eV : 0,
       components,
       amp_auto_bands: Boolean(r.amp_auto_bands),
     };
@@ -782,6 +830,8 @@ export function migrateFittingParamsToEditor(
   const fit_max_x = optionalFiniteNumber(p.fit_max_x) ?? null;
   const amp_auto_bands_raw = p.amp_auto_bands === true;
   const initial_area_ratios = typeof p.initial_area_ratios === "string" ? p.initial_area_ratios : "";
+  const peak_shift_eV =
+    typeof p.peak_shift_eV === "number" && Number.isFinite(p.peak_shift_eV) ? Number(p.peak_shift_eV) : 0;
   const comps = p.components;
   const p0 = p.p0;
   const lo = p.bounds_lower;
@@ -871,6 +921,7 @@ export function migrateFittingParamsToEditor(
     fit_max_x,
     amp_auto_bands: amp_auto_bands_raw,
     initial_area_ratios,
+    peak_shift_eV,
   };
   return syncAmpAutoBandsFlag({
     ...migrated,
