@@ -628,17 +628,42 @@ export function migrateFittingParamsToEditor(
         : 2;
     const { keys, labels } = paramKeysForComponent(component_type, degree, catalog);
     const n = keys.length;
+    const remaining = (p0 as unknown[]).length - off;
+    // Legacy fermi_edge was 4 params (no const floor); catalog now expects 5.
+    const padConst =
+      component_type === "fermi_edge" &&
+      n >= 1 &&
+      keys[n - 1] === "const" &&
+      remaining === n - 1;
+    const take = padConst ? n - 1 : n;
+    if (remaining < take) {
+      return defaultFittingEditorParams(catalog);
+    }
+    const defaults = defaultRowsForComponent(component_type, degree, catalog);
+    const defByKey = new Map(defaults.map((r) => [r.key, r]));
     const rows: FittingParamRow[] = [];
     for (let i = 0; i < n; i++) {
       const k = keys[i]!;
-      const pv = p0[off + i];
-      const lv = lo[off + i];
-      const uv = hi[off + i];
-      const vv = Array.isArray(varyRaw) ? varyRaw[off + i] : true;
-      const p0Val = typeof pv === "number" && Number.isFinite(pv) ? pv : 0;
+      const missing = i >= take;
+      const pv = missing ? undefined : p0[off + i];
+      const lv = missing ? defByKey.get(k)?.lower : lo[off + i];
+      const uv = missing ? defByKey.get(k)?.upper : hi[off + i];
+      const vv = missing
+        ? defByKey.get(k)?.vary !== false
+        : Array.isArray(varyRaw)
+          ? varyRaw[off + i]
+          : true;
+      const p0Val =
+        typeof pv === "number" && Number.isFinite(pv)
+          ? pv
+          : (defByKey.get(k)?.p0 ?? 0);
       const wantAuto =
         isAutoAmplitudeParam(component_type, k) &&
-        (legacyGlobalAuto || !(typeof pv === "number") || !Number.isFinite(pv) || pv <= 0);
+        (legacyGlobalAuto ||
+          missing ||
+          !(typeof pv === "number") ||
+          !Number.isFinite(pv) ||
+          pv <= 0);
       rows.push({
         key: k,
         label: labels.get(k) ?? k,
@@ -649,7 +674,7 @@ export function migrateFittingParamsToEditor(
         ...(wantAuto ? { auto: true } : {}),
       });
     }
-    off += n;
+    off += take;
     out.push({ component_id, component_type, degree, rows });
   }
   if (off !== (p0 as unknown[]).length) {

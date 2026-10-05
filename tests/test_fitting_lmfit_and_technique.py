@@ -41,6 +41,40 @@ def test_xps_fermi_edge_smoke() -> None:
     assert const > 1.0
 
 
+def test_xps_fermi_edge_migrates_legacy_4param_p0() -> None:
+    """Saved pipelines from before const-floor still fit (pad const=0 auto)."""
+    pytest.importorskip("lmfitxps")
+    from lmfitxps.models import fermi_edge
+
+    from sersflow.core.preprocess.fitting import fit_problem_from_step_params
+    from sersflow.core.spectrum import XY
+
+    kb = 8.617333262145e-5
+    x = np.linspace(-2.0, 2.0, 201)
+    y = fermi_edge(x, amplitude=150.0, center=0.0, kt=kb * 298.0, sigma=0.2) + 3.0
+    y = y + np.random.default_rng(2).normal(0.0, 0.4, size=y.shape)
+    params = {
+        "components": [{"component_id": "Fermi_edge", "component_type": "fermi_edge"}],
+        "p0": [0.0, 0.0, 0.25, 298.0],
+        "bounds_lower": [0.0, -3.0, 0.05, None],
+        "bounds_upper": [1.0e7, 3.0, 0.4, None],
+        "vary": [True, True, True, False],
+        "technique_family": "xps",
+        "initial_guess_mode": "default",
+    }
+    prob = fit_problem_from_step_params(XY(x=x, y=y), params)
+    assert prob is not None
+    assert len(prob.p0) == 5
+    assert prob.p0[-1] == 0.0
+    assert len(prob.bounds_lower) == 5 and len(prob.bounds_upper) == 5
+    assert prob.vary is not None and len(prob.vary) == 5 and prob.vary[-1] is True
+    res = fit_curve(prob)
+    amp, _center, _sigma, temp, const = [float(v) for v in res.p_opt]
+    assert amp > 50.0
+    assert abs(temp - 298.0) < 1e-6
+    assert const > 1.0
+
+
 def test_vibrational_engine_rejects_xps_background() -> None:
     x = np.linspace(0.0, 10.0, 40)
     y = np.ones_like(x)

@@ -8,8 +8,81 @@ from scipy.optimize import curve_fit
 import inspect
 
 from sersflow.core.preprocess.fit_diagnostics import FitDiagnostics, compute_fit_diagnostics
-from sersflow.core.preprocess.fitting_specs import PEAK_COMPONENT_TYPES, build_component_function
+from sersflow.core.preprocess.fitting_specs import (
+    PEAK_COMPONENT_TYPES,
+    build_component_function,
+    component_param_specs,
+)
 from sersflow.core.spectrum import XY
+
+
+def _migrate_fitting_param_vectors(
+    components: list[FitComponent],
+    p0: list[float],
+    lo: list[float | None],
+    hi: list[float | None],
+    vary: list[bool] | None,
+) -> tuple[list[float], list[float | None], list[float | None], list[bool] | None]:
+    """
+    Pad legacy per-component vectors when the catalog gained trailing parameters.
+
+    Notably: ``fermi_edge`` used to be amplitude/center/sigma/temperature_K (4);
+    it now includes a trailing ``const`` intensity floor (5). Old saved pipelines
+    omit that slot — pad with auto-sentinel 0 / default bounds so fits still run.
+    """
+    out_p0: list[float] = []
+    out_lo: list[float | None] = []
+    out_hi: list[float | None] = []
+    out_vary: list[bool] | None = [] if vary is not None else None
+    src = 0
+    for comp in components:
+        specs = component_param_specs(comp.component_type, degree=comp.degree)
+        n = len(specs)
+        remaining = len(p0) - src
+        take = n
+        pad_keys: list[str] = []
+        # Legacy fermi_edge without const (exactly one trailing param missing).
+        if (
+            comp.component_type.strip().lower() == "fermi_edge"
+            and n >= 1
+            and specs[-1].key == "const"
+            and remaining == n - 1
+        ):
+            take = n - 1
+            pad_keys = ["const"]
+        elif remaining < n:
+            raise ValueError(
+                f"p0 length mismatch for component {comp.component_id!r} "
+                f"({comp.component_type}): need {n} params, have {remaining} remaining"
+            )
+        for i in range(take):
+            out_p0.append(float(p0[src + i]))
+            out_lo.append(None if lo[src + i] is None else float(lo[src + i]))
+            out_hi.append(None if hi[src + i] is None else float(hi[src + i]))
+            if out_vary is not None:
+                if vary is None or src + i >= len(vary):
+                    out_vary.append(True)
+                else:
+                    out_vary.append(bool(vary[src + i]))
+        src += take
+        for key in pad_keys:
+            spec = next(s for s in specs if s.key == key)
+            out_p0.append(float(spec.default if spec.default is not None else 0.0))
+            out_lo.append(spec.lower_default)
+            out_hi.append(spec.upper_default)
+            if out_vary is not None:
+                vary_default = True
+                ui = spec.ui or {}
+                if ui.get("vary_default") is False:
+                    vary_default = False
+                out_vary.append(vary_default)
+    if src != len(p0):
+        raise ValueError(f"p0 length mismatch: consumed {src}, got {len(p0)}")
+    if len(lo) < src or len(hi) < src:
+        raise ValueError(
+            f"bounds length mismatch: expected at least {src}, got lo={len(lo)}, hi={len(hi)}"
+        )
+    return out_p0, out_lo, out_hi, out_vary
 
 
 @dataclass(frozen=True)
@@ -149,6 +222,11 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
     if isinstance(vary_raw, list) and vary_raw:
         vary = [bool(v) for v in vary_raw]
 
+    p0_f = [float(x) for x in p0]
+    lo_f = [None if v is None else float(v) for v in lo]
+    hi_f = [None if v is None else float(v) for v in hi]
+    p0_f, lo_f, hi_f, vary = _migrate_fitting_param_vectors(components, p0_f, lo_f, hi_f, vary)
+
     links_raw = params.get("param_links")
     param_links: list[dict[str, Any]] | None = None
     if isinstance(links_raw, list) and links_raw:
@@ -171,9 +249,9 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
         x=xy.x.astype(float, copy=False),
         y=xy.y.astype(float, copy=False),
         components=components,
-        p0=[float(x) for x in p0],
-        bounds_lower=[None if v is None else float(v) for v in lo],
-        bounds_upper=[None if v is None else float(v) for v in hi],
+        p0=p0_f,
+        bounds_lower=lo_f,
+        bounds_upper=hi_f,
         initial_guess_mode=igm,
         technique_family=tech,
         vary=vary,
