@@ -19,8 +19,9 @@ from sersflow.api.schemas.fitting import (
 from sersflow.api.services.fit_diagnostics_public import diagnostics_to_public
 from sersflow.api.services.uploads import resolve_existing_upload
 from sersflow.core.io.load_file import load_dataset
-from sersflow.core.preprocess.fitting import FitComponent, FitProblem, fit_curve
-from sersflow.core.preprocess.fitting_specs import component_param_specs, list_component_types
+from sersflow.core.preprocess.fitting import expand_fit_curves_to_full, fit_curve, fit_problem_from_step_params
+from sersflow.core.preprocess.fitting_specs import list_component_types
+from sersflow.core.spectrum import XY
 
 
 router = APIRouter(prefix="/fitting", tags=["Fitting"])
@@ -75,48 +76,53 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
     try:
         x, y = _resolve_target(payload.target, owner_user_id=user_id)
-
-        components = [
-            FitComponent(component_type=c.component_type, component_id=c.component_id, degree=c.degree)
-            for c in payload.components
-        ]
-
-        # Determine expected parameter count from component specs
-        # (use component_param_specs — build_component_function rejects XPS backgrounds)
-        total = 0
-        per_comp_param_keys: list[list[str]] = []
-        for c in payload.components:
-            params = component_param_specs(c.component_type, degree=c.degree)
-            total += len(params)
-            per_comp_param_keys.append([p.key for p in params])
+        xy = XY(x=np.asarray(x, dtype=float), y=np.asarray(y, dtype=float))
 
         if not payload.p0:
             raise ValueError("p0 is required (use /fitting/models to build the correct length/order)")
-        if len(payload.bounds.lower) != total or len(payload.bounds.upper) != total:
-            raise ValueError("bounds.lower/upper must match total parameter count")
 
-        prob = FitProblem(
-            x=x,
-            y=y,
-            components=components,
-            p0=list(payload.p0),
-            bounds_lower=list(payload.bounds.lower),
-            bounds_upper=list(payload.bounds.upper),
-            initial_guess_mode=str(payload.initial_guess_mode),
-            technique_family=str(payload.technique_family or "vibrational"),
-            vary=list(payload.vary) if payload.vary is not None else None,
-            param_links=list(payload.param_links) if payload.param_links else None,
-            xps_region=(str(payload.xps_region).strip() or None) if payload.xps_region else None,
-        )
+        step_params: dict[str, Any] = {
+            "components": [
+                {
+                    "component_id": c.component_id,
+                    "component_type": c.component_type,
+                    **({"degree": c.degree} if c.degree is not None else {}),
+                }
+                for c in payload.components
+            ],
+            "p0": list(payload.p0),
+            "bounds_lower": list(payload.bounds.lower),
+            "bounds_upper": list(payload.bounds.upper),
+            "initial_guess_mode": str(payload.initial_guess_mode),
+            "technique_family": str(payload.technique_family or "vibrational"),
+        }
+        if payload.vary is not None:
+            step_params["vary"] = list(payload.vary)
+        if payload.param_links:
+            step_params["param_links"] = list(payload.param_links)
+        if payload.xps_region is not None and str(payload.xps_region).strip():
+            step_params["xps_region"] = str(payload.xps_region).strip()
+        if payload.fit_min_x is not None:
+            step_params["fit_min_x"] = float(payload.fit_min_x)
+        if payload.fit_max_x is not None:
+            step_params["fit_max_x"] = float(payload.fit_max_x)
+
+        prob = fit_problem_from_step_params(xy, step_params)
+        if prob is None:
+            raise ValueError("empty spectrum (or empty fit window)")
         res = fit_curve(prob)
 
-        # Unflatten params into per-component dicts
+        y_hat_full, comps_full = expand_fit_curves_to_full(
+            xy, step_params, res.y_hat, res.component_y_hat
+        )
+        y_in = xy.y.astype(float)
+
         comps_out = []
         for idx, m in enumerate(res.mapping):
             s, e = m["index_range"]
             keys = m["param_keys"]
             vals = res.p_opt[s:e].astype(float).tolist()
-            yc = res.component_y_hat[idx].astype(float).tolist() if payload.return_curve else None
+            yc = comps_full[idx].astype(float).tolist() if payload.return_curve else None
             comps_out.append(
                 {
                     "component_id": m["component_id"],
@@ -131,10 +137,8 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
         return {
             "params_vector": res.p_opt.astype(float).tolist(),
             "components": comps_out,
-            "y_hat": res.y_hat.astype(float).tolist() if payload.return_curve else None,
-            "residual": (prob.y.astype(float) - res.y_hat.astype(float)).tolist()
-            if payload.return_curve
-            else None,
+            "y_hat": y_hat_full.astype(float).tolist() if payload.return_curve else None,
+            "residual": (y_in - y_hat_full).astype(float).tolist() if payload.return_curve else None,
             "diagnostics": diagnostics_to_public(res.diagnostics),
         }
     except HTTPException:

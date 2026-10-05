@@ -483,6 +483,10 @@ export type FitRequest = {
     offset?: number;
   }>;
   xps_region?: string | null;
+  /** Optional internal fit window lower bound (inclusive). */
+  fit_min_x?: number | null;
+  /** Optional internal fit window upper bound (inclusive). */
+  fit_max_x?: number | null;
 };
 
 export type FitComponentResult = {

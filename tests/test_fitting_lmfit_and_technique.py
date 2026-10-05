@@ -302,3 +302,45 @@ def test_fitting_fit_api_accepts_shirley_bg_when_xps() -> None:
     assert body["components"][0]["component_type"] == "shirley_bg"
     assert body["y_hat"] is not None
     assert len(body["y_hat"]) == len(x)
+
+
+def test_fitting_fit_api_respects_fit_window() -> None:
+    """Preprocess preview uses /fitting/fit; fit_min_x/fit_max_x must crop the optimizer."""
+    from fastapi.testclient import TestClient
+
+    from sersflow.api.main import app
+
+    x = np.linspace(400.0, 600.0, 201)
+    y = 100.0 * np.exp(-((x - 500.0) ** 2) / (8.0**2 / 4.0 / np.log(2.0))) + 5.0
+    y = y.copy()
+    y[x < 480.0] = -123.0
+    y[x > 520.0] = -456.0
+    client = TestClient(app)
+    r = client.post(
+        "/fitting/fit",
+        json={
+            "target": {"kind": "inline", "x": x.tolist(), "y": y.tolist()},
+            "components": [{"component_id": "g1", "component_type": "gaussian"}],
+            "p0": [500.0, 80.0, 10.0],
+            "bounds": {
+                "lower": [480.0, 0.0, 1e-6],
+                "upper": [520.0, None, 50.0],
+            },
+            "return_curve": True,
+            "technique_family": "vibrational",
+            "fit_min_x": 480.0,
+            "fit_max_x": 520.0,
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    y_hat = np.asarray(body["y_hat"], dtype=float)
+    assert y_hat.shape == x.shape
+    # Outside the window: passthrough original y (not a full-range model evaluation).
+    assert np.allclose(y_hat[x < 480.0], -123.0)
+    assert np.allclose(y_hat[x > 520.0], -456.0)
+    assert float(np.max(y_hat[(x >= 480.0) & (x <= 520.0)])) > 50.0
+    # Residual outside window ~ 0.
+    resid = np.asarray(body["residual"], dtype=float)
+    assert np.allclose(resid[x < 480.0], 0.0)
+    assert np.allclose(resid[x > 520.0], 0.0)

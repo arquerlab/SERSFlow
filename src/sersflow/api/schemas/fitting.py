@@ -80,6 +80,10 @@ class FitRequest(BaseModel):
     vary: list[bool] | None = None
     param_links: list[dict[str, Any]] | None = None
     xps_region: str | None = None
+    fit_min_x: float | None = None
+    """Optional internal fit window lower bound (inclusive)."""
+    fit_max_x: float | None = None
+    """Optional internal fit window upper bound (inclusive)."""
 
 
 class FitComponentResult(BaseModel):
