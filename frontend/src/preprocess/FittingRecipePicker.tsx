@@ -23,18 +23,28 @@ import type { FittingComponentSpecPublic } from "./api";
 import { preferPassEnergy } from "./passEnergyUtils";
 
 const INDEX_LIMIT = 200;
-const DROPDOWN_CAP = 25;
+/** Max rows shown in the type-ahead panel (must cover all O 1s packs, etc.). */
+const DROPDOWN_CAP = 80;
 
 /** Normalize for fuzzy match: "C 1s" / "C1s" / "C_1s" → "c1s". */
-function normalizeRecipeNeedle(s: string): string {
+export function normalizeRecipeNeedle(s: string): string {
   return s.trim().toLowerCase().replace(/[\s_\-/]+/g, "");
 }
 
-function filterIndex(items: FittingRecipeIndexItem[], q: string): FittingRecipeIndexItem[] {
+export function filterIndex(items: FittingRecipeIndexItem[], q: string): FittingRecipeIndexItem[] {
   const raw = q.trim().toLowerCase();
   if (!raw) {
     return items.slice(0, DROPDOWN_CAP);
   }
+
+  // Element chip / exact symbol: "O" must not match every oxide formula (NiO, Cr2O3…).
+  const elements = new Set(
+    items.map((it) => String(it.element || "").trim().toLowerCase()).filter(Boolean)
+  );
+  if (elements.has(raw)) {
+    return items.filter((it) => String(it.element || "").trim().toLowerCase() === raw);
+  }
+
   const needle = normalizeRecipeNeedle(raw);
   const matched = items.filter((it) => {
     const parts = [
@@ -370,7 +380,7 @@ export function FittingRecipePicker({
       const el = String(it.element || "").trim();
       if (el) set.add(el);
     }
-    return [...set].sort().slice(0, 12);
+    return [...set].sort((a, b) => a.localeCompare(b));
   }, [items]);
 
   const selectedId = loadedRecipeIds.length === 1 ? loadedRecipeIds[0]! : "";

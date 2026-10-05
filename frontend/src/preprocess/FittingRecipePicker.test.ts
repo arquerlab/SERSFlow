@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   appendRecipeApplyIntoEditor,
+  filterIndex,
   mergeRecipeApplyIntoEditor,
   removeRecipeFromEditor,
 } from "./FittingRecipePicker";
@@ -9,7 +10,7 @@ import {
   uniqueComponentIdAgainst,
   type FittingEditorParams,
 } from "./fittingUtils";
-import type { FittingRecipeApplyResponse } from "./api";
+import type { FittingRecipeApplyResponse, FittingRecipeIndexItem } from "./api";
 
 function fakeApply(partial: Partial<FittingRecipeApplyResponse>): FittingRecipeApplyResponse {
   return {
@@ -26,6 +27,52 @@ function fakeApply(partial: Partial<FittingRecipeApplyResponse>): FittingRecipeA
     ...partial,
   };
 }
+
+function fakeIndexItem(partial: Partial<FittingRecipeIndexItem>): FittingRecipeIndexItem {
+  return {
+    id: "x",
+    element: "O",
+    region: "O_1s",
+    compound: "Ni(II) NiO",
+    source_table: "3.7",
+    pass_energies: [10, 20],
+    label: "Ni(II) NiO · O 1s · table 3.7",
+    aliases: [],
+    ...partial,
+  };
+}
+
+describe("filterIndex element exact match", () => {
+  const items = [
+    fakeIndexItem({ id: "o_nio", element: "O", compound: "Ni(II) NiO", region: "O_1s" }),
+    fakeIndexItem({ id: "o_feo", element: "O", compound: "Fe(II) FeO", region: "O_1s" }),
+    fakeIndexItem({
+      id: "ni_nio",
+      element: "Ni",
+      compound: "Ni(II) NiO",
+      region: "Ni_2p3/2",
+      label: "Ni(II) NiO · Ni 2p3/2",
+    }),
+    fakeIndexItem({
+      id: "fe_feo",
+      element: "Fe",
+      compound: "Fe(II) FeO",
+      region: "Fe_2p3/2",
+      label: "Fe(II) FeO · Fe 2p3/2",
+    }),
+  ];
+
+  it("O chip returns only element=O recipes, not every oxide formula", () => {
+    const matched = filterIndex(items, "O");
+    expect(matched.map((m) => m.id).sort()).toEqual(["o_feo", "o_nio"]);
+  });
+
+  it("still finds O 1s by region query", () => {
+    const matched = filterIndex(items, "O 1s");
+    expect(matched.every((m) => m.element === "O")).toBe(true);
+    expect(matched.length).toBe(2);
+  });
+});
 
 describe("uniqueComponentIdAgainst", () => {
   it("increments trailing numbers and falls back to _N", () => {

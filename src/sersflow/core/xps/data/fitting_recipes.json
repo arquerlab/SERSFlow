@@ -7035,10 +7035,27 @@
               "m": 30
             }
           }
+        },
+        {
+          "index": 4,
+          "label": "physisorbed_water",
+          "be_eV": 533.5,
+          "delta_eV": null,
+          "area_pct": 8.0,
+          "fwhm_10": 1.21,
+          "fwhm_20": null,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
         }
       ],
       "footnotes": [
-        "Selected O 1s values for Chapter 3 compounds"
+        "Selected O 1s values for Chapter 3 compounds",
+        "Footnote a: higher binding energy peak at 533.5 eV (1.21 eV FWHM), 8% ascribed to physisorbed water"
       ]
     },
     {

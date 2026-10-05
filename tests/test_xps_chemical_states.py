@@ -48,6 +48,37 @@ def test_biesinger_literature_merged() -> None:
     assert len(cu) >= 1
 
 
+def test_biesinger_o1s_tables_2_11_and_3_7_merged() -> None:
+    load_chemical_states_catalog.cache_clear()
+    o = list_chemical_state_entries(element="O", line="1s", provenance="biesinger_thesis")
+    assert len(o) >= 80
+    by_table = {e.source_detail for e in o}
+    assert "Table 2.11" in by_table
+    assert "Table 3.7" in by_table
+    compounds_37 = {e.compound for e in o if e.source_detail == "Table 3.7"}
+    assert "Ni(II) NiO" in compounds_37
+    assert any("FeOOH" in c and "\u03b3" in c for c in compounds_37)
+    assert len(compounds_37) == 27
+    gamma = [
+        e
+        for e in o
+        if "FeOOH" in e.compound and "\u03b3" in e.compound and e.phase == "physisorbed water"
+    ]
+    assert any(abs(e.value_eV - 533.5) < 1e-6 for e in gamma)
+
+
+def test_table_3_7_o1s_fitting_recipes_complete() -> None:
+    load_fitting_recipes_catalog.cache_clear()
+    fits = list_compound_fits(source_table="3.7", region="O_1s")
+    assert len(fits) == 27
+    ids = {f.id for f in fits}
+    assert "o_1s_ch3_nio" in ids
+    assert "o_1s_ch3_gamma_feooh" in ids
+    gamma = next(f for f in fits if f.id == "o_1s_ch3_gamma_feooh")
+    labels = [str(p.get("label")) for p in gamma.peaks]
+    assert "physisorbed_water" in labels
+
+
 def test_ag_3d_and_al2p_lookups() -> None:
     load_chemical_states_catalog.cache_clear()
     ag3d = list_chemical_state_entries(element="Ag", line="3d")
