@@ -568,6 +568,7 @@ export type FittingRecipeApplyResponse = {
     scale?: number;
     offset?: number;
   }>;
+  initial_area_ratios?: string | null;
   warnings: string[];
 };
 

@@ -67,14 +67,18 @@ import {
   PEAK_TYPE_LABELS,
   ALL_VALENCE_BANDS_REGION,
   XPS_REGION_PRESETS,
+  countPeakComponents,
   defaultFittingEditorParams,
   defaultRowsForComponent,
   findParamLink,
   isAutoAmplitudeParam,
   migrateFittingParamsToEditor,
   parseFittingComponentType,
+  parseInitialAreaRatios,
   regionSubsetDisplayName,
+  setBandAmplitudeAutos,
   spectrumRegionMatchesPicks,
+  syncAmpAutoBandsFlag,
   upsertParamLink,
   xpsBgComponentTypesFromCatalog,
   xpsBgTypeLabel,
@@ -1994,6 +1998,63 @@ export default function PreprocessingWorkspace() {
                           />
                         </span>
                       </label>
+                      {(() => {
+                        const nPeaks = countPeakComponents(fp);
+                        const ratiosParsed = parseInitialAreaRatios(fp.initial_area_ratios);
+                        const ratiosHint =
+                          fp.amp_auto_bands &&
+                          ratiosParsed.ok &&
+                          ratiosParsed.ratios.length > 0 &&
+                          ratiosParsed.ratios.length !== nPeaks
+                            ? `Need ${nPeaks} ratio${nPeaks === 1 ? "" : "s"} (got ${ratiosParsed.ratios.length})`
+                            : !ratiosParsed.ok && String(fp.initial_area_ratios ?? "").trim()
+                              ? ratiosParsed.error
+                              : null;
+                        return (
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: "10px 16px",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                            }}
+                          >
+                            <label
+                              className="inline"
+                              style={{ margin: 0, gap: "6px" }}
+                              title="Estimate peak amplitudes from chord height above the fit-window endpoints (and optional area ratios)"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={Boolean(fp.amp_auto_bands)}
+                                onChange={(e) =>
+                                  updateSelectedFittingParams(setBandAmplitudeAutos(fp, e.target.checked))
+                                }
+                              />
+                              Auto-guess for bands amplitude
+                            </label>
+                            <label
+                              className="inline"
+                              style={{ margin: 0, gap: "6px", alignItems: "center", opacity: fp.amp_auto_bands ? 1 : 0.55 }}
+                              title="Optional Area1:Area2:… for peak components in list order (initial guess only)"
+                            >
+                              Initial area ratios:
+                              <input
+                                type="text"
+                                placeholder="e.g. 1:0.6:0.3"
+                                value={fp.initial_area_ratios ?? ""}
+                                disabled={!fp.amp_auto_bands}
+                                onChange={(e) =>
+                                  updateSelectedFittingParams({ ...fp, initial_area_ratios: e.target.value })
+                                }
+                                style={{ width: "120px" }}
+                              />
+                            </label>
+                            {ratiosHint ? <div className="hint" style={{ color: "var(--err, #b00020)" }}>{ratiosHint}</div> : null}
+                          </div>
+                        );
+                      })()}
                       {fittingModelsQ.isLoading ? <div className="hint">Loading model catalog…</div> : null}
                       {fittingModelsQ.isError ? (
                         <div className="err">Could not load /fitting/models: {String((fittingModelsQ.error as Error)?.message ?? fittingModelsQ.error)}</div>
@@ -2144,7 +2205,7 @@ export default function PreprocessingWorkspace() {
                                       title={
                                         comp.component_type === "fermi_edge"
                                           ? "Estimate step height from the spectrum at fit time"
-                                          : "Estimate amplitude from spectrum intensity at the center position at fit time"
+                                          : "Estimate amplitude from chord height above fit-window endpoints (optional area ratios)"
                                       }
                                     >
                                       <input
@@ -2158,7 +2219,9 @@ export default function PreprocessingWorkspace() {
                                             ? { ...row, auto: true, p0: 0 }
                                             : { ...row, auto: false, p0: row.p0 > 0 ? row.p0 : 1 };
                                           next[ci] = { ...next[ci]!, rows };
-                                          updateSelectedFittingParams({ ...fp, components: next });
+                                          updateSelectedFittingParams(
+                                            syncAmpAutoBandsFlag({ ...fp, components: next })
+                                          );
                                         }}
                                       />
                                       Auto

@@ -9,6 +9,8 @@ import os
 import zipfile
 from typing import Any
 
+import numpy as np
+
 from sersflow.api.services.fit_curve_plot import render_fit_residual_png, render_fit_residual_svg
 from sersflow.api.services.fit_diagnostics_public import diagnostics_to_public
 from sersflow.api.services.fitting_preview import (
@@ -174,12 +176,15 @@ def execute_fit_curve_job(job_id: str) -> None:
                     continue
 
                 y_hat_arr, comps_full = expand_fit_curves_to_full(
-                    xy, step_params, res.y_hat, res.component_y_hat
+                    xy, step_params, res.y_hat, res.component_y_hat, outside="nan"
                 )
                 x = xy.x.astype(float).tolist()
                 y = xy.y.astype(float).tolist()
                 y_hat = y_hat_arr.astype(float).tolist()
-                residual = (xy.y.astype(float) - y_hat_arr).tolist()
+                residual_arr = np.where(
+                    np.isfinite(y_hat_arr), xy.y.astype(float) - y_hat_arr, np.nan
+                )
+                residual = residual_arr.tolist()
                 comps = []
                 for idx, m in enumerate(res.mapping):
                     comps.append(

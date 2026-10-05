@@ -911,7 +911,13 @@ export default function AnalyzeWorkspace() {
             badge: it.error || "failed",
           };
         }
-        const residual = it.residual ?? it.y.map((yv, i) => Number(yv) - Number(it.y_hat?.[i] ?? 0));
+        const residual =
+          it.residual ??
+          it.y.map((yv, i) => {
+            const yh = it.y_hat?.[i];
+            if (yh == null || !Number.isFinite(Number(yh))) return null;
+            return Number(yv) - Number(yh);
+          });
         const built = buildFitResidualFigure({
           x: it.x,
           y: it.y,
@@ -948,7 +954,13 @@ export default function AnalyzeWorkspace() {
       const includeComps = fitExportContent === "data_fit_components_resid";
       for (const it of resp.items ?? []) {
         if (!it.y_hat?.length || it.error) continue;
-        const residual = it.residual ?? it.y.map((yv, i) => Number(yv) - Number(it.y_hat?.[i] ?? 0));
+        const residual =
+          it.residual ??
+          it.y.map((yv, i) => {
+            const yh = it.y_hat?.[i];
+            if (yh == null || !Number.isFinite(Number(yh))) return null;
+            return Number(yv) - Number(yh);
+          });
         const safe = it.spectrum_id.replace(/[^a-zA-Z0-9._-]+/g, "_");
         if (format === "csv") {
           const headers = ["x", "y", "y_hat", "residual"];

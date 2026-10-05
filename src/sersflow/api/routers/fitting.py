@@ -106,6 +106,8 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
             step_params["fit_min_x"] = float(payload.fit_min_x)
         if payload.fit_max_x is not None:
             step_params["fit_max_x"] = float(payload.fit_max_x)
+        if payload.initial_area_ratios is not None and str(payload.initial_area_ratios).strip():
+            step_params["initial_area_ratios"] = str(payload.initial_area_ratios).strip()
 
         prob = fit_problem_from_step_params(xy, step_params)
         if prob is None:
@@ -113,9 +115,12 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
         res = fit_curve(prob)
 
         y_hat_full, comps_full = expand_fit_curves_to_full(
-            xy, step_params, res.y_hat, res.component_y_hat
+            xy, step_params, res.y_hat, res.component_y_hat, outside="nan"
         )
         y_in = xy.y.astype(float)
+        residual = y_in - y_hat_full
+        # NaN residual outside the window so plots do not draw a flat zero band.
+        residual = np.where(np.isfinite(y_hat_full), residual, np.nan)
 
         comps_out = []
         for idx, m in enumerate(res.mapping):
@@ -138,7 +143,7 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
             "params_vector": res.p_opt.astype(float).tolist(),
             "components": comps_out,
             "y_hat": y_hat_full.astype(float).tolist() if payload.return_curve else None,
-            "residual": (y_in - y_hat_full).astype(float).tolist() if payload.return_curve else None,
+            "residual": residual.astype(float).tolist() if payload.return_curve else None,
             "diagnostics": diagnostics_to_public(res.diagnostics),
         }
     except HTTPException:

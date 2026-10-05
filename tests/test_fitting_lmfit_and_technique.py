@@ -336,11 +336,10 @@ def test_fitting_fit_api_respects_fit_window() -> None:
     body = r.json()
     y_hat = np.asarray(body["y_hat"], dtype=float)
     assert y_hat.shape == x.shape
-    # Outside the window: passthrough original y (not a full-range model evaluation).
-    assert np.allclose(y_hat[x < 480.0], -123.0)
-    assert np.allclose(y_hat[x > 520.0], -456.0)
-    assert float(np.max(y_hat[(x >= 480.0) & (x <= 520.0)])) > 50.0
-    # Residual outside window ~ 0.
+    # Outside the window: NaN so plots break the line (no drop-to-zero artifact).
+    assert np.all(np.isnan(y_hat[x < 480.0]))
+    assert np.all(np.isnan(y_hat[x > 520.0]))
+    assert float(np.nanmax(y_hat[(x >= 480.0) & (x <= 520.0)])) > 50.0
     resid = np.asarray(body["residual"], dtype=float)
-    assert np.allclose(resid[x < 480.0], 0.0)
-    assert np.allclose(resid[x > 520.0], 0.0)
+    assert np.all(np.isnan(resid[x < 480.0]))
+    assert np.all(np.isnan(resid[x > 520.0]))

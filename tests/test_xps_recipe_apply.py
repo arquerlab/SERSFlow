@@ -45,10 +45,11 @@ def test_apply_sc0_la_so_links() -> None:
     assert types[1:] == ["la", "la"]
     assert out["recipe_pass_energy"] == 20
     assert out["xps_region"] == "Sc2p"
-    modes = { (l["source_key"], l["mode"]) for l in out["param_links"] }
+    modes = {(l["source_key"], l["mode"]) for l in out["param_links"]}
     assert ("pos", "offset") in modes
-    assert ("amp", "scale") in modes
     assert ("fwhm", "equal") in modes
+    # Amplitudes are seeded, not locked.
+    assert ("amp", "scale") not in modes
     offset_link = next(l for l in out["param_links"] if l["mode"] == "offset")
     assert abs(float(offset_link["offset"]) - 4.74) < 1e-6
 
@@ -64,7 +65,30 @@ def test_apply_multiplet_cr2o3() -> None:
     out = apply_recipe_id("cr_2p32_cr2o3", include_background=False)
     assert len(out["components"]) == 5
     assert any(l["mode"] == "offset" for l in out["param_links"])
-    assert any(l["mode"] == "scale" for l in out["param_links"])
+    # Area ratios seed amplitudes only; no locked amp scale links.
+    assert not any(l.get("source_key") == "amp" for l in out["param_links"])
+
+
+def test_recipe_fwhm_fixed_amps_free() -> None:
+    out = apply_recipe_id("co_2p32_co_oh2", pass_energy=20, include_background=False)
+    from sersflow.core.preprocess.fitting_specs import component_param_specs
+
+    off = 0
+    for comp in out["components"]:
+        keys = [s.key for s in component_param_specs(comp["component_type"])]
+        for k, vflag in zip(keys, out["vary"][off : off + len(keys)]):
+            if k in {"fwhm", "fwhm_g", "fwhm_l"}:
+                assert vflag is False, f"{comp['component_id']}.{k} should be fixed"
+            if k == "amp":
+                assert vflag is True, f"{comp['component_id']}.amp should vary"
+        off += len(keys)
+    assert not any(l.get("source_key") == "amp" for l in out["param_links"])
+    assert any("FWHM" in w or "fwhm" in w.lower() for w in out.get("warnings") or [])
+    ratios = out.get("initial_area_ratios")
+    assert isinstance(ratios, str) and ":" in ratios
+    parts = [float(p) for p in ratios.split(":")]
+    assert len(parts) == len([c for c in out["components"] if c["component_type"] != "shirley_bg"])
+    assert all(p > 0 for p in parts)
 
 
 def test_apply_fermi_edge_valence_recipe() -> None:

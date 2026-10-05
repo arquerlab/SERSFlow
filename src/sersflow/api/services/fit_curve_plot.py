@@ -51,7 +51,7 @@ def render_fit_residual_figure(
     ax_top.plot(xf, yh, color="#e74c3c", lw=1.6, label="Fit (sum)")
 
     n = xf.size
-    bg_sum = np.zeros(n, dtype=float)
+    bg_sum = np.full(n, np.nan, dtype=float)
     has_bg = False
     if include_components:
         for comp in components:
@@ -64,7 +64,12 @@ def render_fit_residual_figure(
                 continue
             if _is_background(ct):
                 has_bg = True
-                bg_sum = bg_sum + arr
+                finite = np.isfinite(arr)
+                if not np.any(np.isfinite(bg_sum)):
+                    bg_sum = arr.copy()
+                else:
+                    both = np.isfinite(bg_sum) & finite
+                    bg_sum = np.where(both, bg_sum + arr, np.where(finite, arr, bg_sum))
                 ax_top.plot(xf, arr, color="#7f8c8d", lw=1.0, ls=":", label=f"{ct} [{comp.get('component_id')}]")
 
         for comp in components:
@@ -77,13 +82,15 @@ def render_fit_residual_figure(
             arr = np.asarray(cy, dtype=float)
             if arr.shape != xf.shape:
                 continue
-            plot_y = bg_sum + arr if has_bg else arr
-            label = f"{ct} [{comp.get('component_id')}]"
             if has_bg:
-                ax_top.fill_between(xf, bg_sum, plot_y, alpha=0.25, label=label)
+                plot_y = np.where(np.isfinite(arr) & np.isfinite(bg_sum), bg_sum + arr, np.nan)
+                label = f"{ct} [{comp.get('component_id')}]"
+                ax_top.fill_between(xf, bg_sum, plot_y, alpha=0.25, label=label, where=np.isfinite(plot_y))
                 ax_top.plot(xf, plot_y, lw=1.0)
             else:
-                ax_top.fill_between(xf, 0, plot_y, alpha=0.25, label=label)
+                plot_y = arr
+                label = f"{ct} [{comp.get('component_id')}]"
+                ax_top.fill_between(xf, 0, plot_y, alpha=0.25, label=label, where=np.isfinite(plot_y))
                 ax_top.plot(xf, plot_y, lw=1.0)
 
     ax_top.set_ylabel("Intensity")

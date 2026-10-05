@@ -84,6 +84,8 @@ class FitRequest(BaseModel):
     """Optional internal fit window lower bound (inclusive)."""
     fit_max_x: float | None = None
     """Optional internal fit window upper bound (inclusive)."""
+    initial_area_ratios: str | None = None
+    """Optional Area1:Area2:... string for chord-based amplitude auto-guess."""
 
 
 class FitComponentResult(BaseModel):

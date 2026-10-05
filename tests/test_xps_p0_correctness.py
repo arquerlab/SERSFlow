@@ -66,21 +66,23 @@ def test_gl_area_formulas_and_height_scale() -> None:
     assert scale_w == pytest.approx(0.5)
 
 
-def test_multiplet_area_pct_uses_height_not_raw_pct() -> None:
+def test_multiplet_area_pct_seeds_initial_area_ratios() -> None:
     out = apply_recipe_id("cr_2p32_cr2o3", include_background=False)
     amp_links = [l for l in out["param_links"] if l["mode"] == "scale" and l["source_key"] == "amp"]
-    assert amp_links
-    # At least one scale must differ from naive area_pct/area_pct0 when FWHMs differ,
-    # OR all equal-FWHM peaks keep exact area ratio — either is fine; scales must be positive.
-    assert all(float(l["scale"]) > 0 for l in amp_links)
-    assert any("area_pct converted to peak heights" in w for w in out["warnings"])
+    assert amp_links == []
+    ratios = out.get("initial_area_ratios")
+    assert isinstance(ratios, str) and ratios.count(":") >= 1
+    parts = [float(p) for p in ratios.split(":")]
+    assert all(p > 0 for p in parts)
+    assert any("area_pct" in w for w in out["warnings"])
 
 
-def test_so_amp_scale_accounts_for_fwhm_via_area() -> None:
+def test_so_amps_free_no_amp_scale_link() -> None:
     out = apply_recipe_id("sc_2p_sc0", pass_energy=20, include_background=False)
-    amp_link = next(l for l in out["param_links"] if l["mode"] == "scale" and l["source_key"] == "amp")
-    # Different FWHM 0.76 vs 0.79 → scale near but not exactly 0.5
-    assert 0.4 < float(amp_link["scale"]) < 0.6
+    amp_links = [l for l in out["param_links"] if l.get("source_key") == "amp"]
+    assert amp_links == []
+    pos_links = [l for l in out["param_links"] if l.get("source_key") == "pos"]
+    assert pos_links  # spin-orbit / delta still linked on position
 
 
 def test_shirley_seed_uses_low_be_endpoint() -> None:

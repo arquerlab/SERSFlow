@@ -7,10 +7,17 @@ from sersflow.core.preprocess.fitting import (
     FitComponent,
     FitProblem,
     _apply_auto_gaussian_amplitudes,
+    _apply_auto_peak_amplitudes,
+    _chord_baseline_at,
     _interp_y_at_x,
+    evaluate_fit_curves,
     fit_curve,
+    fit_problem_from_step_params,
+    parse_initial_area_ratios,
 )
 from sersflow.core.preprocess.fitting_specs import list_component_types
+from sersflow.core.preprocess.peak_area import gaussian_area_per_height
+from sersflow.core.spectrum import XY
 
 
 def test_fitting_models_registry_has_peak_shapes() -> None:
@@ -89,7 +96,27 @@ def test_interp_y_at_x_unsorted_axis() -> None:
     assert abs(_interp_y_at_x(x, y, 2.0) - 20.0) < 1e-9
 
 
+def test_chord_baseline_at_endpoints() -> None:
+    x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+    y = np.array([10.0, 50.0, 80.0, 40.0, 20.0])
+    # Chord through (0,10) and (4,20): B(2) = 15
+    assert _chord_baseline_at(x, y, 2.0) == pytest.approx(15.0)
+
+
+def test_apply_auto_peak_amplitudes_uses_chord_height() -> None:
+    x = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+    # Linear background 10→20 plus a bump at center so Hi = y(2)-B(2) = 80-15 = 65
+    y = np.array([10.0, 50.0, 80.0, 40.0, 20.0])
+    p0 = [2.0, 0.0, 1.0]
+    comp = [FitComponent(component_type="gaussian", component_id="a")]
+    slices = [(0, 3)]
+    keys = [["pos", "amp", "fwhm"]]
+    out = _apply_auto_peak_amplitudes(x, y, p0, comp, slices, keys)
+    assert out[1] == pytest.approx(65.0)
+
+
 def test_apply_auto_gaussian_amplitudes_uses_intensity_at_pos() -> None:
+    """Alias still works; flat spectrum → chord height 0 (not raw y)."""
     x = np.linspace(0.0, 10.0, 50)
     y = np.ones_like(x) * 42.0
     p0 = [5.0, 0.0, 1.0]
@@ -97,12 +124,74 @@ def test_apply_auto_gaussian_amplitudes_uses_intensity_at_pos() -> None:
     slices = [(0, 3)]
     keys = [["pos", "amp", "fwhm"]]
     out = _apply_auto_gaussian_amplitudes(x, y, p0, comp, slices, keys)
-    assert abs(out[1] - 42.0) < 1e-9
+    assert out[1] == pytest.approx(0.0)
+
+
+def test_apply_auto_peak_amplitudes_ratio_unequal_fwhm() -> None:
+    """With ratios, Ai ∝ Ri/Fi for unequal FWHM (same chord heights)."""
+    x = np.linspace(0.0, 10.0, 101)
+    # Flat chord endpoints equal → Hi comes only from peak bumps; use elevated flat mid.
+    y = np.full_like(x, 10.0)
+    # Two centers with identical Hi=40 above chord (chord=10)
+    y = y + 40.0 * np.exp(-((x - 3.0) ** 2) / (1.0**2 / 4.0 / np.log(2.0)))
+    y = y + 40.0 * np.exp(-((x - 7.0) ** 2) / (1.0**2 / 4.0 / np.log(2.0)))
+    # Endpoints stay at ~10 so chord≈10; peaks add height at centers.
+    y[0] = 10.0
+    y[-1] = 10.0
+
+    fwhm1, fwhm2 = 1.0, 2.0
+    p0 = [3.0, 0.0, fwhm1, 7.0, 0.0, fwhm2]
+    comps = [
+        FitComponent(component_type="gaussian", component_id="a"),
+        FitComponent(component_type="gaussian", component_id="b"),
+    ]
+    slices = [(0, 3), (3, 6)]
+    keys = [["pos", "amp", "fwhm"], ["pos", "amp", "fwhm"]]
+    ratios = "2:1"
+    out = _apply_auto_peak_amplitudes(
+        x, y, p0, comps, slices, keys, initial_area_ratios=ratios
+    )
+    f1 = gaussian_area_per_height(fwhm1)
+    f2 = gaussian_area_per_height(fwhm2)
+    # Ai / Aj = (Ri/Fi) / (Rj/Fj)
+    expected_ratio = (2.0 / f1) / (1.0 / f2)
+    assert out[1] / out[4] == pytest.approx(expected_ratio, rel=1e-6)
+    assert out[1] > 0 and out[4] > 0
+
+
+def test_parse_initial_area_ratios() -> None:
+    assert parse_initial_area_ratios(None) is None
+    assert parse_initial_area_ratios("") is None
+    assert parse_initial_area_ratios("1:0.6:0.3") == pytest.approx([1.0, 0.6, 0.3])
+    assert parse_initial_area_ratios("1:0:-2") is None
+    assert parse_initial_area_ratios("a:b") is None
+
+
+def test_fit_problem_passes_initial_area_ratios() -> None:
+    x = np.linspace(0.0, 10.0, 50)
+    y = np.linspace(5.0, 15.0, 50) + 20.0 * np.exp(
+        -((x - 5.0) ** 2) / (1.5**2 / 4.0 / np.log(2.0))
+    )
+    params = {
+        "components": [{"component_id": "p1", "component_type": "gaussian"}],
+        "p0": [5.0, 0.0, 1.5],
+        "bounds_lower": [0.0, 0.0, 0.1],
+        "bounds_upper": [10.0, None, 5.0],
+        "initial_area_ratios": "1",
+        "initial_guess_mode": "default",
+    }
+    prob = fit_problem_from_step_params(XY(x=x, y=y), params)
+    assert prob is not None
+    assert prob.initial_area_ratios == "1"
+    # SciPy path uses chord+ratio helper when amp sentinel is set.
+    res = fit_curve(prob)
+    assert float(res.p_opt[1]) > 0
 
 
 def test_fit_auto_gaussian_amplitude_clamps_to_bounds() -> None:
     x = np.linspace(0.0, 10.0, 80)
-    y = np.ones_like(x) * 42.0
+    # Sloped chord 0→0 with a tall center so Hi is large; clamp amp ≤ 10.
+    y = 50.0 * np.exp(-((x - 5.0) ** 2) / (1.0**2 / 4.0 / np.log(2.0)))
     components = [FitComponent(component_type="gaussian", component_id="a")]
 
     res = fit_curve(
@@ -123,7 +212,7 @@ def test_fit_auto_gaussian_amplitude_clamps_to_bounds() -> None:
 def test_fit_amp_sentinel_auto_without_global_mode() -> None:
     """Per-peak Auto sends amp≤0; engine estimates even when initial_guess_mode=default."""
     x = np.linspace(0.0, 10.0, 80)
-    y = np.ones_like(x) * 42.0
+    y = 42.0 * np.exp(-((x - 5.0) ** 2) / (1.0**2 / 4.0 / np.log(2.0)))
     components = [FitComponent(component_type="gaussian", component_id="a")]
 
     res = fit_curve(
@@ -139,7 +228,7 @@ def test_fit_amp_sentinel_auto_without_global_mode() -> None:
     )
 
     assert 0.0 <= float(res.p_opt[1]) <= 10.0
-    # Flat spectrum → auto seed ≈ 42, fit should stay near that within amp bound.
+    # Seed Hi≈42 clamped to 10; fit should stay near the amp bound.
     assert float(res.p_opt[1]) == pytest.approx(10.0, abs=0.5)
 
 

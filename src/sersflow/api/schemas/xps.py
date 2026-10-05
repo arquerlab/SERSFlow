@@ -109,6 +109,8 @@ class FittingRecipeApplyResponse(BaseModel):
     vary: list[bool] = Field(default_factory=list)
     param_links: list[FittingParamLinkPublic] = Field(default_factory=list)
     initial_guess_mode: str | None = "auto"
+    initial_area_ratios: str | None = None
+    """Area1:Area2:... from recipe area_pct when all peaks specify percentages."""
     warnings: list[str] = Field(default_factory=list)
 
 

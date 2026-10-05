@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import numpy as np
+
 from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.analysis_runner import (
     _effective_pipeline_for_analysis,
@@ -274,8 +276,10 @@ def fitting_preview_for_run(
             continue
 
         y_hat, comps_full = expand_fit_curves_to_full(
-            xy, step_params, res.y_hat, res.component_y_hat
+            xy, step_params, res.y_hat, res.component_y_hat, outside="nan"
         )
+        y_in = xy.y.astype(float)
+        residual = np.where(np.isfinite(y_hat), y_in - y_hat, np.nan)
         comps_out = []
         for idx, m in enumerate(res.mapping):
             s, e = m["index_range"]
@@ -292,7 +296,6 @@ def fitting_preview_for_run(
                     "y_hat": yc,
                 }
             )
-        y_in = xy.y.astype(float)
         items.append(
             {
                 "spectrum_id": sid,
@@ -300,7 +303,7 @@ def fitting_preview_for_run(
                 "x": xy.x.astype(float).tolist(),
                 "y": y_in.tolist(),
                 "y_hat": y_hat.tolist() if return_curve else None,
-                "residual": (y_in - y_hat).tolist() if return_curve else None,
+                "residual": residual.tolist() if return_curve else None,
                 "components": comps_out,
                 "diagnostics": diagnostics_to_public(res.diagnostics),
             }

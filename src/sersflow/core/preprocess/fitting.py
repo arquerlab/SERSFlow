@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +14,7 @@ from sersflow.core.preprocess.fitting_specs import (
     build_component_function,
     component_param_specs,
 )
+from sersflow.core.preprocess.peak_area import area_per_height
 from sersflow.core.spectrum import XY
 
 
@@ -72,13 +74,23 @@ def expand_fit_curves_to_full(
     params: dict[str, Any],
     y_hat: np.ndarray,
     component_y_hats: list[np.ndarray] | None = None,
+    *,
+    outside: str = "passthrough",
 ) -> tuple[np.ndarray, list[np.ndarray]]:
     """
     Stitch windowed fit curves back onto the full spectrum length.
 
-    Outside the fit window: total ``y_hat`` keeps the original ``y`` (passthrough);
-    per-component curves are zero. Residual is then zero outside the window.
+    ``outside`` controls values outside the fit window:
+    - ``passthrough``: total ``y_hat`` keeps original ``y`` (pipeline transform)
+    - ``nan``: total and components are NaN (plot/API curves; no drop-to-zero line)
+    - ``zeros``: total and components are 0 (legacy component padding)
+
+    Per-component curves are always 0/NaN outside (never passthrough).
     """
+    mode = str(outside or "passthrough").strip().lower()
+    if mode not in ("passthrough", "nan", "zeros"):
+        raise ValueError(f"outside must be passthrough|nan|zeros; got {outside!r}")
+
     mask = fit_window_mask(xy.x, params)
     y_fit = np.asarray(y_hat, dtype=float).ravel()
     n = int(xy.x.size)
@@ -96,10 +108,17 @@ def expand_fit_curves_to_full(
             f"({int(np.count_nonzero(mask))} points)"
         )
 
-    y_full = np.asarray(xy.y, dtype=float).ravel().copy()
+    if mode == "passthrough":
+        y_full = np.asarray(xy.y, dtype=float).ravel().copy()
+    elif mode == "nan":
+        y_full = np.full(n, np.nan, dtype=float)
+    else:
+        y_full = np.zeros(n, dtype=float)
     y_full[mask] = y_fit
+
     comps_full: list[np.ndarray] = []
     if component_y_hats is not None:
+        fill = np.nan if mode == "nan" else 0.0
         for cy in component_y_hats:
             c_arr = np.asarray(cy, dtype=float).ravel()
             if c_arr.size != y_fit.size:
@@ -107,7 +126,7 @@ def expand_fit_curves_to_full(
                     f"component curve length {c_arr.size} does not match fit window "
                     f"({y_fit.size} points)"
                 )
-            c_full = np.zeros(n, dtype=float)
+            c_full = np.full(n, fill, dtype=float)
             c_full[mask] = c_arr
             comps_full.append(c_full)
     return y_full, comps_full
@@ -202,9 +221,12 @@ class FitProblem:
     vary: list[bool] | None = None
     param_links: list[dict[str, Any]] | None = None
     xps_region: str | None = None
+    initial_area_ratios: str | None = None
     """
-    default: use client p0; amp ≤ 0 on peaks is auto-estimated (intensity at center).
+    default: use client p0; amp ≤ 0 on peaks is auto-estimated (chord height at center).
     auto (legacy): force auto amplitude for every peak component.
+    Optional ``initial_area_ratios`` (e.g. ``1:0.6:0.3``) scales the chord-based
+    amplitude guess so relative areas match while widths differ.
     """
 
 
@@ -234,6 +256,50 @@ def _interp_y_at_x(x: np.ndarray, y: np.ndarray, xq: float) -> float:
     )
 
 
+def _chord_baseline_at(x: np.ndarray, y: np.ndarray, xq: float) -> float:
+    """
+    Provisional baseline for amplitude guessing: straight line through the first
+    and last samples of the (already cropped) fit window. Not Shirley / Tougaard.
+    """
+    xf = np.asarray(x, dtype=float).ravel()
+    yf = np.asarray(y, dtype=float).ravel()
+    if xf.size == 0 or yf.size == 0:
+        return 0.0
+    if xf.size == 1 or yf.size == 1:
+        return float(yf[0])
+    x0, y0 = float(xf[0]), float(yf[0])
+    x1, y1 = float(xf[-1]), float(yf[-1])
+    dx = x1 - x0
+    if abs(dx) < 1e-15:
+        return y0
+    t = (float(xq) - x0) / dx
+    return float(y0 + t * (y1 - y0))
+
+
+def parse_initial_area_ratios(raw: str | None) -> list[float] | None:
+    """
+    Parse ``Area1:Area2:...`` into positive floats. Returns None when empty/invalid.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    vals: list[float] = []
+    for part in s.split(":"):
+        token = part.strip()
+        if not token:
+            return None
+        try:
+            v = float(token)
+        except ValueError:
+            return None
+        if not math.isfinite(v) or v <= 0:
+            return None
+        vals.append(float(v))
+    return vals or None
+
+
 def _apply_auto_peak_amplitudes(
     x: np.ndarray,
     y: np.ndarray,
@@ -245,17 +311,25 @@ def _apply_auto_peak_amplitudes(
     bounds_upper: list[float | None] | None = None,
     *,
     only_nonpositive: bool = False,
+    initial_area_ratios: str | None = None,
 ) -> list[float]:
     """
-    Set peak amplitudes from spectrum intensity at the center (pos).
+    Set peak amplitudes from chord-baseline height at the center (pos).
+
+    Provisional baseline B is the chord through the fit-window endpoints.
+    Hi = max(0, y(pos) - B(pos)). Without ratios, Ai = Hi. With
+    ``initial_area_ratios`` matching the peak count, Ai = k * Ri / Fi where Fi is
+    approximate Area/amp from shape + FWHM and k least-squares matches the Hi.
 
     When ``only_nonpositive`` is True (default path for per-peak Auto checkboxes),
     only amplitudes with seed ≤ 0 are replaced. When False, all peak amplitudes
     are replaced (legacy ``initial_guess_mode="auto"``).
     """
     out = list(p0)
+    peak_rows: list[dict[str, Any]] = []
     for comp, (s, _e), keys in zip(components, slices, param_keys_per_comp):
-        if comp.component_type.strip().lower() not in PEAK_COMPONENT_TYPES:
+        ct = comp.component_type.strip().lower()
+        if ct not in PEAK_COMPONENT_TYPES:
             continue
         try:
             pos_i = keys.index("pos")
@@ -264,15 +338,40 @@ def _apply_auto_peak_amplitudes(
             continue
         gpos = s + pos_i
         gamp = s + amp_i
-        if only_nonpositive and float(out[gamp]) > 0:
-            continue
+        need = (not only_nonpositive) or float(out[gamp]) <= 0
         pos_val = float(out[gpos])
-        amp = _interp_y_at_x(x, y, pos_val)
+        y_at = _interp_y_at_x(x, y, pos_val)
+        b_at = _chord_baseline_at(x, y, pos_val)
+        hi = max(0.0, float(y_at) - float(b_at)) if math.isfinite(y_at) and math.isfinite(b_at) else 0.0
+        values = {keys[j]: float(out[s + j]) for j in range(len(keys))}
+        fi = float(area_per_height(ct, values))
+        if not math.isfinite(fi) or fi <= 0:
+            fi = 1.0
+        peak_rows.append({"gamp": gamp, "hi": hi, "fi": fi, "need": need})
+
+    ratios = parse_initial_area_ratios(initial_area_ratios)
+    use_ratios = ratios is not None and len(ratios) == len(peak_rows)
+    amps: list[float]
+    if use_ratios and ratios is not None and peak_rows:
+        # Ai = k * Ri / Fi,  k = sum Hi*(Ri/Fi) / sum (Ri/Fi)^2
+        weights = [float(r) / float(row["fi"]) for r, row in zip(ratios, peak_rows)]
+        num = sum(float(row["hi"]) * w for row, w in zip(peak_rows, weights))
+        den = sum(w * w for w in weights)
+        k = (num / den) if den > 1e-30 else 0.0
+        amps = [max(0.0, k * w) for w in weights]
+    else:
+        amps = [float(row["hi"]) for row in peak_rows]
+
+    for row, amp in zip(peak_rows, amps):
+        if not row["need"]:
+            continue
+        gamp = int(row["gamp"])
+        val = float(amp)
         if bounds_lower is not None and bounds_lower[gamp] is not None:
-            amp = max(amp, float(bounds_lower[gamp]))
+            val = max(val, float(bounds_lower[gamp]))
         if bounds_upper is not None and bounds_upper[gamp] is not None:
-            amp = min(amp, float(bounds_upper[gamp]))
-        out[gamp] = amp
+            val = min(val, float(bounds_upper[gamp]))
+        out[gamp] = val
     return out
 
 
@@ -337,6 +436,11 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
     region = params.get("xps_region")
     xps_region = str(region).strip() if region is not None and str(region).strip() else None
 
+    ratios_raw = params.get("initial_area_ratios")
+    initial_area_ratios: str | None = None
+    if ratios_raw is not None and str(ratios_raw).strip():
+        initial_area_ratios = str(ratios_raw).strip()
+
     tech_raw = params.get("technique_family")
     if tech_raw is None or str(tech_raw).strip() == "":
         tech = "vibrational"
@@ -359,6 +463,7 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
         vary=vary,
         param_links=param_links,
         xps_region=xps_region,
+        initial_area_ratios=initial_area_ratios,
     )
 
 
@@ -555,6 +660,7 @@ def _fit_curve_scipy(problem: FitProblem) -> FitResult:
         lo_list,
         hi_list,
         only_nonpositive=(mode != "auto"),
+        initial_area_ratios=problem.initial_area_ratios,
     )
 
     n_data = int(problem.x.shape[0])

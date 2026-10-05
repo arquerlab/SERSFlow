@@ -227,6 +227,69 @@ export function isAutoAmplitudeParam(componentType: string, key: string): boolea
   return false;
 }
 
+/** Peak-only amp rows (excludes fermi / backgrounds) for area-ratio counting. */
+export function isPeakAmplitudeParam(componentType: string, key: string): boolean {
+  return isPeakComponentType(componentType) && String(key ?? "").trim().toLowerCase() === "amp";
+}
+
+export function countPeakComponents(fp: FittingEditorParams): number {
+  return fp.components.filter((c) => isPeakComponentType(c.component_type)).length;
+}
+
+/**
+ * Parse ``1:0.6:0.3`` style area ratios. Empty string → ok with empty list.
+ * Invalid tokens → error (flatten still passes the raw string through).
+ */
+export function parseInitialAreaRatios(
+  raw: string | null | undefined
+): { ok: true; ratios: number[] } | { ok: false; error: string; ratios: number[] } {
+  const s = String(raw ?? "").trim();
+  if (!s) return { ok: true, ratios: [] };
+  const parts = s.split(":");
+  const ratios: number[] = [];
+  for (const part of parts) {
+    const t = part.trim();
+    if (!t) return { ok: false, error: "Empty ratio segment", ratios: [] };
+    const n = Number(t);
+    if (!Number.isFinite(n) || n <= 0) {
+      return { ok: false, error: `Invalid ratio value: ${t}`, ratios: [] };
+    }
+    ratios.push(n);
+  }
+  return { ok: true, ratios };
+}
+
+/** Turn Auto on/off for every peak amp and Fermi amplitude/const row. */
+export function setBandAmplitudeAutos(fp: FittingEditorParams, on: boolean): FittingEditorParams {
+  const components = fp.components.map((c) => ({
+    ...c,
+    rows: c.rows.map((row) => {
+      if (!isAutoAmplitudeParam(c.component_type, row.key)) return row;
+      if (on) return { ...row, auto: true, p0: 0 };
+      return { ...row, auto: false, p0: row.p0 > 0 ? row.p0 : 1 };
+    }),
+  }));
+  return { ...fp, components, amp_auto_bands: on };
+}
+
+/** True when every auto-capable amp row has Auto enabled (empty → false). */
+export function allBandAmplitudeAutosOn(fp: FittingEditorParams): boolean {
+  let n = 0;
+  for (const c of fp.components) {
+    for (const row of c.rows) {
+      if (!isAutoAmplitudeParam(c.component_type, row.key)) continue;
+      n++;
+      if (!row.auto) return false;
+    }
+  }
+  return n > 0;
+}
+
+/** Keep ``amp_auto_bands`` aligned with individual Auto checkboxes. */
+export function syncAmpAutoBandsFlag(fp: FittingEditorParams): FittingEditorParams {
+  return { ...fp, amp_auto_bands: allBandAmplitudeAutosOn(fp) };
+}
+
 export type FittingComponentEditor = {
   component_id: string;
   component_type: FittingComponentType;
@@ -265,6 +328,13 @@ export type FittingEditorParams = {
   fit_min_x?: number | null;
   /** Optional internal fit window upper bound (inclusive). Empty/undefined = full spectrum. */
   fit_max_x?: number | null;
+  /** Master Auto-guess for band/peak amplitudes (and Fermi amp/const). */
+  amp_auto_bands?: boolean;
+  /**
+   * Optional Area1:Area2:... ratios for peak components in list order.
+   * Used only when band amplitude Auto is on (initial guess; not locked).
+   */
+  initial_area_ratios?: string;
 };
 
 function optionalFiniteNumber(v: unknown): number | null | undefined {
@@ -544,6 +614,8 @@ export function defaultFittingEditorParams(catalog: FittingComponentSpecPublic[]
     recipe_pass_energy: undefined,
     fit_min_x: null,
     fit_max_x: null,
+    amp_auto_bands: false,
+    initial_area_ratios: "",
   };
 }
 
@@ -635,6 +707,9 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
   const fitMax = optionalFiniteNumber(fp.fit_max_x);
   if (fitMin != null) out.fit_min_x = fitMin;
   if (fitMax != null) out.fit_max_x = fitMax;
+  if (fp.amp_auto_bands) out.amp_auto_bands = true;
+  const ratios = String(fp.initial_area_ratios ?? "").trim();
+  if (ratios && fp.amp_auto_bands) out.initial_area_ratios = ratios;
   return out;
 }
 
@@ -646,7 +721,27 @@ export function migrateFittingParamsToEditor(
     const r = raw as FittingEditorParams;
     const legacyGlobalAuto = r.initial_guess_mode === "auto";
     const recipe_id = typeof r.recipe_id === "string" ? r.recipe_id : "";
-    return {
+    const components = r.components.map((c) => ({
+      ...c,
+      component_type: parseFittingComponentType(c.component_type),
+      component_id: stripLegacyFittingComponentId(c.component_id),
+      rows: c.rows.map((row) => {
+        const base = { ...row, vary: row.key === "temperature_K" ? false : row.vary !== false };
+        const ct = parseFittingComponentType(c.component_type);
+        if (
+          isAutoAmplitudeParam(ct, row.key) &&
+          (row.auto ||
+            legacyGlobalAuto ||
+            !(typeof row.p0 === "number") ||
+            !Number.isFinite(row.p0) ||
+            row.p0 <= 0)
+        ) {
+          return { ...base, auto: true, p0: 0 };
+        }
+        return base;
+      }),
+    }));
+    const next: FittingEditorParams = {
       ...r,
       initial_guess_mode: "default",
       xps_region: typeof r.xps_region === "string" ? r.xps_region : "",
@@ -660,27 +755,14 @@ export function migrateFittingParamsToEditor(
           : undefined,
       fit_min_x: optionalFiniteNumber(r.fit_min_x) ?? null,
       fit_max_x: optionalFiniteNumber(r.fit_max_x) ?? null,
-      components: r.components.map((c) => ({
-        ...c,
-        component_type: parseFittingComponentType(c.component_type),
-        component_id: stripLegacyFittingComponentId(c.component_id),
-        rows: c.rows.map((row) => {
-          const base = { ...row, vary: row.key === "temperature_K" ? false : row.vary !== false };
-          const ct = parseFittingComponentType(c.component_type);
-          if (
-            isAutoAmplitudeParam(ct, row.key) &&
-            (row.auto ||
-              legacyGlobalAuto ||
-              !(typeof row.p0 === "number") ||
-              !Number.isFinite(row.p0) ||
-              row.p0 <= 0)
-          ) {
-            return { ...base, auto: true, p0: 0 };
-          }
-          return base;
-        }),
-      })),
+      initial_area_ratios: typeof r.initial_area_ratios === "string" ? r.initial_area_ratios : "",
+      components,
+      amp_auto_bands: Boolean(r.amp_auto_bands),
     };
+    return syncAmpAutoBandsFlag({
+      ...next,
+      amp_auto_bands: r.amp_auto_bands === true || allBandAmplitudeAutosOn(next),
+    });
   }
   const p = raw ?? {};
   const output_mode = "fit" as const;
@@ -698,6 +780,8 @@ export function migrateFittingParamsToEditor(
       : undefined;
   const fit_min_x = optionalFiniteNumber(p.fit_min_x) ?? null;
   const fit_max_x = optionalFiniteNumber(p.fit_max_x) ?? null;
+  const amp_auto_bands_raw = p.amp_auto_bands === true;
+  const initial_area_ratios = typeof p.initial_area_ratios === "string" ? p.initial_area_ratios : "";
   const comps = p.components;
   const p0 = p.p0;
   const lo = p.bounds_lower;
@@ -772,7 +856,7 @@ export function migrateFittingParamsToEditor(
     return defaultFittingEditorParams(catalog);
   }
   const baseComps = out.length ? out : defaultFittingEditorParams(catalog).components;
-  return {
+  const migrated: FittingEditorParams = {
     output_mode,
     fill_opacity,
     initial_guess_mode,
@@ -785,7 +869,13 @@ export function migrateFittingParamsToEditor(
     recipe_pass_energy,
     fit_min_x,
     fit_max_x,
+    amp_auto_bands: amp_auto_bands_raw,
+    initial_area_ratios,
   };
+  return syncAmpAutoBandsFlag({
+    ...migrated,
+    amp_auto_bands: amp_auto_bands_raw || allBandAmplitudeAutosOn(migrated),
+  });
 }
 
 export function linkKey(componentId: string, paramKey: string): string {

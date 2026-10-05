@@ -407,12 +407,32 @@ def apply_compound_fit_to_fitting_params(
                     factor_0=f_ref,
                 )
         warnings.append(
-            "area_pct converted to peak heights using analytical/approx Area/amp "
-            f"factors (ref peak index {ref_i + 1})"
+            "area_pct used only as initial amplitude seed (amplitudes free to vary)"
         )
     else:
         for row in peak_value_rows:
             row["amp"] = 1.0
+
+    # Spin-orbit: seed 2p1/2 height from 2:1 area ratio (not locked as a param_link).
+    so_pair_early = _find_so_pair(labels)
+    so_split_early = fit.raw.get("spin_orbit_split_eV")
+    if (
+        so_pair_early is not None
+        and isinstance(so_split_early, (int, float))
+        and math.isfinite(float(so_split_early))
+        and not any(a is not None for a in areas)
+    ):
+        i3, i1 = so_pair_early
+        amp_scale = height_scale_for_area_ratio(
+            area_i=1.0,
+            area_0=2.0,
+            factor_i=factors[i1],
+            factor_0=factors[i3],
+        )
+        peak_value_rows[i1]["amp"] = float(peak_value_rows[i3]["amp"]) * float(amp_scale)
+        warnings.append(
+            "spin-orbit area ratio 2:1 used only as initial amplitude seed (not locked)"
+        )
 
     for i, peak in enumerate(peaks):
         ctype = peak_ctypes[i]
@@ -488,14 +508,6 @@ def apply_compound_fit_to_fitting_params(
         i3, i1 = so
         id3, id1 = peak_comp_ids[i3], peak_comp_ids[i1]
         add_link(id1, "pos", id3, "pos", "offset", offset=float(so_split))
-        # Theoretical 2p branching is 2:1 in *area*. Convert to height via Area/amp factors.
-        amp_scale = height_scale_for_area_ratio(
-            area_i=1.0,
-            area_0=2.0,
-            factor_i=factors[i1],
-            factor_0=factors[i3],
-        )
-        add_link(id1, "amp", id3, "amp", "scale", scale=amp_scale)
         add_link(id1, "fwhm", id3, "fwhm", "equal")
     else:
         for i, peak in enumerate(peaks):
@@ -511,27 +523,6 @@ def apply_compound_fit_to_fitting_params(
                     "offset",
                     offset=float(dvp),
                 )
-        if any(a is not None for a in areas):
-            ref_i = next((j for j, a in enumerate(areas) if a is not None), 0)
-            a_ref = areas[ref_i]
-            if a_ref is not None and a_ref > 0:
-                for i, a in enumerate(areas):
-                    if i == ref_i or a is None:
-                        continue
-                    scale = height_scale_for_area_ratio(
-                        area_i=float(a),
-                        area_0=float(a_ref),
-                        factor_i=factors[i],
-                        factor_0=factors[ref_i],
-                    )
-                    add_link(
-                        peak_comp_ids[i],
-                        "amp",
-                        peak_comp_ids[ref_i],
-                        "amp",
-                        "scale",
-                        scale=scale,
-                    )
 
     for i, peak in enumerate(peaks):
         if i == 0:
@@ -595,13 +586,28 @@ def apply_compound_fit_to_fitting_params(
             if key not in driven:
                 add_link(peak_comp_ids[i], "fwhm", peak_comp_ids[0], "fwhm", "equal")
 
+    _FWHM_KEYS = frozenset({"fwhm", "fwhm_g", "fwhm_l", "fwhm_lorentz", "fwhm_gauss"})
+
     vary_out: list[bool] = []
     for comp, keys in zip(components, param_keys_per):
         cid = str(comp["component_id"])
+        ctype = str(comp.get("component_type") or "")
+        is_peak = not _is_background_component(ctype)
         for k in keys:
-            vary_out.append((cid, k) not in driven)
+            if is_peak and k in _FWHM_KEYS:
+                # Recipe FWHM is a fixed instrument/resolution seed by default.
+                vary_out.append(False)
+            else:
+                vary_out.append((cid, k) not in driven)
 
-    return {
+    if any(
+        (not _is_background_component(str(c.get("component_type") or "")))
+        and any(k in _FWHM_KEYS for k in keys)
+        for c, keys in zip(components, param_keys_per)
+    ):
+        warnings.append("peak FWHM parameters are fixed (vary=false) from the recipe")
+
+    out: dict[str, Any] = {
         "recipe_id": fit.id,
         "recipe_pass_energy": pe,
         "xps_region": _normalize_region(fit.region),
@@ -614,6 +620,9 @@ def apply_compound_fit_to_fitting_params(
         "initial_guess_mode": "auto",
         "warnings": warnings,
     }
+    if areas and all(a is not None for a in areas):
+        out["initial_area_ratios"] = ":".join(f"{float(a):g}" for a in areas)
+    return out
 
 
 def np_clip_m(m: float) -> float:
@@ -847,6 +856,14 @@ def merge_fitting_recipe_params(
         "initial_guess_mode": base.get("initial_guess_mode") or added.get("initial_guess_mode") or "auto",
         "warnings": warnings,
     }
+    base_ratios = str(base.get("initial_area_ratios") or "").strip()
+    added_ratios = str(added.get("initial_area_ratios") or "").strip()
+    if base_ratios and added_ratios:
+        out["initial_area_ratios"] = f"{base_ratios}:{added_ratios}"
+    elif added_ratios:
+        out["initial_area_ratios"] = added_ratios
+    elif base_ratios:
+        out["initial_area_ratios"] = base_ratios
     if recipe_ids:
         out["recipe_id"] = recipe_ids[0]
         out["recipe_ids"] = recipe_ids

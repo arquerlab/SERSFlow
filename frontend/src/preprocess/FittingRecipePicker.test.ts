@@ -49,6 +49,20 @@ describe("recipe apply merge helpers", () => {
     expect(next.recipe_ids).toEqual(["c_1s"]);
     expect(next.recipe_id).toBe("c_1s");
     expect(next.recipe_components?.["c_1s"]).toEqual(["Peak_1"]);
+    expect(next.amp_auto_bands).toBe(true);
+  });
+
+  it("replace prefills initial_area_ratios from apply payload", () => {
+    const current = defaultFittingEditorParams(undefined);
+    const next = mergeRecipeApplyIntoEditor(
+      current,
+      fakeApply({ recipe_id: "co_oh", initial_area_ratios: "38.1:26.6:33:2.4" }),
+      undefined
+    );
+    expect(next.initial_area_ratios).toBe("38.1:26.6:33:2.4");
+    expect(next.amp_auto_bands).toBe(true);
+    const amp = next.components.find((c) => c.component_type !== "shirley_bg")?.rows.find((r) => r.key === "amp");
+    expect(amp?.auto).toBe(true);
   });
 
   it("append skips backgrounds and renames colliding peak ids", () => {

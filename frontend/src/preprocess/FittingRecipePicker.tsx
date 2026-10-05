@@ -13,6 +13,7 @@ import {
   isPeakComponentType,
   isXpsBgComponentType,
   migrateFittingParamsToEditor,
+  setBandAmplitudeAutos,
   uniqueComponentIdAgainst,
   type FittingEditorParams,
   type FittingParamLink,
@@ -104,7 +105,8 @@ export function mergeRecipeApplyIntoEditor(
   );
   const rid = String(applied.recipe_id ?? "").trim();
   const peakIds = nonBgComponentIds(migrated);
-  return {
+  const ratios = String(applied.initial_area_ratios ?? "").trim();
+  const base: FittingEditorParams = {
     ...migrated,
     output_mode: current.output_mode,
     fill_opacity: current.fill_opacity,
@@ -115,7 +117,10 @@ export function mergeRecipeApplyIntoEditor(
     recipe_pass_energy: applied.recipe_pass_energy ?? undefined,
     fit_min_x: current.fit_min_x ?? null,
     fit_max_x: current.fit_max_x ?? null,
+    initial_area_ratios: ratios,
   };
+  // Recipe apply: enable band amp Auto so chord+ratio guess runs on next fit.
+  return setBandAmplitudeAutos(base, true);
 }
 
 /** Append peaks from a second recipe; skip backgrounds; rename colliding ids. */
@@ -180,7 +185,14 @@ export function appendRecipeApplyIntoEditor(
     recipe_components[rid] = addedComps.map((c) => c.component_id);
   }
 
-  return {
+  const addedRatios = String(applied.initial_area_ratios ?? "").trim();
+  const curRatios = String(current.initial_area_ratios ?? "").trim();
+  let initial_area_ratios = curRatios;
+  if (addedRatios) {
+    initial_area_ratios = curRatios ? `${curRatios}:${addedRatios}` : addedRatios;
+  }
+
+  const base: FittingEditorParams = {
     ...current,
     components: [...current.components, ...addedComps],
     param_links: [...(current.param_links ?? []), ...remappedLinks],
@@ -190,7 +202,9 @@ export function appendRecipeApplyIntoEditor(
     recipe_components,
     recipe_pass_energy: applied.recipe_pass_energy ?? current.recipe_pass_energy,
     initial_guess_mode: "default",
+    initial_area_ratios,
   };
+  return setBandAmplitudeAutos(base, true);
 }
 
 /** Remove one stacked recipe and the peaks it contributed (shared baseline kept if others remain). */

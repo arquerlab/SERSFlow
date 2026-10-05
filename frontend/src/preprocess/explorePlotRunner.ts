@@ -426,9 +426,11 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         technique_family: techniqueFamily,
       };
 
+      // Run prior steps on the full QC cohort so x_axis_calibration can see VB partners
+      // (and other reference regions). Only the region-gated spectra are fitted below.
       const rawIn = await runPipeline(
         {
-          inputs: gatedInputs,
+          inputs,
           pipeline: pipelineToInput,
           return: { kind: "final" },
           cache_namespace: sessionId,
@@ -437,7 +439,11 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       );
       if (isStale()) return;
 
-      const rawItems = capTraceCount(rawIn.items ?? [], subsetSize);
+      const gatedIds = new Set(gatedInputs.map((r) => String(r.spectrum_id || "")));
+      const rawItems = capTraceCount(
+        (rawIn.items ?? []).filter((it) => gatedIds.has(String(it.spectrum_id || ""))),
+        subsetSize
+      );
       const fillOpacity = Math.max(0, Math.min(1, typeof fp.fill_opacity === "number" ? fp.fill_opacity : 0.15));
       const nSpectra = rawItems.length;
 
@@ -477,7 +483,11 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         }
         const residual =
           fitResp.residual ??
-          it.y.map((yv, i) => Number(yv) - Number(fitResp.y_hat?.[i] ?? 0));
+          it.y.map((yv, i) => {
+            const yh = fitResp.y_hat?.[i];
+            if (yh == null || !Number.isFinite(Number(yh))) return null;
+            return Number(yv) - Number(yh);
+          });
         const built = buildFitResidualFigure({
           x: it.x,
           y: it.y,

@@ -1,6 +1,9 @@
 /**
  * Shared Plotly figure builder for fit overlay + residual subplot (65:35).
  * Peaks are drawn on top of background when background components are present.
+ *
+ * Null/NaN in model curves (outside an internal fit window) must stay gaps —
+ * never coerce with ``Number(x) || 0`` or fills drop to zero and wreck the plot.
  */
 
 import { isPeakComponentType, isXpsBgComponentType } from "./fittingUtils";
@@ -9,7 +12,7 @@ import type { FitDiagnostics } from "./api";
 export type FitPlotComponent = {
   component_id: string;
   component_type: string;
-  y_hat?: number[] | null;
+  y_hat?: Array<number | null> | null;
 };
 
 export function isBackgroundComponentType(ct: string): boolean {
@@ -17,26 +20,49 @@ export function isBackgroundComponentType(ct: string): boolean {
   return t === "polynomial_background" || isXpsBgComponentType(t);
 }
 
+/** Keep finite values; map null/undefined/NaN to NaN so Plotly breaks the line. */
+export function gapNumber(v: unknown): number {
+  if (v == null) return Number.NaN;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : Number.NaN;
+}
+
+export function gapSeries(ys: Array<number | null | undefined> | null | undefined, n?: number): number[] {
+  const src = ys ?? [];
+  const len = n ?? src.length;
+  const out = new Array<number>(len);
+  for (let i = 0; i < len; i++) out[i] = gapNumber(src[i]);
+  return out;
+}
+
 export function sumBackgroundY(
   components: FitPlotComponent[],
   n: number
 ): { bgSum: number[]; hasBg: boolean } {
-  const bgSum = new Array(n).fill(0);
+  const bgSum = new Array(n).fill(Number.NaN);
   let hasBg = false;
   for (const c of components) {
     if (!isBackgroundComponentType(c.component_type)) continue;
     const y = c.y_hat;
     if (!y || y.length !== n) continue;
     hasBg = true;
-    for (let i = 0; i < n; i++) bgSum[i] += Number(y[i]) || 0;
+    for (let i = 0; i < n; i++) {
+      const v = gapNumber(y[i]);
+      if (!Number.isFinite(v)) continue;
+      bgSum[i] = Number.isFinite(bgSum[i]) ? bgSum[i] + v : v;
+    }
   }
   return { bgSum, hasBg };
 }
 
-export function peakOnBackground(peak: number[], bgSum: number[]): number[] {
+export function peakOnBackground(peak: Array<number | null | undefined>, bgSum: number[]): number[] {
   const n = Math.min(peak.length, bgSum.length);
-  const out = new Array(n);
-  for (let i = 0; i < n; i++) out[i] = (Number(peak[i]) || 0) + (Number(bgSum[i]) || 0);
+  const out = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    const p = gapNumber(peak[i]);
+    const b = gapNumber(bgSum[i]);
+    out[i] = Number.isFinite(p) && Number.isFinite(b) ? p + b : Number.NaN;
+  }
   return out;
 }
 
@@ -61,8 +87,8 @@ function fmtDiag(v: number | null | undefined, digits = 4): string {
 export type BuildFitResidualFigureArgs = {
   x: number[];
   y: number[];
-  yHat: number[];
-  residual: number[];
+  yHat: Array<number | null>;
+  residual: Array<number | null>;
   components: FitPlotComponent[];
   diagnostics?: FitDiagnostics | null;
   title?: string;
@@ -86,6 +112,8 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
     fillOpacity = 0.25,
   } = args;
   const n = x.length;
+  const yHatGap = gapSeries(yHat, n);
+  const residualGap = gapSeries(residual, n);
   const { bgSum, hasBg } = sumBackgroundY(components, n);
   const traces: Record<string, unknown>[] = [];
 
@@ -102,16 +130,18 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
     type: "scatter",
     mode: "lines",
     x,
-    y: yHat,
+    y: yHatGap,
     name: "Fit (sum)",
     line: { color: "rgba(231,76,60,0.95)", width: 2 },
+    connectgaps: false,
     legendgroup: "fit",
   });
 
   let peakColorIdx = 0;
   for (const comp of components) {
-    const cy = comp.y_hat;
-    if (!cy?.length) continue;
+    const cyRaw = comp.y_hat;
+    if (!cyRaw?.length) continue;
+    const cy = gapSeries(cyRaw, n);
     const ct = comp.component_type;
     const label = `${ct} [${comp.component_id}]`;
     if (isBackgroundComponentType(ct)) {
@@ -122,6 +152,7 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
         y: cy,
         name: label,
         line: { color: "#7f8c8d", width: 1.5, dash: "dot" },
+        connectgaps: false,
         legendgroup: "bg",
       });
       continue;
@@ -134,6 +165,7 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
         y: cy,
         name: label,
         line: { color: "#95a5a6", width: 1, dash: "dash" },
+        connectgaps: false,
       });
       continue;
     }
@@ -147,6 +179,7 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
         y: bgSum,
         name: `${label} (bg ref)`,
         line: { width: 0 },
+        connectgaps: false,
         showlegend: false,
         hoverinfo: "skip",
         legendgroup: `peak-${comp.component_id}`,
@@ -158,6 +191,7 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
         y: peakOnBackground(cy, bgSum),
         name: label,
         line: { color, width: 1.5 },
+        connectgaps: false,
         fill: "tonexty",
         fillcolor: hexToRgba(color, fillOpacity),
         legendgroup: `peak-${comp.component_id}`,
@@ -170,6 +204,7 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
         y: cy,
         name: label,
         line: { color, width: 1.5 },
+        connectgaps: false,
         fill: "tozeroy",
         fillcolor: hexToRgba(color, fillOpacity),
       });
@@ -180,7 +215,7 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
     type: "scatter",
     mode: "markers",
     x,
-    y: residual,
+    y: residualGap,
     name: "Residual",
     marker: { color: "#2c3e50", size: 3, opacity: 0.7 },
     yaxis: "y2",

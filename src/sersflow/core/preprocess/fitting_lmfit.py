@@ -215,6 +215,7 @@ def _apply_xps_fit_safeguards(
             param_keys_per_comp,
             lo,
             hi,
+            initial_area_ratios=problem.initial_area_ratios,
         )
         auto_applied = True
 
@@ -369,6 +370,7 @@ def fit_curve_lmfit(problem: FitProblem) -> FitResult:
         lo_list,
         hi_list,
         only_nonpositive=(mode != "auto"),
+        initial_area_ratios=problem.initial_area_ratios,
     )
     p0_list = _apply_auto_fermi_amplitudes(
         problem.y,

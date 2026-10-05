@@ -48,12 +48,27 @@ def test_expand_fit_curves_passthrough_outside() -> None:
     mask = fit_window_mask(x, params)
     y_fit = np.full(int(mask.sum()), 99.0)
     comps = [np.full(int(mask.sum()), 5.0)]
-    y_hat, comps_full = expand_fit_curves_to_full(xy, params, y_fit, comps)
+    y_hat, comps_full = expand_fit_curves_to_full(xy, params, y_fit, comps, outside="passthrough")
     assert y_hat.shape == x.shape
     assert np.allclose(y_hat[~mask], y[~mask])
     assert np.allclose(y_hat[mask], 99.0)
     assert comps_full[0].shape == x.shape
     assert np.allclose(comps_full[0][~mask], 0.0)
+    assert np.allclose(comps_full[0][mask], 5.0)
+
+
+def test_expand_fit_curves_nan_outside_for_plots() -> None:
+    x = np.linspace(0.0, 10.0, 11)
+    y = np.arange(11, dtype=float)
+    xy = XY(x=x, y=y)
+    params = {"fit_min_x": 3.0, "fit_max_x": 7.0}
+    mask = fit_window_mask(x, params)
+    y_fit = np.full(int(mask.sum()), 99.0)
+    comps = [np.full(int(mask.sum()), 5.0)]
+    y_hat, comps_full = expand_fit_curves_to_full(xy, params, y_fit, comps, outside="nan")
+    assert np.all(np.isnan(y_hat[~mask]))
+    assert np.allclose(y_hat[mask], 99.0)
+    assert np.all(np.isnan(comps_full[0][~mask]))
     assert np.allclose(comps_full[0][mask], 5.0)
 
 
