@@ -63,6 +63,10 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
   ({ figure, previousFigure, plotStyle, ghostOverlayEnabled, className, onPlotClick, onPlotHover }, ref) => {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const divRef = useRef<HTMLDivElement | null>(null);
+  /** Monotonic id so only the latest draw applies post-await DOM work. */
+  const drawIdRef = useRef(0);
+  /** Serialize Plotly calls — a cancelled newPlot/react must finish before the next starts. */
+  const drawChainRef = useRef<Promise<void>>(Promise.resolve());
   useImperativeHandle(ref, () => divRef.current as HTMLDivElement);
 
   const combined = useMemo(() => {
@@ -163,10 +167,22 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
   useEffect(() => {
     const el = divRef.current;
     if (!el) return;
+
     if (!themed) {
-      Plotly.purge(el);
+      const drawId = ++drawIdRef.current;
+      drawChainRef.current = drawChainRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          if (drawId !== drawIdRef.current) return;
+          try {
+            Plotly.purge(el);
+          } catch {
+            // ignore
+          }
+        });
       return;
     }
+
     const hasSubplots =
       isPlainObject((themed.layout as any)?.yaxis2) ||
       isPlainObject((themed.layout as any)?.yaxis3) ||
@@ -176,41 +192,49 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
       scrollZoom: false,
     } as const;
 
+    const drawId = ++drawIdRef.current;
     let cancelled = false;
-    const draw = async () => {
-      try {
-        // Plotly.react/newPlot return promises — resizing or a second update before they
-        // settle can leave the plot blank (often shows up as every-other refresh failing).
-        if (hasSubplots || !(el as any).data) {
-          Plotly.purge(el);
-          if (cancelled) return;
-          await Plotly.newPlot(el, themed.data, themed.layout, opts);
-        } else {
-          await Plotly.react(el, themed.data, themed.layout, opts);
-        }
-      } catch {
-        if (cancelled) return;
+    const payload = themed;
+
+    drawChainRef.current = drawChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (cancelled || drawId !== drawIdRef.current) return;
         try {
-          Plotly.purge(el);
-          await Plotly.newPlot(el, themed.data, themed.layout, opts);
+          // Prefer react when possible; fall back to purge+newPlot for subplots / empty host.
+          // Always await so a superseded draw cannot finish after the next one started.
+          if (hasSubplots || !(el as any).data) {
+            Plotly.purge(el);
+            if (cancelled || drawId !== drawIdRef.current) return;
+            await Plotly.newPlot(el, payload.data, payload.layout, opts);
+          } else {
+            await Plotly.react(el, payload.data, payload.layout, opts);
+          }
         } catch {
-          return;
+          if (cancelled || drawId !== drawIdRef.current) return;
+          try {
+            Plotly.purge(el);
+            if (cancelled || drawId !== drawIdRef.current) return;
+            await Plotly.newPlot(el, payload.data, payload.layout, opts);
+          } catch {
+            return;
+          }
         }
-      }
-      if (cancelled) return;
-      constrainPlotDom(el);
-      try {
-        Plotly.Plots.resize(el);
-      } catch {
-        // ignore
-      }
-    };
-    void draw();
+        if (cancelled || drawId !== drawIdRef.current) return;
+        constrainPlotDom(el);
+        try {
+          Plotly.Plots.resize(el);
+        } catch {
+          // ignore
+        }
+      });
+
     return () => {
       cancelled = true;
     };
   }, [themed]);
 
+  // Observe host size once — recreating the observer on every figure change races with Plotly.react.
   useEffect(() => {
     const el = divRef.current;
     const host = wrapRef.current ?? el;
@@ -225,7 +249,7 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
     });
     ro.observe(host);
     return () => ro.disconnect();
-  }, [themed]);
+  }, []);
 
   useEffect(() => {
     const el = divRef.current as any;
