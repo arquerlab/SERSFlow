@@ -120,6 +120,7 @@ export function shortXpsRegionLabel(region: string | null | undefined): string {
   if (/^vb$/i.test(t)) return "vb";
   const cleaned = t
     .replace(/valence\s*bands?/gi, "")
+    .replace(/valencebands?/gi, "")
     .replace(/fermi(?:\s*edge)?/gi, "")
     .replace(/\bvb\b/gi, "")
     .replace(/^[-_\s]+|[-_\s]+$/g, "")

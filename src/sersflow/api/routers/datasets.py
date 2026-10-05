@@ -20,7 +20,7 @@ from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.api.services.dataset_export import export_dataset_package, import_dataset_package
 from sersflow.api.services.dataset_restore import restore_dataset_uploads
 from sersflow.api.services.datasets_service import create_dataset_from_uploads
-from sersflow.api.services.filter_catalog import build_filter_fields_catalog, list_xps_regions_for_dataset
+from sersflow.api.services.filter_catalog import build_filter_fields_catalog, list_xps_regions_payload
 from sersflow.core.metrics.compute import compute_metrics
 from sersflow.core.pipeline.cache import InProcessLRUCache
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
@@ -139,7 +139,7 @@ def list_dataset_xps_regions(dataset_id: str, request: Request) -> dict[str, Any
     rec = get_dataset(dataset_id, owner_user_id=user_id)
     if rec is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    return {"regions": list_xps_regions_for_dataset(rec)}
+    return list_xps_regions_payload(rec)
 
 
 @router.get("/{dataset_id}/filter-fields")

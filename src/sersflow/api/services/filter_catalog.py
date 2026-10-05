@@ -181,17 +181,43 @@ def build_filter_fields_catalog(dataset: DatasetRecord) -> list[dict[str, Any]]:
 def list_xps_regions_for_dataset(dataset: DatasetRecord) -> list[dict[str, Any]]:
     """Aggregate xps_region counts from upload_labels.vms_spectra joined on record_index."""
     counts: dict[str, int] = {}
+    for region in iter_spectrum_xps_regions(dataset):
+        if not region:
+            continue
+        counts[region] = counts.get(region, 0) + 1
+    return [{"region": k, "count": counts[k]} for k in sorted(counts.keys())]
+
+
+def iter_spectrum_xps_regions(dataset: DatasetRecord) -> list[str]:
+    """
+    Per-spectrum ``xps_region`` labels aligned with ``dataset.spectra`` order.
+
+    Empty string when a spectrum has no resolvable region. Uses upload_labels store
+    (not the uploads registry), so unloaded files still resolve.
+    """
     paths = sorted({str(s.relative_path) for s in dataset.spectra if s.relative_path})
     con = with_connection()
     try:
         labels_by_path = fetch_upload_labels_for_paths(con, paths)
     finally:
         con.close()
+    out: list[str] = []
     for s in dataset.spectra:
         lab = labels_by_path.get(str(s.relative_path)) or {}
         flat = labels_for_spectrum(lab, record_index=s.record_index)
-        region = str(flat.get("xps_region") or "").strip()
+        out.append(str(flat.get("xps_region") or "").strip())
+    return out
+
+
+def list_xps_regions_payload(dataset: DatasetRecord) -> dict[str, Any]:
+    """Regions summary plus per-spectrum region list for subset builders."""
+    spectrum_regions = iter_spectrum_xps_regions(dataset)
+    counts: dict[str, int] = {}
+    for region in spectrum_regions:
         if not region:
             continue
         counts[region] = counts.get(region, 0) + 1
-    return [{"region": k, "count": counts[k]} for k in sorted(counts.keys())]
+    return {
+        "regions": [{"region": k, "count": counts[k]} for k in sorted(counts.keys())],
+        "spectrum_regions": spectrum_regions,
+    }

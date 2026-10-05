@@ -234,7 +234,9 @@ export type FilterFieldCatalogItem = {
 };
 
 export function fetchDatasetXpsRegions(datasetId: string) {
-  return fetchJson<{ regions: XpsRegionCount[] }>(`/datasets/${encodeURIComponent(datasetId)}/xps-regions`);
+  return fetchJson<{ regions: XpsRegionCount[]; spectrum_regions?: string[] }>(
+    `/datasets/${encodeURIComponent(datasetId)}/xps-regions`
+  );
 }
 
 export function fetchDatasetFilterFields(datasetId: string) {

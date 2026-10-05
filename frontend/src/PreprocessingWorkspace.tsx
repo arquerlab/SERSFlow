@@ -15,7 +15,7 @@ import { ResizableVerticalSplit } from "./components/ResizableVerticalSplit";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { acceptFromFormats, useFormatsCatalog, useMergedFormatUi } from "./preprocess/hooks/useFormatsCatalog";
 import { usePipelineStepsCatalog, stepSpecsFromCatalog } from "./preprocess/hooks/usePipelineStepsCatalog";
-import { fetchUploadsList, UPLOADS_LIST_QUERY_KEY, useUploadsList } from "./preprocess/hooks/useUploadsList";
+import { UPLOADS_LIST_QUERY_KEY, useUploadsList } from "./preprocess/hooks/useUploadsList";
 import {
   clearAllDatasets,
   createDatasetFromUploads,
@@ -158,7 +158,6 @@ import { LowSignalFilterEditor } from "./preprocess/LowSignalFilterEditor";
 import { OutlierDetectionEditor } from "./preprocess/OutlierDetectionEditor";
 import { MetadataFilterEditor } from "./preprocess/MetadataFilterEditor";
 import { TickDropdown } from "./preprocess/TickDropdown";
-import { getBlockSpectra } from "./preprocess/uploadBlockSpectra";
 import { selectionMixesTechniques } from "./preprocess/uploadXpsRegionGroups";
 import { dualXpsBackgroundConflict } from "./preprocess/xpsBackgroundGuard";
 import { AnalyzeContextBanner } from "./preprocess/components/AnalyzeContextBanner";
@@ -686,10 +685,15 @@ export default function PreprocessingWorkspace() {
   async function applySavedSubset(s: SavedSubset) {
     if (!sessionId) return;
     try {
+      const sameIndices = (s.indices || []).join(",") === subsetIndices.join(",");
       await updateSessionSubset(sessionId, { kind: "indices", indices: s.indices });
       setSubsetIndices(s.indices);
       setActiveSubsetId(s.id);
       setSubsetSource(s.label);
+      // Auto-run only reacts to index changes; re-selecting the same subset must force a plot.
+      if (sameIndices && autoRun && mode === "explore") {
+        void runExplorePlot().catch((e) => setLastError(String((e as Error)?.message ?? e)));
+      }
     } catch (e) {
       setLastError(String((e as Error)?.message ?? e));
     }
@@ -1281,22 +1285,17 @@ export default function PreprocessingWorkspace() {
                     if (!sessionId || !datasetId) return;
                     const spectra = datasetQ.data?.dataset?.spectra ?? [];
                     const picks = regionSubsetPicks;
-                    const labJson = await fetchUploadsList(5000);
-                    const byPath = new Map<string, any>(
-                      (labJson.items ?? []).map((it: any) => [String(it.relative_path), it.labels || {}])
-                    );
+                    // Resolve regions via dataset labels store (same as /xps-regions), not /io/uploads —
+                    // unloaded files still have labels but are absent from the uploads registry.
+                    const regionsPayload = await fetchDatasetXpsRegions(datasetId);
+                    const spectrumRegions = Array.isArray(regionsPayload.spectrum_regions)
+                      ? regionsPayload.spectrum_regions
+                      : [];
                     const indices: number[] = [];
                     spectra.forEach((s, i) => {
-                      const labels = byPath.get(s.relative_path) || {};
-                      const blocks = getBlockSpectra(labels);
-                      let region: string | undefined;
-                      if (Object.keys(blocks).length && s.record_index != null) {
-                        const b = blocks[String(s.record_index)];
-                        if (b) region = String(b.xps_region || "");
-                      } else if (typeof labels.xps_region === "string") {
-                        region = labels.xps_region;
-                      }
-                      if (region && spectrumRegionMatchesPicks(region, picks)) indices.push(i);
+                      const region = String(spectrumRegions[i] ?? "").trim() || undefined;
+                      const matched = !!(region && spectrumRegionMatchesPicks(region, picks));
+                      if (matched) indices.push(i);
                     });
                     if (!indices.length) {
                       setLastError("No spectra match the selected XPS regions.");
