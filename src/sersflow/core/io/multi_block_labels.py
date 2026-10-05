@@ -29,6 +29,7 @@ _LOADER_ONLY_STRUCTURAL_KEYS = frozenset(
     {
         "technique",
         "acquired_at",
+        "experiment_id",
         "analyser_work_function_eV",
         "x_label",
         "x_axis_converted_from",
@@ -214,9 +215,11 @@ def build_vms_block_search_text(
 ) -> str:
     """Search text for a VAMAS block: path context + name/id/comments/params."""
     path_text = build_search_text(path, parent_levels=parent_levels)
+    # Do not include experiment_id / sample identifier here: values like "05mA" are
+    # sample names and would be mis-parsed as current density by label extractors.
+    # Enrich sets ``sample`` from meta.experiment_id explicitly.
     parts: list[Any] = [path_text, meta.get("block_name")]
     if block is not None:
-        parts.append(getattr(block, "experiment_id", None))
         parts.append(getattr(block, "source_label", None))
         extras = getattr(block, "extra_fields", None) or {}
         if isinstance(extras, dict):

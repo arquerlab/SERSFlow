@@ -172,6 +172,8 @@ def block_meta_dict(block: VamasBlock) -> dict[str, Any]:
         "xps_species": block.species,
         "xps_transition": block.transition,
         "block_name": block.block_name,
+        # ISO 14976 sample identifier (line below block name / region).
+        "experiment_id": block.experiment_id,
         "spectrum_role": role["spectrum_role"],
         "replicate_index": role["replicate_index"],
         "technique": block.technique,

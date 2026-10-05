@@ -402,6 +402,7 @@ def test_metadata_keys_round_trip_on_multi(tmp_path: Path) -> None:
         "xps_species",
         "xps_transition",
         "block_name",
+        "experiment_id",
         "spectrum_role",
         "replicate_index",
         "technique",
@@ -411,6 +412,70 @@ def test_metadata_keys_round_trip_on_multi(tmp_path: Path) -> None:
     for m in ds.meta:
         assert expected.issubset(m.keys())
         assert m["technique"] == "XPS"
+        assert m["experiment_id"] == "exp-1"
+        assert m["acquired_at"] is not None
+        assert str(m["acquired_at"]).startswith("2020-")
+
+
+def test_enrich_vms_uses_sample_identifier_and_acquired_at(tmp_path: Path) -> None:
+    """VAMAS sample identifier + block datetime become sample / acquired_utc (not file mtime)."""
+    from sersflow.core.io.formats.enrich import enrich_multi_spectrum
+    from sersflow.core.io.multi_block_labels import get_block_spectra
+    from sersflow.core.models.datasets import MultiSpectrumDataset
+
+    p = write_mixed_region_vms(tmp_path / "mixed.vms")
+    ds = load_dataset(p)
+    # Simulate realistic sample identifiers with current / chemistry tokens.
+    meta = []
+    for i, m in enumerate(ds.meta):
+        md = dict(m)
+        if i == 0:
+            md["experiment_id"] = "05mA"
+        elif i == 1:
+            md["experiment_id"] = "05mA_pH7_CO2_0.1M_KOH"
+        else:
+            md["experiment_id"] = "OCP_calW4f"
+        meta.append(md)
+    ds2 = MultiSpectrumDataset(kind="multi", xs=ds.xs, ys=ds.ys, meta=tuple(meta))
+
+    er = enrich_multi_spectrum(
+        p,
+        ds2,
+        {"acquired_utc": "1999-01-01T00:00:00Z", "sample": "from_filename"},
+        format_id="vamas",
+    )
+    blocks = get_block_spectra(er.labels)
+    assert blocks["0"]["sample"] == "05mA"
+    assert blocks["0"]["current_density_A_cm2"] == pytest.approx(0.005)
+    assert blocks["0"]["experiment_id"] == "05mA"
+    assert str(blocks["0"]["acquired_at"]).startswith("2020-")
+    assert str(er.labels["acquired_utc"]).startswith("2020-")
+
+    assert blocks["1"]["sample"] == "05mA_pH7_CO2_0.1M_KOH"
+    assert blocks["1"]["ph"] == pytest.approx(7.0)
+    assert blocks["1"]["gas"] == "CO2"
+    assert blocks["1"]["electrolyte"] == "KOH"
+    assert blocks["1"]["concentration_M"] == pytest.approx(0.1)
+    assert blocks["1"]["current_density_A_cm2"] == pytest.approx(0.005)
+
+    assert blocks["2"]["sample"] == "OCP_calW4f"
+    assert blocks["2"]["potential_ref"] == "OCP"
+
+    # User-edited sample / current on a prior block is preserved.
+    er2 = enrich_multi_spectrum(
+        p,
+        ds2,
+        {
+            "vms_spectra": {
+                "0": {"sample": "manual_sample", "current_density_A_cm2": 0.99},
+            }
+        },
+        format_id="vamas",
+    )
+    blocks2 = get_block_spectra(er2.labels)
+    assert blocks2["0"]["sample"] == "manual_sample"
+    assert blocks2["0"]["current_density_A_cm2"] == pytest.approx(0.99)
+    assert blocks2["1"]["sample"] == "05mA_pH7_CO2_0.1M_KOH"
 
 
 def test_create_dataset_vms_averages_and_labels(tmp_path: Path, monkeypatch) -> None:

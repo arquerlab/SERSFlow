@@ -315,6 +315,10 @@ async def upload_files(
                     ) or "xps"
                     xps_regions = dataset_xps_regions(ds)
                     spectrum_count = dataset_spectrum_count(ds)
+                    # Enrich may replace acquired_utc with per-block VAMAS times.
+                    vamas_acquired = labels.get("acquired_utc") if isinstance(labels, dict) else None
+                    if isinstance(vamas_acquired, str) and vamas_acquired.strip():
+                        acquired = vamas_acquired.strip()
                 except Exception:
                     logger.exception("Upload %s: multi-spectrum enrich failed", rel)
 

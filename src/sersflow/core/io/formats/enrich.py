@@ -18,6 +18,47 @@ from sersflow.core.io.multi_block_labels import (
 from sersflow.core.labels.api import extract_labels_from_text
 from sersflow.core.models.datasets import Dataset, MultiSpectrumDataset
 
+# Experimental keys we try to scrape from the VAMAS sample identifier string.
+_SAMPLE_ID_EXPERIMENTAL_KEYS = frozenset(
+    {
+        "gas",
+        "ph",
+        "current_density_A_cm2",
+        "potential_V",
+        "potential_ref",
+        "electrolyte",
+        "concentration_M",
+    }
+)
+
+
+def _merge_labels_from_sample_identifier(
+    experimental: dict[str, Any],
+    *,
+    experiment_id: str,
+    prev_block: dict[str, Any] | None,
+    path_hint: str,
+) -> None:
+    """
+    Keep ``sample`` as the full VAMAS identifier, and additionally scrape current /
+    gas / pH / electrolyte / potential tokens when they appear in that string.
+    """
+    exp_id = str(experiment_id or "").strip()
+    if not exp_id:
+        return
+    prev = prev_block or {}
+    prev_sample = str(prev.get("sample") or "").strip()
+    experimental["sample"] = prev_sample or exp_id
+
+    scraped = extract_labels_from_text(exp_id, path_hint=path_hint)
+    for key in _SAMPLE_ID_EXPERIMENTAL_KEYS:
+        prev_val = prev.get(key)
+        if prev_val is not None and str(prev_val).strip() != "":
+            experimental[key] = prev_val
+            continue
+        if key in scraped:
+            experimental[key] = scraped[key]
+
 
 def enrich_multi_spectrum(
     path: Path,
@@ -68,9 +109,29 @@ def enrich_multi_spectrum(
             previous_labels=experimental_only(prev_block) or None,
             path_hint=f"{path}#{i}",
         )
+        # ISO 14976 sample identifier (below region, before date):
+        # keep as sample, and scrape current/gas/pH/electrolyte/potential when present.
+        if use_vms_search:
+            _merge_labels_from_sample_identifier(
+                experimental,
+                experiment_id=str(md.get("experiment_id") or ""),
+                prev_block=prev_block if isinstance(prev_block, dict) else None,
+                path_hint=f"{path}#{i}",
+            )
         merged_struct = {k: v for k, v in md.items() if k not in EXPERIMENTAL_BLOCK_KEYS}
         block_map[str(i)] = {**merged_struct, **experimental}
 
     set_block_spectra(labels, block_map)
     labels = lift_nxs_skip_summary_to_labels(labels, block_map)
+
+    # Prefer per-block VAMAS acquisition times over client file mtime for path-level acquired_utc.
+    acquired_times = [
+        str(b.get("acquired_at")).strip()
+        for b in block_map.values()
+        if isinstance(b, dict) and b.get("acquired_at")
+    ]
+    acquired_times = [t for t in acquired_times if t]
+    if acquired_times:
+        labels["acquired_utc"] = min(acquired_times)
+
     return EnrichResult(labels=labels, block_map=block_map, dataset=dataset)
