@@ -9,6 +9,29 @@ export type SavedSubset = {
 
 const MAX_SUBSETS_DEFAULT = 15;
 
+/** Deterministic sample of up to ``n`` values from ``pool`` (Fisher–Yates with mulberry32). */
+export function sampleIndices(pool: number[], n: number, seed: number): number[] {
+  const arr = pool.map((v) => Number(v)).filter((v) => Number.isInteger(v) && v >= 0);
+  const want = Math.max(0, Math.min(Number(n) || 0, arr.length));
+  if (want <= 0) return [];
+  if (want >= arr.length) return arr;
+  let s = (Number(seed) >>> 0) || 1;
+  const rand = () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = arr[i]!;
+    arr[i] = arr[j]!;
+    arr[j] = tmp;
+  }
+  return arr.slice(0, want);
+}
+
 export function storageKey(datasetId: string): string {
   return `sersflow.preprocess.savedSubsets.v1.dataset:${datasetId}`;
 }

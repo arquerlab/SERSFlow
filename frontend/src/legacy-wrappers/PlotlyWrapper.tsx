@@ -68,7 +68,6 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
   /** Serialize Plotly calls — a cancelled newPlot/react must finish before the next starts. */
   const drawChainRef = useRef<Promise<void>>(Promise.resolve());
   const drawingRef = useRef(false);
-  const lastTraceCountRef = useRef<number | null>(null);
   useImperativeHandle(ref, () => divRef.current as HTMLDivElement);
 
   const combined = useMemo(() => {
@@ -188,10 +187,6 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
       return;
     }
 
-    const hasSubplots =
-      isPlainObject((themed.layout as any)?.yaxis2) ||
-      isPlainObject((themed.layout as any)?.yaxis3) ||
-      Array.isArray((themed.layout as any)?.grid?.rows);
     const opts = {
       responsive: true,
       scrollZoom: false,
@@ -199,10 +194,7 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
 
     const drawId = ++drawIdRef.current;
     const payload = themed;
-    const traceCount = Array.isArray(payload.data) ? payload.data.length : 0;
-    const prevCount = lastTraceCountRef.current;
-    // Trace-count changes (subset switch 2↔4) are unreliable with Plotly.react — force newPlot.
-    const forceNew = hasSubplots || !(el as any).data || prevCount !== traceCount;
+    // Always newPlot — Plotly.react blanks when trace count is unchanged (same-size subset switch).
 
     drawChainRef.current = drawChainRef.current
       .catch(() => undefined)
@@ -211,20 +203,14 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
         if (drawId !== drawIdRef.current) return;
         drawingRef.current = true;
         try {
-          if (forceNew) {
-            // Purge+newPlot must be atomic: never return between purge and newPlot or the DOM stays blank.
-            Plotly.purge(el);
-            await Plotly.newPlot(el, payload.data, payload.layout, opts);
-          } else {
-            await Plotly.react(el, payload.data, payload.layout, opts);
-          }
-          lastTraceCountRef.current = traceCount;
+          // Purge+newPlot must be atomic: never return between purge and newPlot or the DOM stays blank.
+          Plotly.purge(el);
+          await Plotly.newPlot(el, payload.data, payload.layout, opts);
         } catch {
           if (drawId !== drawIdRef.current) return;
           try {
             Plotly.purge(el);
             await Plotly.newPlot(el, payload.data, payload.layout, opts);
-            lastTraceCountRef.current = traceCount;
           } catch {
             return;
           }

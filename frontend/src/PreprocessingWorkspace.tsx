@@ -117,7 +117,7 @@ function notifyUploadsChanged() {
     // ignore
   }
 }
-import { addSavedSubset, clearSavedSubsets, deleteSavedSubset, loadSavedSubsets, type SavedSubset } from "./preprocess/subsets";
+import { addSavedSubset, clearSavedSubsets, deleteSavedSubset, loadSavedSubsets, sampleIndices, type SavedSubset } from "./preprocess/subsets";
 import {
   type EditorStep,
   type FieldSpec,
@@ -1303,9 +1303,8 @@ export default function PreprocessingWorkspace() {
                       setLastError("No spectra match the selected XPS regions.");
                       return;
                     }
-                    // Respect subset size (same idea as random subsets): keep a plottable slice,
-                    // not every matching region — otherwise every "vb-all" tile is identical and
-                    // session runs load dozens of spectra only to discard them client-side.
+                    // Respect subset size (same idea as random subsets): sample a plottable slice
+                    // from matching regions with a fresh seed so repeated creates differ.
                     const want = Math.max(
                       1,
                       Math.min(
@@ -1314,7 +1313,9 @@ export default function PreprocessingWorkspace() {
                         indices.length
                       )
                     );
-                    const kept = indices.slice(0, want);
+                    const seed = Date.now() % 1_000_000_000;
+                    setSubsetSeed(seed);
+                    const kept = sampleIndices(indices, want, seed);
                     await updateSessionSubset(sessionId, { kind: "indices", indices: kept });
                     setSubsetIndices(kept);
                     const label = regionSubsetDisplayName(picks);
@@ -1323,6 +1324,7 @@ export default function PreprocessingWorkspace() {
                       label,
                       indices: kept,
                       size: kept.length,
+                      seed,
                       createdAt: Date.now(),
                     };
                     const next = addSavedSubset(datasetId, subset, 15);
