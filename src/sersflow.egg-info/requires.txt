@@ -9,6 +9,8 @@ matplotlib
 renishawWiRE
 bcrypt
 pybaselines
+lmfitxps>=4.2.0
+h5py>=3.8
 
 [client]
 httpx>=0.27

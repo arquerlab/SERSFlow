@@ -10,6 +10,7 @@ from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.pipeline_qc import apply_pipeline_qc_filters, pipeline_without_qc_steps
 from sersflow.api.services.reference_runtime import filter_reference_spectra, hydrate_reference_transforms
 from sersflow.api.services.sessions_service import resolve_subset_indices
+from sersflow.infra.sessions_store import get_session
 from sersflow.core.metrics.feature_operations import (
     evaluate_feature_operations,
     operation_feature_key_groups_for_pipeline,
@@ -195,13 +196,23 @@ def prepare_run_context(*, rec: Any) -> tuple[Pipeline, SubsetStrategy, Any]:
     """
     Resolve pipeline and subset for a run record.
 
-    If session_id is set, session wins. Otherwise load pipeline_json + params_json.subset.
+    Prefers the pipeline snapshot stored with the run when available, so analysis exports
+    and previews stay consistent with the completed run instead of drifting with live edits.
     """
     if rec.session_id:
         sess = get_session(rec.session_id)
         if sess is None:
             raise ValueError("session not found")
-        return sess.pipeline, sess.subset, sess
+        pipeline = sess.pipeline
+        if rec.pipeline_json:
+            try:
+                data = json.loads(rec.pipeline_json)
+                if isinstance(data, dict) and data.get("pipeline"):
+                    data = data["pipeline"]
+                pipeline = Pipeline.model_validate(data)
+            except Exception:
+                pass
+        return pipeline, sess.subset, sess
 
     pl, sub = _pipeline_subset_from_inline_run(rec)
     return pl, sub, None

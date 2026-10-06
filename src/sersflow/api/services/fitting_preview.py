@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 import numpy as np
 
+from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.analysis_runner import (
     _effective_pipeline_for_analysis,
@@ -66,13 +68,26 @@ def list_fitting_steps_for_pipeline(pipeline: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _resolved_refs_for_run(rec: Any, spectrum_ids: list[str] | None) -> tuple[Any, Any, list[Any], str]:
+def _pipeline_from_run(rec: Any) -> tuple[Any, Any, str]:
     pipeline, _preview_subset, sess = prepare_run_context(rec=rec)
+    if rec.pipeline_json:
+        try:
+            data = json.loads(rec.pipeline_json)
+            if isinstance(data, dict) and data.get("pipeline"):
+                data = data["pipeline"]
+            pipeline = Pipeline.model_validate(data)
+        except Exception:
+            pass
+    ns = (sess.cache.cache_namespace if sess and sess.cache else None) or rec.run_id
+    return pipeline, sess, ns
+
+
+def _resolved_refs_for_run(rec: Any, spectrum_ids: list[str] | None) -> tuple[Any, Any, list[Any], str]:
+    pipeline, sess, ns = _pipeline_from_run(rec)
     effective_pipeline, _ = _effective_pipeline_for_analysis(pipeline)
     ds = get_dataset_internal(rec.dataset_id)
     if ds is None:
         raise ValueError("dataset not found")
-    ns = (sess.cache.cache_namespace if sess and sess.cache else None) or rec.run_id
     effective_pipeline = hydrate_reference_transforms(effective_pipeline, ds, cache_namespace=ns)
     indices = resolve_subset_indices(dataset=ds, subset=_ANALYSIS_COHORT, pipeline=effective_pipeline)
     refs = filter_reference_spectra([ds.spectra[i] for i in indices], effective_pipeline)

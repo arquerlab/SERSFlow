@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 
 import pytest
@@ -183,3 +185,81 @@ def test_analysis_run_full_dataset_ignores_session_random_subset(tmp_path: Path,
     assert rec is not None
     assert rec.status == "completed"
     assert count_spectrum_rows(run_id) == 3
+
+
+def test_analysis_run_uses_stored_pipeline_snapshot_over_live_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fitting diagnostics/run paths must use the run's pipeline snapshot, not live session edits."""
+    monkeypatch.setenv("SERSFLOW_DB_PATH", str(tmp_path / "db.sqlite"))
+    monkeypatch.setenv("SERSFLOW_UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setenv("SERSFLOW_DATA_DIR", str(tmp_path / "data"))
+
+    batch = "b1"
+    (tmp_path / batch).mkdir()
+    f = tmp_path / batch / "s.txt"
+    f.write_text("wn\tint\n100\t1\n200\t5\n300\t2\n", encoding="utf-8")
+    rel = f"{batch}/s.txt"
+
+    md = DatasetMetadata(name="t")
+    spectra = [SpectrumRef(spectrum_id="sp_1", relative_path=rel, record_index=None)]
+    ds = create_dataset(owner_user_id="dev", metadata=md, spectra=spectra)
+
+    stored_pipe = Pipeline(
+        steps=[
+            PipelineStep(
+                name="spectral_intensities",
+                params={
+                    "probes": [
+                        {
+                            "id": "p1",
+                            "target_cm1": 200.0,
+                            "acquisition": "fixed",
+                            "method": "nearest",
+                            "extrapolation": "nan",
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+    live_pipe = Pipeline(
+        steps=[
+            PipelineStep(
+                name="spectral_intensities",
+                params={
+                    "probes": [
+                        {
+                            "id": "p_live",
+                            "target_cm1": 999.0,
+                            "acquisition": "fixed",
+                            "method": "nearest",
+                            "extrapolation": "nan",
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+    sess = create_session(dataset_id=ds.dataset_id, pipeline=live_pipe, subset=SubsetStrategy(kind="all"))
+
+    ph = pipeline_hash(stored_pipe)
+    sh = subset_hash(SubsetStrategy(kind="all"))
+    run_id = create_run_pending(
+        dataset_id=ds.dataset_id,
+        session_id=sess.session_id,
+        pipeline_hash=ph,
+        subset_hash=sh,
+        pipeline_json=json.dumps({"pipeline": stored_pipe.model_dump()}, separators=(",", ":")),
+        label=None,
+        pinned=False,
+        client_job_key=None,
+        params=None,
+    )
+
+    execute_analysis_run(run_id=run_id, job_id=None)
+
+    rec = get_run(run_id)
+    assert rec is not None
+    assert rec.status == "completed"
+    assert rec.feature_columns_json is not None
+    assert "I_p1" in rec.feature_columns_json
+    assert "I_p_live" not in rec.feature_columns_json
