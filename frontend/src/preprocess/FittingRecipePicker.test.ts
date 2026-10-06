@@ -7,6 +7,8 @@ import {
 } from "./FittingRecipePicker";
 import {
   defaultFittingEditorParams,
+  flattenFittingForPipeline,
+  renameFittingComponent,
   uniqueComponentIdAgainst,
   type FittingEditorParams,
 } from "./fittingUtils";
@@ -80,6 +82,55 @@ describe("uniqueComponentIdAgainst", () => {
     expect(uniqueComponentIdAgainst("Peak_1", used)).toBe("Peak_3");
     expect(uniqueComponentIdAgainst("foo", used)).toBe("foo");
     expect(uniqueComponentIdAgainst("foo", used)).toBe("foo_2");
+  });
+});
+
+describe("fitting component renames", () => {
+  it("remaps parameter links and recipe ownership", () => {
+    const fp: FittingEditorParams = {
+      ...defaultFittingEditorParams(undefined),
+      components: [
+        {
+          component_id: "water",
+          component_type: "gl",
+          degree: 0,
+          rows: [{ key: "fwhm", label: "FWHM", p0: 1, lower: 0, upper: 3 }],
+        },
+        {
+          component_id: "hydroxide",
+          component_type: "gl",
+          degree: 0,
+          rows: [{ key: "fwhm", label: "FWHM", p0: 1, lower: 0, upper: 3 }],
+        },
+      ],
+      param_links: [
+        { source_component_id: "water", source_key: "fwhm", target_component_id: "hydroxide", target_key: "fwhm", mode: "equal" },
+      ],
+      recipe_components: { o_1s: ["water", "hydroxide"] },
+    };
+    const next = renameFittingComponent(fp, 0, "water_organic");
+    expect(next.param_links).toEqual([
+      { source_component_id: "water_organic", source_key: "fwhm", target_component_id: "hydroxide", target_key: "fwhm", mode: "equal" },
+    ]);
+    expect(next.recipe_components?.o_1s).toEqual(["water_organic", "hydroxide"]);
+  });
+
+  it("does not send dangling legacy links to the fitter", () => {
+    const fp: FittingEditorParams = {
+      ...defaultFittingEditorParams(undefined),
+      components: [
+        {
+          component_id: "hydroxide",
+          component_type: "gl",
+          degree: 0,
+          rows: [{ key: "fwhm", label: "FWHM", p0: 1, lower: 0, upper: 3 }],
+        },
+      ],
+      param_links: [
+        { source_component_id: "water", source_key: "fwhm", target_component_id: "hydroxide", target_key: "fwhm", mode: "equal" },
+      ],
+    };
+    expect(flattenFittingForPipeline(fp).param_links).toBeUndefined();
   });
 });
 

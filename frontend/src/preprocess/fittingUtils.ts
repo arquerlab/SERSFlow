@@ -589,6 +589,37 @@ export function assignPeakNames(components: FittingComponentEditor[]): FittingCo
   });
 }
 
+/**
+ * Rename a component while retaining references that use its id. Parameter links
+ * and recipe ownership are both id-based, rather than position-based.
+ */
+export function renameFittingComponent(
+  fp: FittingEditorParams,
+  componentIndex: number,
+  componentId: string
+): FittingEditorParams {
+  const current = fp.components[componentIndex];
+  if (!current) return fp;
+  const previousId = String(current.component_id ?? "");
+  if (previousId === componentId) return fp;
+
+  const components = fp.components.slice();
+  components[componentIndex] = { ...current, component_id: componentId };
+  const remap = (id: string) => (id === previousId ? componentId : id);
+  const param_links = (fp.param_links ?? []).map((link) => ({
+    ...link,
+    source_component_id: remap(link.source_component_id),
+    target_component_id: remap(link.target_component_id),
+  }));
+  const recipe_components = Object.fromEntries(
+    Object.entries(fp.recipe_components ?? {}).map(([recipeId, ids]) => [
+      recipeId,
+      ids.map(remap),
+    ])
+  );
+  return { ...fp, components, param_links, recipe_components };
+}
+
 const TRAILING_NUM_RE = /^(.*?)([-_ ]?)(\d+)$/;
 
 /**
@@ -722,7 +753,16 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
     }
   }
   const region = String(fp.xps_region ?? "").trim();
-  const links = normalizeParamLinks(fp.param_links);
+  const validParamKeys = new Set(
+    named.flatMap((component) => component.rows.map((row) => linkKey(component.component_id, row.key)))
+  );
+  // A legacy draft can retain a link after deleting a peak or changing its model.
+  // Do not send those dangling links to the fitter.
+  const links = normalizeParamLinks(fp.param_links).filter(
+    (link) =>
+      validParamKeys.has(linkKey(link.source_component_id, link.source_key)) &&
+      validParamKeys.has(linkKey(link.target_component_id, link.target_key))
+  );
   const out: Record<string, unknown> = {
     output_mode: fp.output_mode,
     fill_opacity: fp.fill_opacity,

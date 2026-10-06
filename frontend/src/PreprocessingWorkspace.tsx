@@ -75,6 +75,7 @@ import {
   migrateFittingParamsToEditor,
   parseFittingComponentType,
   parseInitialAreaRatios,
+  renameFittingComponent,
   regionSubsetDisplayName,
   applyPeakShiftEv,
   PEAK_SHIFT_STEP_EV,
@@ -2146,9 +2147,7 @@ export default function PreprocessingWorkspace() {
                                 placeholder="auto if empty"
                                 value={comp.component_id}
                                 onChange={(e) => {
-                                  const next = fp.components.slice();
-                                  next[ci] = { ...comp, component_id: e.target.value };
-                                  updateSelectedFittingParams({ ...fp, components: next });
+                                  updateSelectedFittingParams(renameFittingComponent(fp, ci, e.target.value));
                                 }}
                                 style={{ width: "140px" }}
                                 title="Used in plots and analysis column prefixes. Leave empty for p1, p2, …"
@@ -2507,8 +2506,7 @@ export default function PreprocessingWorkspace() {
                       </button>
                     </>
                   );
-                }
-
+}
                 if (selectedStep.name === "spectral_intensities") {
                   return (
                     <SpectralIntensitiesProbeEditor
@@ -3019,4 +3017,3 @@ export default function PreprocessingWorkspace() {
     </div>
   );
 }
-
