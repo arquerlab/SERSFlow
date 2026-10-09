@@ -4,7 +4,7 @@
     "name": "DatasetPicker"
   },
   "index.html": {
-    "file": "assets/index-DM8RgZVA.js",
+    "file": "assets/index-CZeDFbPk.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -19,7 +19,7 @@
     ]
   },
   "src/AnalyzeWorkspace.tsx": {
-    "file": "assets/AnalyzeWorkspace-B1fq2q6c.js",
+    "file": "assets/AnalyzeWorkspace-CsWleimh.js",
     "name": "AnalyzeWorkspace",
     "src": "src/AnalyzeWorkspace.tsx",
     "isDynamicEntry": true,

@@ -23,6 +23,7 @@ from sersflow.api.schemas.analysis import (
     FitCurveJobStatusResponse,
     FittingPreviewRequest,
     ObservationSchemaResponse,
+    StepOutputsJobCreateRequest,
 )
 from sersflow.api.deps import current_user_id
 from sersflow.api.services.ownership import get_dataset_for_user, get_run_for_user, get_session_for_user
@@ -34,6 +35,12 @@ from sersflow.api.services.analysis_runner import (
 )
 from sersflow.api.services.fit_curve_export_runner import execute_fit_curve_job
 from sersflow.api.services.fitting_preview import fitting_preview_for_run, list_fitting_steps_for_pipeline
+from sersflow.api.services.step_outputs_export_runner import (
+    STEP_OUTPUTS_CONTENT,
+    execute_step_outputs_job,
+    export_pipeline_for_run,
+    list_pipeline_steps_for_export,
+)
 from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.sessions_service import pipeline_hash, subset_hash
 from sersflow.api.services.technique_guard import (
@@ -505,6 +512,39 @@ def get_analysis_fitting_steps(run_id: str, request: Request) -> dict[str, Any]:
     return {"items": list_fitting_steps_for_pipeline(effective)}
 
 
+@router.get("/runs/{run_id}/pipeline-steps", response_model=None)
+def get_analysis_pipeline_steps(run_id: str, request: Request) -> dict[str, Any]:
+    """Enabled pipeline steps, numbered as the step-outputs export expects."""
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
+    return {"items": list_pipeline_steps_for_export(export_pipeline_for_run(rec))}
+
+
+@router.post("/runs/{run_id}/step-outputs-jobs", response_model=FitCurveJobCreateResponse)
+def post_step_outputs_job(
+    run_id: str, payload: StepOutputsJobCreateRequest, request: Request
+) -> FitCurveJobCreateResponse | JSONResponse:
+    """Queue a step-outputs CSV zip; poll and download through the fit-curve job endpoints."""
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
+    if rec.status != "completed":
+        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    jid = create_fit_curve_job(
+        run_id=run_id,
+        fitting_step_num=0,
+        content=STEP_OUTPUTS_CONTENT,
+        format="csv",
+        params_json=json.dumps(
+            {"step_nums": list(payload.step_nums), "spectrum_ids": payload.spectrum_ids}
+        ),
+    )
+    Thread(target=execute_step_outputs_job, args=(jid,), daemon=True).start()
+    return JSONResponse(
+        status_code=202,
+        content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump(),
+    )
+
+
 @router.post("/runs/{run_id}/fitting-preview", response_model=None)
 def post_analysis_fitting_preview(
     run_id: str, payload: FittingPreviewRequest, request: Request
@@ -579,10 +619,11 @@ def download_fit_curve_job(job_id: str, request: Request) -> Response:
             data = f.read()
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Failed to read artifact: {e}") from e
+    prefix = "step_outputs" if job.content == STEP_OUTPUTS_CONTENT else "fit_curves"
     return Response(
         content=data,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="fit_curves_{job_id}.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="{prefix}_{job_id}.zip"'},
     )
 
 

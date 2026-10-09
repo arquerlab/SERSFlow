@@ -28,6 +28,18 @@ import {
   buildScree,
 } from "./analyze/pcaPlots";
 import { buildClusterOnScoresScatter, buildClusterSizesBar } from "./analyze/clusterPlots";
+import { ParamPlotEditor } from "./analyze/ParamPlotEditor";
+import {
+  buildParamPlot,
+  cellToNumber,
+  newParamPlotConfig,
+  paramPlotColumns,
+  paramPlotCsv,
+  selectedYs,
+  stableNumberKey,
+  type ParamPlotConfig,
+  type ParamPlotResult,
+} from "./analyze/paramPlots";
 import {
   createAnalysisRun,
   deleteAnalysisRun,
@@ -42,6 +54,7 @@ import {
   getExportBundleUrl,
   getExportFeaturesUrl,
   getExplorePcaExportUrl,
+  fetchPipelineSteps,
   getFitCurveJob,
   getFitCurveJobDownloadUrl,
   getMatrixJobExportUrl,
@@ -53,6 +66,7 @@ import {
   postCluster,
   postCorrelation,
   postFitCurveJob,
+  postStepOutputsJob,
   postFittingPreview,
   postFpcaDiscrete,
   postFpcaFda,
@@ -106,39 +120,6 @@ async function safeDownload(url: string, filename: string, onErr: (msg: string) 
   } catch (e) {
     onErr(String((e as Error)?.message ?? e));
   }
-}
-
-function cellToNumber(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "boolean") return null;
-  if (typeof v === "string") {
-    const t = v.trim();
-    if (!t) return null;
-    const n = Number(t);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
-function meanStd(values: number[]): { mean: number; std: number } {
-  if (!values.length) return { mean: NaN, std: NaN };
-  const n = values.length;
-  const mean = values.reduce((a, b) => a + b, 0) / n;
-  if (n < 2) return { mean, std: 0 };
-  let acc = 0;
-  for (const v of values) acc += (v - mean) ** 2;
-  // sample std
-  const std = Math.sqrt(acc / (n - 1));
-  return { mean, std };
-}
-
-function stableNumberKey(v: number, decimals = 6): string {
-  if (!Number.isFinite(v)) return "NaN";
-  // Avoid 0.30000000000000004 style jitter; keep integers compact.
-  const r = Math.round(v);
-  if (Math.abs(v - r) < 1e-12) return String(r);
-  return v.toFixed(decimals);
 }
 
 type HeatmapFileMode = "all" | "single" | "multiple";
@@ -565,17 +546,10 @@ export default function AnalyzeWorkspace() {
   const [spectrumClusterK, setSpectrumClusterK] = useState(3);
   const [spectrumClusterSeed, setSpectrumClusterSeed] = useState(0);
   const [spectrumClusterPcEmbedding, setSpectrumClusterPcEmbedding] = useState(10);
-  const [metaX, setMetaX] = useState("");
-  const [metaY, setMetaY] = useState("");
-  const [metaColor, setMetaColor] = useState("");
-  const [metaPlotStyle, setMetaPlotStyle] = useState<"scatter" | "errorbars" | "errorbars_line" | "boxplot">("scatter");
-  const [metaXErr, setMetaXErr] = useState("");
-  const [metaYErr, setMetaYErr] = useState("");
-  const [metaScatterFig, setMetaScatterFig] = useState<PlotlyFigure | null>(null);
-  const [metaScatterCsvRows, setMetaScatterCsvRows] = useState<
-    { spectrum_id: string; x: number; y: number; color?: number | null; x_err?: number | null; y_err?: number | null }[]
-  >([]);
-  const metaPlotDivRef = useRef<HTMLDivElement | null>(null);
+  const [paramPlots, setParamPlots] = useState<ParamPlotConfig[]>(() => [newParamPlotConfig()]);
+  const [paramPlotResults, setParamPlotResults] = useState<Record<string, ParamPlotResult>>({});
+  const [paramPlotBusy, setParamPlotBusy] = useState<string | null>(null);
+  const paramPlotDivRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [plotsSubTab, setPlotsSubTab] = useState<"param" | "fit">("param");
   const [fitDiagStepNum, setFitDiagStepNum] = useState<number | null>(null);
   const [fitDiagSelectedIds, setFitDiagSelectedIds] = useState<string[]>([]);
@@ -845,6 +819,44 @@ export default function AnalyzeWorkspace() {
     };
   }, [runId, selectedRun?.status, scoresColorMeta, pcVsMetaX, pcVsMetaColor, schemaQ.data?.axis_keys, schemaQ.data?.meta_keys]);
 
+  const pipelineStepsQ = useQuery({
+    queryKey: ["pipelineSteps", runId],
+    queryFn: () => fetchPipelineSteps(runId),
+    enabled: !!runId && selectedRun?.status === "completed",
+  });
+  const [stepExportNums, setStepExportNums] = useState<number[]>([]);
+  const [stepExportBusy, setStepExportBusy] = useState<string | null>(null);
+  const [stepExportNote, setStepExportNote] = useState<string | null>(null);
+
+  async function exportStepOutputs(spectrumIds: string[] | null) {
+    if (!runId || !stepExportNums.length) return;
+    setStepExportBusy(spectrumIds ? "sel" : "all");
+    setStepExportNote(null);
+    try {
+      const created = await postStepOutputsJob(runId, { step_nums: stepExportNums, spectrum_ids: spectrumIds });
+      const jobId = created.job_id;
+      for (let i = 0; i < 1200; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const st = await getFitCurveJob(jobId);
+        if (st.status === "completed") {
+          await safeDownload(getFitCurveJobDownloadUrl(jobId), `step_outputs_${runId}.zip`, (m) => setStepExportNote(m));
+          return;
+        }
+        if (st.status === "failed") throw new Error(st.error || "Step outputs job failed");
+        setStepExportNote(
+          st.status === "running" && st.progress_total
+            ? `Running pipeline… ${st.progress_done}/${st.progress_total}`
+            : `Job ${st.status}`
+        );
+      }
+      throw new Error("Step outputs job timed out");
+    } catch (e) {
+      setStepExportNote(String((e as Error)?.message ?? e));
+    } finally {
+      setStepExportBusy(null);
+    }
+  }
+
   const fittingStepsQ = useQuery({
     queryKey: ["fittingSteps", runId],
     queryFn: () => fetchFittingSteps(runId),
@@ -1027,6 +1039,41 @@ export default function AnalyzeWorkspace() {
       setFitExportNote(String((e as Error)?.message ?? e));
     } finally {
       setFitExportBusy(null);
+    }
+  }
+
+  async function runParamPlot(cfg: ParamPlotConfig) {
+    if (!runId) return;
+    setParamPlotBusy(cfg.id);
+    setLastError(null);
+    try {
+      const { rows } = await fetchObservationColumns(runId, paramPlotColumns(cfg), 200_000);
+      const res = buildParamPlot(cfg, rows as Record<string, unknown>[]);
+      setParamPlotResults((prev) => ({ ...prev, [cfg.id]: res }));
+    } catch (e) {
+      setLastError(String((e as Error).message));
+    } finally {
+      setParamPlotBusy(null);
+    }
+  }
+
+  function paramPlotFileStem(cfg: ParamPlotConfig): string {
+    return `plot_${cfg.x}_${selectedYs(cfg).join("_")}`.slice(0, 120);
+  }
+
+  async function exportParamPlotImage(cfg: ParamPlotConfig, format: "png" | "svg") {
+    const el = paramPlotDivRefs.current[cfg.id];
+    if (!el) return;
+    try {
+      await Plotly.downloadImage(el, {
+        format,
+        filename: paramPlotFileStem(cfg),
+        width: 1200,
+        height: 800,
+        scale: format === "png" ? 2 : 1,
+      });
+    } catch (e) {
+      setLastError(String((e as Error).message));
     }
   }
 
@@ -2505,6 +2552,81 @@ export default function AnalyzeWorkspace() {
                     {fitExportNote ? <div className="err" style={{ marginTop: 8 }}>{fitExportNote}</div> : null}
                   </>
                 )}
+                <div className="hint" style={{ margin: "12px 0 8px" }}>
+                  Spectra with step outputs (on-demand; re-runs the pipeline)
+                </div>
+                <p className="hint" style={{ marginTop: 0 }}>
+                  One CSV per spectrum: <code>x_raw, y_raw</code> plus one column per selected step. Steps that change
+                  the x axis (crop, resample, x calibration…) get their own <code>_x</code>/<code>_y</code> pair. Fitting
+                  steps output the fitted model; steps that do not apply to a spectrum pass their input through.
+                </p>
+                {(pipelineStepsQ.data?.items?.length ?? 0) === 0 ? (
+                  <div className="hint">No enabled steps on this pipeline.</div>
+                ) : (
+                  <>
+                    <div className="row" style={{ gap: 8, marginBottom: 4 }}>
+                      <button
+                        type="button"
+                        className="mini"
+                        onClick={() => setStepExportNums((pipelineStepsQ.data?.items ?? []).map((it) => it.step_num))}
+                      >
+                        All steps
+                      </button>
+                      <button type="button" className="mini" onClick={() => setStepExportNums([])}>
+                        None
+                      </button>
+                    </div>
+                    <div
+                      style={{
+                        maxHeight: 160,
+                        overflow: "auto",
+                        border: "1px solid #ddd",
+                        padding: 6,
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+                        gap: 4,
+                      }}
+                    >
+                      {(pipelineStepsQ.data?.items ?? []).map((it) => (
+                        <label key={it.step_num} className="inline" style={{ gap: 4, fontSize: 12 }}>
+                          <input
+                            type="checkbox"
+                            checked={stepExportNums.includes(it.step_num)}
+                            onChange={(e) =>
+                              setStepExportNums((prev) =>
+                                e.target.checked
+                                  ? [...prev, it.step_num].sort((a, b) => a - b)
+                                  : prev.filter((n) => n !== it.step_num)
+                              )
+                            }
+                          />
+                          s{it.step_num} {it.name}
+                          {it.xps_region ? ` (${it.xps_region})` : ""}
+                        </label>
+                      ))}
+                    </div>
+                    <div className="row" style={{ flexWrap: "wrap", gap: "8px", marginTop: 8 }}>
+                      <button
+                        type="button"
+                        className="mini"
+                        disabled={!!stepExportBusy || !stepExportNums.length}
+                        onClick={() => void exportStepOutputs(null)}
+                      >
+                        {stepExportBusy === "all" ? "…" : "All spectra CSV zip"}
+                      </button>
+                      <button
+                        type="button"
+                        className="mini"
+                        disabled={!!stepExportBusy || !stepExportNums.length || !fitExportSelectedIds.length}
+                        title="Uses the spectra ticked in the fitting-curves list above"
+                        onClick={() => void exportStepOutputs(fitExportSelectedIds)}
+                      >
+                        {stepExportBusy === "sel" ? "…" : `Selected spectra CSV zip (${fitExportSelectedIds.length})`}
+                      </button>
+                    </div>
+                    {stepExportNote ? <div className="err" style={{ marginTop: 8 }}>{stepExportNote}</div> : null}
+                  </>
+                )}
                 {exportNote ? <div className="err" style={{ marginTop: "8px" }}>{exportNote}</div> : null}
                 {manifestJson ? (
                   <pre
@@ -3100,376 +3222,43 @@ export default function AnalyzeWorkspace() {
               <>
             <div className="section-title">Parameter vs parameter</div>
                 <p className="hint">
-                  Scatter plot of numeric columns from the merged observation row (features, <code>meta_*</code>, axes).
-                  Pick X and Y; optional color uses a third numeric column.
+                  Plots of numeric columns from the merged observation row (features, <code>meta_*</code>, axes).
+                  Pick X and one or more Y columns; optional color uses another numeric column. Use + Add plot for more
+                  figures.
                 </p>
-                <div className="row" style={{ flexWrap: "wrap", gap: "8px", alignItems: "flex-end" }}>
-                  <label className="inline">
-                    Style
-                    <select
-                      value={metaPlotStyle}
-                      onChange={(e) =>
-                        setMetaPlotStyle(e.target.value as "scatter" | "errorbars" | "errorbars_line" | "boxplot")
-                      }
-                    >
-                      <option value="scatter">Scatter</option>
-                      <option value="errorbars">Mean ± error bars (group by X)</option>
-                      <option value="errorbars_line">Line + error bars (group by X)</option>
-                      <option value="boxplot">Boxplot (group by X)</option>
-                    </select>
-                  </label>
-                  <label className="inline">
-                    X
-                    <select value={metaX} onChange={(e) => setMetaX(e.target.value)}>
-                      <option value="">—</option>
-                      {selectableColumns.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="inline">
-                    Y
-                    <select value={metaY} onChange={(e) => setMetaY(e.target.value)}>
-                      <option value="">—</option>
-                      {selectableColumns.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="inline">
-                    Color (optional)
-                    <select value={metaColor} onChange={(e) => setMetaColor(e.target.value)}>
-                      <option value="">—</option>
-                      {selectableColumns.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {metaPlotStyle === "errorbars" || metaPlotStyle === "errorbars_line" ? (
-                    <>
-                      <label className="inline">
-                        X error (optional)
-                        <select value={metaXErr} onChange={(e) => setMetaXErr(e.target.value)}>
-                          <option value="">—</option>
-                          {selectableColumns.map((c) => (
-                            <option key={c} value={c}>
-                              {c}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="inline">
-                        Y error (optional)
-                        <select value={metaYErr} onChange={(e) => setMetaYErr(e.target.value)}>
-                          <option value="">—</option>
-                          {selectableColumns.map((c) => (
-                            <option key={c} value={c}>
-                              {c}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </>
-                  ) : null}
-                  <button
-                    type="button"
-                    disabled={!!exploreBusy || !metaX || !metaY}
-                    onClick={async () => {
-                      setExploreBusy("meta_scatter");
-                      setLastError(null);
-                      setMetaScatterFig(null);
-                      setMetaScatterCsvRows([]);
-                      try {
-                        const cols = [metaX, metaY, metaColor, metaXErr, metaYErr].filter(Boolean);
-                        const uniq = Array.from(new Set(cols));
-                        const { rows } = await fetchObservationColumns(runId, uniq, 200_000);
-                        type CsvRow = {
-                          spectrum_id: string;
-                          x: number;
-                          y: number;
-                          color?: number | null;
-                          x_err?: number | null;
-                          y_err?: number | null;
-                        };
-
-                        const raw: CsvRow[] = [];
-                        for (const r of rows) {
-                          const x = cellToNumber(r[metaX]);
-                          const y = cellToNumber(r[metaY]);
-                          if (x === null || y === null) continue;
-                          const sid = String(r.spectrum_id ?? "");
-                          const color = metaColor ? cellToNumber(r[metaColor]) : null;
-                          const xErr = metaXErr ? cellToNumber(r[metaXErr]) : null;
-                          const yErr = metaYErr ? cellToNumber(r[metaYErr]) : null;
-                          raw.push({ spectrum_id: sid, x, y, color, x_err: xErr, y_err: yErr });
-                        }
-
-                        if (metaPlotStyle === "scatter") {
-                          const xv = raw.map((r) => r.x);
-                          const yv = raw.map((r) => r.y);
-                          const text = raw.map((r) => r.spectrum_id);
-                          const cv = metaColor ? raw.map((r) => r.color ?? null) : [];
-
-                          const trace: Record<string, unknown> = {
-                            type: "scatter",
-                            mode: "markers",
-                            x: xv,
-                            y: yv,
-                            text,
-                            marker: { size: 7 },
-                          };
-                          if (metaColor && cv.length === xv.length && cv.some((v) => v !== null)) {
-                            trace.marker = { size: 7, color: cv, colorscale: "Viridis", showscale: true };
-                          }
-                          setMetaScatterCsvRows(raw);
-                          setMetaScatterFig({
-                            data: [trace],
-                            layout: {
-                              title: `${metaY} vs ${metaX}`,
-                              xaxis: { title: metaX },
-                              yaxis: { title: metaY },
-                            },
-                          });
-                          return;
-                        }
-
-                        // Aggregated modes: group by X (and optional discrete color).
-                        // Intended for experiments where X represents a controllable parameter value.
-                        type GroupKey = string;
-                        type Group = {
-                          xVals: number[];
-                          yVals: number[];
-                          colorVals: (number | null)[];
-                          xErrVals: number[];
-                          yErrVals: number[];
-                        };
-                        const groups = new Map<GroupKey, Group>();
-
-                        function colorBucket(v: number | null): string {
-                          if (v === null || !Number.isFinite(v)) return "—";
-                          return stableNumberKey(v, 6);
-                        }
-
-                        const uniqueColorBuckets = new Set<string>();
-                        for (const r of raw) {
-                          if (!metaColor) break;
-                          uniqueColorBuckets.add(colorBucket(r.color ?? null));
-                          if (uniqueColorBuckets.size > 40) break;
-                        }
-                        // Only treat color as a grouping dimension when it behaves like a discrete factor.
-                        const useColorGrouping = !!metaColor && uniqueColorBuckets.size > 1 && uniqueColorBuckets.size <= 12;
-
-                        for (const r of raw) {
-                          const xKey = stableNumberKey(r.x, 6);
-                          const cKey = useColorGrouping ? colorBucket(r.color ?? null) : "";
-                          const key = useColorGrouping ? `${cKey}||${xKey}` : xKey;
-                          const g =
-                            groups.get(key) ?? { xVals: [], yVals: [], colorVals: [], xErrVals: [], yErrVals: [] };
-                          g.xVals.push(r.x);
-                          g.yVals.push(r.y);
-                          if (useColorGrouping) g.colorVals.push(r.color ?? null);
-                          if (typeof r.x_err === "number" && Number.isFinite(r.x_err)) g.xErrVals.push(r.x_err);
-                          if (typeof r.y_err === "number" && Number.isFinite(r.y_err)) g.yErrVals.push(r.y_err);
-                          groups.set(key, g);
-                        }
-
-                        // Build series: if metaColor present and seems discrete, make one trace per color bucket.
-                        const byColor = new Map<
-                          string,
-                          { x: number[]; y: number[]; xerr: number[]; yerr: number[]; n: number[] }
-                        >();
-                        for (const [key, g] of groups.entries()) {
-                          const [cKey] = useColorGrouping ? key.split("||") : [""];
-                          const xStats = meanStd(g.xVals);
-                          const yStats = meanStd(g.yVals);
-                          const xMean = xStats.mean;
-                          const yMean = yStats.mean;
-                          const yStd = yStats.std;
-                          const xErrMean = g.xErrVals.length ? meanStd(g.xErrVals).mean : 0;
-                          const yErrMean = g.yErrVals.length ? meanStd(g.yErrVals).mean : NaN;
-                          const yErrFinal = Number.isFinite(yErrMean) ? yErrMean : yStd;
-                          if (!Number.isFinite(xMean) || !Number.isFinite(yMean) || !Number.isFinite(yErrFinal)) continue;
-                          const seriesKey = useColorGrouping ? cKey : "__all__";
-                          const s = byColor.get(seriesKey) ?? { x: [], y: [], xerr: [], yerr: [], n: [] };
-                          s.x.push(xMean);
-                          s.y.push(yMean);
-                          s.xerr.push(Number.isFinite(xErrMean) ? xErrMean : 0);
-                          s.yerr.push(yErrFinal);
-                          s.n.push(g.yVals.length);
-                          byColor.set(seriesKey, s);
-                        }
-
-                        const traces: Record<string, unknown>[] = [];
-                        const seriesKeys = Array.from(byColor.keys());
-                        // If too many unique colors, collapse to one trace.
-                        const collapseColor = useColorGrouping && seriesKeys.length > 12;
-                        const finalSeries = collapseColor ? new Map([["__all__", {
-                          x: seriesKeys.flatMap((k) => byColor.get(k)!.x),
-                          y: seriesKeys.flatMap((k) => byColor.get(k)!.y),
-                          xerr: seriesKeys.flatMap((k) => byColor.get(k)!.xerr),
-                          yerr: seriesKeys.flatMap((k) => byColor.get(k)!.yerr),
-                          n: seriesKeys.flatMap((k) => byColor.get(k)!.n),
-                        }]]) : byColor;
-
-                        for (const [k, s] of finalSeries.entries()) {
-                          // Sort by X so lineplot is meaningful.
-                          const idx = s.x.map((v, i) => [v, i] as const).sort((a, b) => a[0] - b[0]).map((t) => t[1]);
-                          const xs = idx.map((i) => s.x[i]);
-                          const ys = idx.map((i) => s.y[i]);
-                          const xerrs = idx.map((i) => (s as any).xerr?.[i] ?? 0);
-                          const yerrs = idx.map((i) => s.yerr[i]);
-                          const ns = idx.map((i) => s.n[i]);
-                          const label = useColorGrouping && !collapseColor ? `${metaColor}=${k}` : undefined;
-                          const mode = metaPlotStyle === "errorbars_line" ? "lines+markers" : "markers";
-                          const tr: Record<string, unknown> = {
-                            type: "scatter",
-                            mode,
-                            name: label,
-                            x: xs,
-                            y: ys,
-                            text: ns.map((n) => `n=${n}`),
-                            marker: { size: 8 },
-                            error_y: { type: "data", array: yerrs, visible: true },
-                          };
-                          if (metaXErr) tr.error_x = { type: "data", array: xerrs, visible: true };
-                          traces.push(tr);
-                        }
-
-                        setMetaScatterCsvRows(raw);
-                        if (metaPlotStyle === "boxplot") {
-                          // Boxplot: one box per unique X (and per discrete color bucket if applicable).
-                          const orderedX = Array.from(new Set(raw.map((r) => r.x).sort((a, b) => a - b)));
-                          const boxTraces: Record<string, unknown>[] = [];
-                          if (useColorGrouping && !collapseColor) {
-                            const byBucket = new Map<string, { x: number[]; y: number[] }>();
-                            for (const r of raw) {
-                              const cKey = colorBucket(r.color ?? null);
-                              const b = byBucket.get(cKey) ?? { x: [], y: [] };
-                              b.x.push(r.x);
-                              b.y.push(r.y);
-                              byBucket.set(cKey, b);
-                            }
-                            for (const [cKey, s] of Array.from(byBucket.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
-                              boxTraces.push({
-                                type: "box",
-                                name: `${metaColor}=${cKey}`,
-                                x: s.x.map((v) => stableNumberKey(v, 6)),
-                                y: s.y,
-                                boxpoints: false,
-                              });
-                            }
-                          } else {
-                            boxTraces.push({
-                              type: "box",
-                              x: raw.map((r) => stableNumberKey(r.x, 6)),
-                              y: raw.map((r) => r.y),
-                              boxpoints: false,
-                            });
-                          }
-                          setMetaScatterFig({
-                            data: boxTraces.length ? boxTraces : [{ type: "box", x: [], y: [] }],
-                            layout: {
-                              title: `${metaY} vs ${metaX} (boxplot grouped by X)`,
-                              xaxis: {
-                                title: metaX,
-                                categoryorder: "array",
-                                categoryarray: orderedX.map((v) => stableNumberKey(v, 6)),
-                              },
-                              yaxis: { title: metaY },
-                              boxmode: "group",
-                              margin: { l: 60, r: 20, t: 40, b: 70 },
-                            },
-                          });
-                          return;
-                        }
-
-                        setMetaScatterFig({
-                          data: traces.length ? traces : [{ type: "scatter", mode: "markers", x: [], y: [] }],
-                          layout: {
-                            title: `${metaY} vs ${metaX} (grouped by X)`,
-                            xaxis: { title: metaX },
-                            yaxis: { title: metaY },
-                          },
-                        });
-                      } catch (e) {
-                        setLastError(String((e as Error).message));
-                      } finally {
-                        setExploreBusy(null);
-                      }
-                    }}
-                  >
-                    {exploreBusy === "meta_scatter" ? "Loading…" : "Plot"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!metaScatterFig || !metaPlotDivRef.current}
-                    onClick={async () => {
-                      const el = metaPlotDivRef.current;
-                      if (!el) return;
-                      try {
-                        await Plotly.downloadImage(el, {
-                          format: "png",
-                          filename: `scatter_${metaX}_${metaY}`,
-                          width: 1200,
-                          height: 800,
-                          scale: 2,
-                        });
-                      } catch (e) {
-                        setLastError(String((e as Error).message));
-                      }
-                    }}
-                  >
-                    Export plot (PNG)
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!metaScatterFig || !metaPlotDivRef.current}
-                    onClick={async () => {
-                      const el = metaPlotDivRef.current;
-                      if (!el) return;
-                      try {
-                        await Plotly.downloadImage(el, {
-                          format: "svg",
-                          filename: `scatter_${metaX}_${metaY}`,
-                          width: 1200,
-                          height: 800,
-                          scale: 1,
-                        });
-                      } catch (e) {
-                        setLastError(String((e as Error).message));
-                      }
-                    }}
-                  >
-                    Export plot (SVG)
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!metaScatterCsvRows.length}
-                    onClick={() => {
-                      const headerCols = ["spectrum_id", metaX, metaY];
-                      if (metaColor) headerCols.push(metaColor);
-                      if (metaXErr) headerCols.push(metaXErr);
-                      if (metaYErr) headerCols.push(metaYErr);
-                      const header = headerCols.join(",");
-                      const lines = metaScatterCsvRows.map((r) => {
-                        const vals: (string | number | null | undefined)[] = [r.spectrum_id, r.x, r.y];
-                        if (metaColor) vals.push(r.color);
-                        if (metaXErr) vals.push(r.x_err);
-                        if (metaYErr) vals.push(r.y_err);
-                        return vals.map((v) => (v === null || v === undefined ? "" : String(v))).join(",");
+                {paramPlots.map((cfg, i) => (
+                  <ParamPlotEditor
+                    key={cfg.id}
+                    index={i}
+                    config={cfg}
+                    columns={selectableColumns}
+                    busy={paramPlotBusy === cfg.id}
+                    hasResult={!!paramPlotResults[cfg.id]}
+                    canRemove={paramPlots.length > 1}
+                    onChange={(next) => setParamPlots((prev) => prev.map((c) => (c.id === cfg.id ? next : c)))}
+                    onRemove={() => {
+                      setParamPlots((prev) => prev.filter((c) => c.id !== cfg.id));
+                      setParamPlotResults((prev) => {
+                        const { [cfg.id]: _drop, ...rest } = prev;
+                        return rest;
                       });
-                      const csv = [header, ...lines].join("\n");
-                      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-                      triggerBlobDownload(blob, `scatter_${metaX}_${metaY}.csv`);
                     }}
+                    onPlot={() => void runParamPlot(cfg)}
+                    onExportImage={(format) => void exportParamPlotImage(cfg, format)}
+                    onExportCsv={() => {
+                      const res = paramPlotResults[cfg.id];
+                      if (!res) return;
+                      const blob = new Blob([paramPlotCsv(res)], { type: "text/csv;charset=utf-8" });
+                      triggerBlobDownload(blob, `${paramPlotFileStem(cfg)}.csv`);
+                    }}
+                  />
+                ))}
+                <div className="row" style={{ marginTop: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => setParamPlots((prev) => [...prev, newParamPlotConfig()])}
                   >
-                    Export CSV
+                    + Add plot
                   </button>
                 </div>
               </>
@@ -4113,15 +3902,30 @@ export default function AnalyzeWorkspace() {
             </div>
           </div>
         ) : null}
-        {section === "meta_plot" && plotsSubTab === "param" && metaScatterFig ? (
-          <PlotlyWrapper
-            ref={metaPlotDivRef}
-            figure={metaScatterFig}
-            previousFigure={null}
-            plotStyle={{ mode: "overlay", stackSep: 0 }}
-            ghostOverlayEnabled={false}
-            className="plot-host"
-          />
+        {section === "meta_plot" && plotsSubTab === "param" ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
+            {paramPlots.map((cfg, i) => {
+              const res = paramPlotResults[cfg.id];
+              if (!res) return null;
+              return (
+                <div key={cfg.id}>
+                  {paramPlots.length > 1 ? <div className="hint">Plot {i + 1}</div> : null}
+                  <div style={{ width: "100%", height: 520, minHeight: 520 }}>
+                    <PlotlyWrapper
+                      ref={(el) => {
+                        paramPlotDivRefs.current[cfg.id] = el;
+                      }}
+                      figure={res.figure}
+                      previousFigure={null}
+                      plotStyle={{ mode: "overlay", stackSep: 0 }}
+                      ghostOverlayEnabled={false}
+                      className="plot-host"
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         ) : null}
         {section === "meta_plot" && plotsSubTab === "fit" ? (
           fitDiagFigures.length ? (

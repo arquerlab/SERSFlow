@@ -269,6 +269,33 @@ export function getFitCurveJobDownloadUrl(jobId: string) {
   return `/analysis/fit-curve-jobs/${encodeURIComponent(jobId)}/download`;
 }
 
+export type PipelineStepInfo = {
+  step_num: number;
+  step_index: number;
+  name: string;
+  xps_region?: string | null;
+  /** Column prefix used in the step-outputs CSV, e.g. "s3_fitting_O1s". */
+  label: string;
+};
+
+export function fetchPipelineSteps(runId: string) {
+  return fetchJson<{ items: PipelineStepInfo[] }>(
+    `/analysis/runs/${encodeURIComponent(runId)}/pipeline-steps`
+  );
+}
+
+/** Raw XY + selected step outputs per spectrum; poll/download via the fit-curve job endpoints. */
+export function postStepOutputsJob(runId: string, body: { step_nums: number[]; spectrum_ids?: string[] | null }) {
+  return fetchJson<FitCurveJobCreateResponse>(
+    `/analysis/runs/${encodeURIComponent(runId)}/step-outputs-jobs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+}
+
 // --- Explore ---
 
 export type MatrixExportResponse = { matrix_job_id: string; status: string };

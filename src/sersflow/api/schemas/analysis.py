@@ -138,6 +138,14 @@ class FitCurveJobCreateRequest(BaseModel):
     format: Literal["csv", "png", "svg"] = "csv"
 
 
+class StepOutputsJobCreateRequest(BaseModel):
+    """Export raw XY plus the output of each selected pipeline step (one CSV per spectrum, zipped)."""
+
+    step_nums: list[int] = Field(min_length=1)
+    # None = every spectrum in the analysis cohort.
+    spectrum_ids: list[str] | None = None
+
+
 class FitCurveJobCreateResponse(BaseModel):
     job_id: str
     status: str

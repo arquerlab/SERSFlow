@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sersflow-api",
+      "runtimeExecutable": "C:/Users/apinilla/.conda/envs/general_plotting/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "sersflow.api.main:app", "--host", "127.0.0.1", "--port", "8000"],
+      "env": { "SERSFLOW_AUTH_DISABLED": "1" },
+      "port": 8000
+    }
+  ]
+}

@@ -23,6 +23,7 @@ from sersflow.core.metrics.fitting_features import p_opt_and_gof_from_features
 from sersflow.core.pipeline.engine import EngineConfig, fitting_region_applies, run_pipeline_parallel_no_cache
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 from sersflow.core.preprocess.fitting import evaluate_fit_curves, expand_fit_curves_to_full, fit_problem_from_step_params
+from sersflow.core.preprocess.x_axis_calibration import calibration_method_needs_cohort
 from sersflow.infra.analysis_store import get_run as store_get_run
 from sersflow.infra.analysis_store import get_spectrum_features_for_ids
 from sersflow.infra.datasets_store import get_dataset_internal
@@ -108,15 +109,39 @@ def _resolved_refs_for_run(rec: Any, spectrum_ids: list[str] | None) -> tuple[An
     return effective_pipeline, ds, refs, ns
 
 
+def _calibration_reference_fitting_ids(pipeline: Any, *, before_idx: int) -> set[str]:
+    """Step ids of fitting steps that an enabled cohort x_axis_calibration (before ``before_idx``) measures."""
+    out: set[str] = set()
+    for i, s in enumerate(pipeline.steps):
+        if i >= before_idx:
+            break
+        if not getattr(s, "enabled", True) or s.name != "x_axis_calibration":
+            continue
+        params = s.params or {}
+        if not calibration_method_needs_cohort(params.get("method")):
+            continue
+        fid = str(params.get("fitting_step_id") or "").strip()
+        if fid:
+            out.add(fid)
+    return out
+
+
 def _pipeline_steps_without_fitting(pipeline: Any, *, fitting_idx: int) -> list[dict[str, Any]]:
     """
     Disable every fitting step and all steps after the target fitting index so the
     engine never re-runs fit_curve while still collecting pre-fit XY inputs.
+
+    Exception: earlier fitting steps referenced by a cohort x_axis_calibration stay enabled,
+    otherwise the calibration cannot measure its reference band (e.g. XPS valence-band
+    Fermi edge → calibrate → fit O1s / Co2p).
     """
+    keep_fitting_ids = _calibration_reference_fitting_ids(pipeline, before_idx=fitting_idx)
     out: list[dict[str, Any]] = []
     for i, s in enumerate(pipeline.steps):
         enabled = bool(getattr(s, "enabled", True))
-        if i >= fitting_idx or s.name == "fitting":
+        if i >= fitting_idx:
+            enabled = False
+        elif s.name == "fitting" and str(s.step_id or "").strip() not in keep_fitting_ids:
             enabled = False
         out.append(
             {

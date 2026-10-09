@@ -34,6 +34,9 @@ from sersflow.infra.blob_store import resolve_blob_path
 
 logger = logging.getLogger(__name__)
 
+# ``collect_steps`` token for the unprocessed input spectrum (parallel runner only).
+RAW_COLLECT_TOKEN = "__raw__"
+
 
 def spectrum_xps_region_from_dataset(ds: Any, record_index: int | None) -> str | None:
     """Return per-block ``xps_region`` from a loaded dataset, if present."""
@@ -859,7 +862,8 @@ def _run_one_no_cache(
     up_to_step: str | None,
     collect_step_inputs: bool = False,
     technique_family: str | None = None,
-) -> tuple[XY, dict[int, XY]]:
+    collect_steps: set[str] | None = None,
+) -> tuple[XY, dict[int, XY], dict[str, XY]]:
     """
     Worker-safe implementation for ProcessPoolExecutor.
 
@@ -881,7 +885,7 @@ def _run_one_no_cache(
         if not isinstance(cal_deltas, dict):
             cal_deltas = None
 
-        xy, _, per_in = _run_indexed_steps_for_spectrum(
+        xy, per_spec, per_in = _run_indexed_steps_for_spectrum(
             xy_initial=xy_initial,
             input_hash=input_hash,
             steps_list=steps,
@@ -889,7 +893,7 @@ def _run_one_no_cache(
             cache=None,
             namespace=namespace,
             up_to_step=up_to_step,
-            collect_steps=None,
+            collect_steps=collect_steps,
             step_nums=step_nums,
             collect_step_inputs=collect_step_inputs,
             technique_family=technique_family,
@@ -897,10 +901,12 @@ def _run_one_no_cache(
             spectrum_labels=labels,
             calibration_deltas_by_step=cal_deltas,
         )
-        return xy, per_in
+        if collect_steps is not None and RAW_COLLECT_TOKEN in collect_steps:
+            per_spec[RAW_COLLECT_TOKEN] = xy_initial
+        return xy, per_in, per_spec
     except (FileNotFoundError, OSError, ValueError, IndexError) as e:
         logger.info("pipeline skip spectrum %s: %s", sid, e)
-        return EMPTY_XY, {}
+        return EMPTY_XY, {}, {}
 
 
 def run_pipeline_parallel_no_cache(
@@ -913,9 +919,14 @@ def run_pipeline_parallel_no_cache(
     step_nums: list[int] | None = None,
     collect_step_inputs: bool = False,
     technique_family: str | None = None,
-) -> dict[str, XY] | tuple[dict[str, XY], dict[str, dict[int, XY]]]:
+    collect_steps: set[str] | None = None,
+) -> dict[str, XY] | tuple[dict[str, XY], dict[str, dict[int, XY]]] | tuple[dict[str, XY], dict[str, dict[str, XY]]]:
     """
     Parallel pipeline execution for large batches (no shared cache).
+
+    Returns ``final`` alone, ``(final, per_step_inputs)`` with ``collect_step_inputs``, or
+    ``(final, per_step_outputs)`` with ``collect_steps`` (tokens like ``"crop__3"``, see
+    ``_run_indexed_steps_for_spectrum``). The two collect modes are mutually exclusive.
 
     Notes:
     - Intended for Batch mode where we process many spectra once.
@@ -924,12 +935,15 @@ def run_pipeline_parallel_no_cache(
     - A single spectrum runs in-process (pool overhead dominates).
     """
     cfg = config or EngineConfig()
+    if collect_step_inputs and collect_steps is not None:
+        raise ValueError("collect_step_inputs and collect_steps are mutually exclusive")
+    collecting = collect_step_inputs or collect_steps is not None
     if not inputs:
-        return {} if not collect_step_inputs else ({}, {})
+        return {} if not collecting else ({}, {})
     steps = [dict(s) for s in pipeline_steps]
-    if collect_step_inputs:
+    if collecting:
         if not step_nums or len(step_nums) != len(steps):
-            raise ValueError("collect_step_inputs requires step_nums matching pipeline_steps length")
+            raise ValueError("collect_step_inputs/collect_steps require step_nums matching pipeline_steps length")
     nums = step_nums or [0] * len(steps)
     _validate_baseline_point_references(steps)
 
@@ -949,7 +963,7 @@ def run_pipeline_parallel_no_cache(
     if len(input_refs) == 1:
         ref = input_refs[0]
         sid = str(ref["spectrum_id"])
-        xy_res, pin = _run_one_no_cache(
+        xy_res, pin, pspec = _run_one_no_cache(
             ref,
             steps,
             nums,
@@ -957,13 +971,17 @@ def run_pipeline_parallel_no_cache(
             up_to_step=up_to_step,
             collect_step_inputs=collect_step_inputs,
             technique_family=technique_family,
+            collect_steps=collect_steps,
         )
         if collect_step_inputs:
             return {sid: xy_res}, {sid: pin}
+        if collect_steps is not None:
+            return {sid: xy_res}, {sid: pspec}
         return {sid: xy_res}
 
     out: dict[str, XY] = {}
-    per_in: dict[str, dict[int, XY]] = {} if collect_step_inputs else {}
+    # Per-spectrum collected dicts: step inputs (int keys) or step outputs (token keys).
+    per_in: dict[str, Any] = {}
     pool_broken = False
 
     def _submit_all(ex: ProcessPoolExecutor) -> None:
@@ -981,22 +999,25 @@ def run_pipeline_parallel_no_cache(
                 up_to_step=up_to_step,
                 collect_step_inputs=collect_step_inputs,
                 technique_family=technique_family,
+                collect_steps=collect_steps,
             )
             fut_to_sid[fut] = sid
 
         for fut in as_completed(fut_to_sid):
             sid = fut_to_sid[fut]
             try:
-                xy_res, pin = fut.result()
+                xy_res, pin, pspec = fut.result()
                 out[sid] = xy_res
                 if collect_step_inputs:
                     per_in[sid] = pin
+                elif collect_steps is not None:
+                    per_in[sid] = pspec
             except Exception as e:
                 if isinstance(e, BrokenProcessPool):
                     pool_broken = True
                 logger.warning("pipeline parallel worker failed for %s: %s", sid, e)
                 out[sid] = EMPTY_XY
-                if collect_step_inputs:
+                if collecting:
                     per_in[sid] = {}
 
     try:
@@ -1008,10 +1029,10 @@ def run_pipeline_parallel_no_cache(
         logger.warning("pipeline process pool broke; resetting pool and rerunning sequentially")
         _reset_pipeline_pool()
         out = {}
-        per_in = {} if collect_step_inputs else {}
+        per_in = {}
         for ref in input_refs:
             ref_payload = dict(ref)
-            xy_res, pin = _run_one_no_cache(
+            xy_res, pin, pspec = _run_one_no_cache(
                 ref_payload,
                 steps,
                 nums,
@@ -1019,13 +1040,16 @@ def run_pipeline_parallel_no_cache(
                 up_to_step=up_to_step,
                 collect_step_inputs=collect_step_inputs,
                 technique_family=technique_family,
+                collect_steps=collect_steps,
             )
             sid = str(ref["spectrum_id"])
             out[sid] = xy_res
             if collect_step_inputs:
                 per_in[sid] = pin
+            elif collect_steps is not None:
+                per_in[sid] = pspec
 
-    if collect_step_inputs:
+    if collecting:
         return out, per_in
     return out
 

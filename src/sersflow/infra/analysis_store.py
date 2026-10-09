@@ -127,6 +127,10 @@ def ensure_schema() -> None:
             con.execute("ALTER TABLE analysis_runs ADD COLUMN pipeline_name TEXT NULL")
         except Exception:
             pass
+        try:
+            con.execute("ALTER TABLE fit_curve_jobs ADD COLUMN params_json TEXT NULL")
+        except Exception:
+            pass
 
 
 def create_run_pending(
@@ -462,6 +466,8 @@ class FitCurveJobRecord:
     updated_at: str
     finished_at: str | None
     error: str | None
+    # Extra job options as JSON (e.g. step-outputs export: selected step nums / spectrum ids).
+    params_json: str | None = None
 
 
 def create_fit_curve_job(
@@ -470,6 +476,7 @@ def create_fit_curve_job(
     fitting_step_num: int,
     content: str,
     format: str,
+    params_json: str | None = None,
 ) -> str:
     ensure_schema()
     job_id = f"fcjob_{uuid4().hex}"
@@ -479,8 +486,9 @@ def create_fit_curve_job(
             """
             INSERT INTO fit_curve_jobs(
               job_id, run_id, fitting_step_num, content, format, status,
-              progress_done, progress_total, artifact_path, created_at, updated_at, finished_at, error
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+              progress_done, progress_total, artifact_path, created_at, updated_at, finished_at, error,
+              params_json
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 job_id,
@@ -496,6 +504,7 @@ def create_fit_curve_job(
                 now,
                 None,
                 None,
+                params_json,
             ),
         )
     return job_id
@@ -521,6 +530,7 @@ def get_fit_curve_job(job_id: str) -> FitCurveJobRecord | None:
             updated_at=row["updated_at"],
             finished_at=row["finished_at"],
             error=row["error"],
+            params_json=row["params_json"] if "params_json" in row.keys() else None,
         )
 
 
