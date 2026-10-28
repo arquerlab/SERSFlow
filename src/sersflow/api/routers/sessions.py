@@ -435,6 +435,8 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
             strict=True,
         )
     runtime_pipeline_no_qc = pipeline_without_qc_steps(runtime_pipeline)
+    # Calibration references (VB partner, reference_filters, group members) may be outside the subset.
+    cal_cohort = None if payload.scope == "all" else filter_reference_spectra(ds.spectra, runtime_pipeline)
 
     cfg = EngineConfig(cache_namespace=cache_ns)
 
@@ -450,6 +452,7 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
                 config=cfg,
                 up_to_step=None if (source_only or raw_only) else payload.up_to_step,
                 strict=True,
+                calibration_cohort=cal_cohort,
             )
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=f"Uploaded file not found: {e}") from e
@@ -474,6 +477,7 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
                 config=cfg,
                 up_to_step=payload.up_to_step,
                 strict=True,
+                calibration_cohort=cal_cohort,
             )
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=f"Uploaded file not found: {e}") from e
@@ -532,6 +536,7 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
                 config=cfg,
                 up_to_step=payload.up_to_step,
                 strict=True,
+                calibration_cohort=cal_cohort,
             )
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=f"Uploaded file not found: {e}") from e

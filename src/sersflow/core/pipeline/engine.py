@@ -1062,6 +1062,7 @@ def run_pipeline(
     config: EngineConfig | None = None,
     up_to_step: str | None = None,
     strict: bool = False,
+    calibration_cohort: Iterable[SpectrumRefLike] | None = None,
 ) -> dict[str, XY]:
     """
     Run the pipeline and return final XY per spectrum_id.
@@ -1080,8 +1081,9 @@ def run_pipeline(
     tech = getattr(pipeline, "technique_family", None)
 
     input_list = list(inputs)
+    # Reference bands may live outside a preview subset: measure over the full cohort when given.
     cal_deltas = _prepare_calibration_cohort(
-        _refs_as_dicts(input_list),
+        _refs_as_dicts(list(calibration_cohort) if calibration_cohort is not None else input_list),
         _steps_as_dicts(steps_list),
         technique_family=tech,
         namespace=cfg.cache_namespace,
@@ -1130,6 +1132,7 @@ def run_pipeline_with_intermediates(
     config: EngineConfig | None = None,
     up_to_step: str | None = None,
     strict: bool = False,
+    calibration_cohort: Iterable[SpectrumRefLike] | None = None,
 ) -> tuple[dict[str, XY], dict[str, dict[str, XY]]]:
     """
     Run pipeline and also collect intermediates for selected step names.
@@ -1151,8 +1154,9 @@ def run_pipeline_with_intermediates(
     step_nums = assign_pipeline_step_nums(steps_list)
     tech = getattr(pipeline, "technique_family", None)
     input_list = list(inputs)
+    # Reference bands may live outside a preview subset: measure over the full cohort when given.
     cal_deltas = _prepare_calibration_cohort(
-        _refs_as_dicts(input_list),
+        _refs_as_dicts(list(calibration_cohort) if calibration_cohort is not None else input_list),
         _steps_as_dicts(steps_list),
         technique_family=tech,
         namespace=cfg.cache_namespace,

@@ -27,6 +27,6 @@ def list_steps(
     out = [
         s
         for s in STEP_LIBRARY.values()
-        if s.applicable(technique_family, caps)
+        if not s.palette_hidden and s.applicable(technique_family, caps)
     ]
     return sorted(out, key=lambda s: s.id)

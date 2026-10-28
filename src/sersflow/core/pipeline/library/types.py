@@ -94,6 +94,8 @@ class StepSpec:
     requires_capabilities: frozenset[str] = frozenset()
     excludes_capabilities: frozenset[str] = frozenset()
     validation_rules: tuple[str, ...] = ()
+    # Internal-only steps stay runnable by the engine but are not offered in the palette.
+    palette_hidden: bool = False
 
     def applicable(
         self,

@@ -94,10 +94,11 @@ _register(
         label="Baseline curve",
         category="baseline",
         palette_group="Preprocessing",
-        description="Compute a baseline curve without subtracting it.",
+        description="Compute a baseline curve without subtracting it (internal, used by baseline preview).",
         impl=_impl("baseline_curve"),
         ui=ui.BASELINE_CURVE,
         validation_rules=("no_dual_xps_background",),
+        palette_hidden=True,
     )
 )
 _register(
