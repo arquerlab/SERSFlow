@@ -219,24 +219,98 @@ def _apply_xps_fit_safeguards(
         )
         auto_applied = True
 
-    # Shirley const ≈ intensity at the *low-BE* endpoint (not always y[-1]).
-    # Ascending BE axes store low BE at index 0; descending (common after KE→BE)
-    # store low BE at the last sample.
-    xf = np.asarray(problem.x, dtype=float)
-    low_be_y = 0.0
-    if yf.size and xf.size == yf.size:
-        low_be_y = float(yf[int(np.argmin(xf))])
-
-    for comp, keys, (s, _e) in zip(problem.components, param_keys_per_comp, slices):
-        if comp.component_type.strip().lower() != "shirley_bg":
-            continue
-        if "const" not in keys:
-            continue
-        ci = s + keys.index("const")
-        if abs(float(p0[ci])) < 1e-9:
-            p0[ci] = low_be_y
+    xs = np.asarray(problem.x, dtype=float)
+    y_low_be_last = yf[::-1] if (xs.size > 1 and xs[0] < xs[-1]) else yf
+    _seed_shirley_params(
+        y_low_be_last, p0, lo, hi, problem.components, slices, param_keys_per_comp
+    )
 
     return p0, lo, hi, auto_applied
+
+
+# Spec default for shirley_bg ``k``; treated as "unset" because lmfitxps sums over
+# samples (no dE factor), so the right scale depends on point count and intensity.
+_SHIRLEY_K_SPEC_DEFAULT = 0.03
+
+
+def _shirley_endpoints(y: np.ndarray) -> tuple[float, float, float, int]:
+    """
+    (I_right, step, sigma, n_end) for arrays oriented so the Shirley sum runs toward
+    the last sample (low BE). ``step`` is the high-BE edge minus I_right.
+    """
+    n_end = int(max(3, min(10, y.size // 20)))
+    i_right = float(np.median(y[-n_end:]))
+    step = float(np.median(y[:n_end])) - i_right
+    d = np.diff(y)
+    sigma = 1.4826 * float(np.median(np.abs(d - np.median(d)))) / np.sqrt(2.0) if d.size else 0.0
+    return i_right, step, sigma, n_end
+
+
+def _seed_shirley_params(
+    y: np.ndarray,
+    p0: list[float],
+    lo: list[float | None],
+    hi: list[float | None],
+    components: list[FitComponent],
+    slices: list[tuple[int, int]],
+    param_keys_per_comp: list[list[str]],
+) -> None:
+    """
+    Seed/bound the active Shirley background from the data (in place).
+
+    lmfitxps evaluates B = k * sum(y - const) toward the last sample, so ``const`` must
+    be I_right (a free const adds a constant to every term and the sum becomes a linear
+    ramp) and ``k`` must match the data scale. y must already be oriented low-BE-last.
+    """
+    if y.size < 8 or not np.all(np.isfinite(y)):
+        return
+    i_right, step, sigma, n_end = _shirley_endpoints(y)
+    tol = max(4.0 * sigma / np.sqrt(n_end), 1e-4 * max(abs(i_right), 1.0))
+    total = float(np.sum(y - i_right))
+
+    for comp, keys, (s, _e) in zip(components, param_keys_per_comp, slices):
+        if comp.component_type.strip().lower() != "shirley_bg":
+            continue
+        if "const" in keys:
+            ci = s + keys.index("const")
+            if abs(float(p0[ci])) < 1e-9:
+                p0[ci] = i_right
+                if lo[ci] is None:
+                    lo[ci] = i_right - tol
+                if hi[ci] is None:
+                    hi[ci] = i_right + tol
+        if "k" in keys:
+            ki = s + keys.index("k")
+            unset = (not np.isfinite(p0[ki])) or p0[ki] <= 0 or np.isclose(p0[ki], _SHIRLEY_K_SPEC_DEFAULT)
+            if unset and step > 0 and total > 0:
+                k_est = step / total
+                p0[ki] = k_est
+                if hi[ki] is None:
+                    hi[ki] = 20.0 * k_est
+
+
+def _shirley_needs_flip(problem: FitProblem) -> bool:
+    """lmfitxps' Shirley sums toward the last sample, which must be the low-BE end."""
+    if not any(c.component_type.strip().lower() == "shirley_bg" for c in problem.components):
+        return False
+    x = np.asarray(problem.x, dtype=float)
+    return bool(x.size > 1 and x[0] < x[-1])
+
+
+def _flip_problem(problem: FitProblem) -> FitProblem:
+    from dataclasses import replace
+
+    return replace(problem, x=np.asarray(problem.x)[::-1].copy(), y=np.asarray(problem.y)[::-1].copy())
+
+
+def _flip_result(res: FitResult) -> FitResult:
+    from dataclasses import replace
+
+    return replace(
+        res,
+        y_hat=np.asarray(res.y_hat)[::-1].copy(),
+        component_y_hat=[np.asarray(c)[::-1].copy() for c in res.component_y_hat],
+    )
 
 
 def _assemble_lmfit_model(
@@ -337,6 +411,12 @@ def _apply_param_links(
 
 
 def fit_curve_lmfit(problem: FitProblem) -> FitResult:
+    if _shirley_needs_flip(problem):
+        return _flip_result(_fit_curve_lmfit(_flip_problem(problem)))
+    return _fit_curve_lmfit(problem)
+
+
+def _fit_curve_lmfit(problem: FitProblem) -> FitResult:
     try:
         from lmfit import Parameters  # noqa: F401
     except Exception as e:
@@ -489,6 +569,17 @@ def evaluate_curve_lmfit(
     diagnostics: FitDiagnostics | None = None,
 ) -> FitResult:
     """Evaluate XPS model curves from stored parameters (no optimization)."""
+    if _shirley_needs_flip(problem):
+        return _flip_result(_evaluate_curve_lmfit(_flip_problem(problem), p_opt, diagnostics=diagnostics))
+    return _evaluate_curve_lmfit(problem, p_opt, diagnostics=diagnostics)
+
+
+def _evaluate_curve_lmfit(
+    problem: FitProblem,
+    p_opt: np.ndarray,
+    *,
+    diagnostics: FitDiagnostics | None = None,
+) -> FitResult:
     try:
         from lmfit import Parameters  # noqa: F401
     except Exception as e:

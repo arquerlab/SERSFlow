@@ -269,6 +269,52 @@ def test_xps_shirley_bg_smoke() -> None:
     assert len(res.component_y_hat) == 2
 
 
+def _shirley_peak_spectrum(ascending: bool):
+    """Peak + Shirley-like step on a descending BE axis (optionally reversed)."""
+    rng = np.random.default_rng(3)
+    x = np.linspace(542.0, 518.0, 240)
+    peak = 9000.0 * np.exp(-((x - 530.0) ** 2) / (2 * 1.1**2))
+    # Ideal Shirley step: background grows with the peak area seen from the low-BE end.
+    cum = np.cumsum(peak[::-1])[::-1]
+    bg = 6800.0 + 900.0 * cum / cum[0]
+    y = bg + peak + rng.normal(0.0, 60.0, size=x.shape)
+    if ascending:
+        x, y, bg = x[::-1], y[::-1], bg[::-1]
+    return x, y, bg
+
+
+@pytest.mark.parametrize("ascending", [False, True])
+def test_xps_shirley_bg_is_not_a_straight_line_and_tracks_truth(ascending: bool) -> None:
+    pytest.importorskip("lmfitxps")
+    x, y, bg_true = _shirley_peak_spectrum(ascending)
+    res = fit_curve(
+        FitProblem(
+            x=x,
+            y=y,
+            components=[
+                FitComponent(component_type="shirley_bg", component_id="bg"),
+                FitComponent(component_type="gaussian", component_id="p1"),
+            ],
+            # recipe-style seeds: spec-default k and const=0
+            p0=[0.03, 0.0, 530.0, 5000.0, 2.0],
+            bounds_lower=[0.0, None, 528.0, 0.0, 0.1],
+            bounds_upper=[None, None, 532.0, None, 8.0],
+            technique_family="xps",
+        )
+    )
+    bg_fit = res.component_y_hat[0]
+    assert bg_fit.shape == y.shape
+    # const stays tied to the right (low-BE) endpoint instead of floating freely.
+    low_be_end = y[-1] if not ascending else y[0]
+    assert abs(float(res.p_opt[1]) - low_be_end) < 400.0
+    # Background tracks the true Shirley within a fraction of its step height.
+    step = float(np.ptp(bg_true))
+    assert float(np.max(np.abs(bg_fit - bg_true))) < 0.35 * step
+    # And it is genuinely curved (not the chord between its endpoints).
+    chord = np.linspace(bg_fit[0], bg_fit[-1], bg_fit.size)
+    assert float(np.max(np.abs(bg_fit - chord))) > 0.05 * step
+
+
 def test_fitting_fit_api_accepts_shirley_bg_when_xps() -> None:
     """Regression: /fitting/fit must not call build_component_function for XPS BGs."""
     pytest.importorskip("lmfitxps")

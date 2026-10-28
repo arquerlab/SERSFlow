@@ -106,7 +106,7 @@ def test_shirley_seed_uses_low_be_endpoint() -> None:
         slices=[(0, 2)],
         param_keys_per_comp=[["k", "const"]],
     )
-    assert p0[1] == pytest.approx(1000.0)
+    assert p0[1] == pytest.approx(1000.0, rel=0.05)  # median of end samples
 
     # Descending BE: low BE at last index
     x2 = x[::-1]
@@ -125,7 +125,7 @@ def test_shirley_seed_uses_low_be_endpoint() -> None:
         slices=[(0, 2)],
         param_keys_per_comp=[["k", "const"]],
     )
-    assert p02[1] == pytest.approx(1000.0)
+    assert p02[1] == pytest.approx(1000.0, rel=0.05)
 
 
 def test_invalid_technique_family_rejected() -> None:
