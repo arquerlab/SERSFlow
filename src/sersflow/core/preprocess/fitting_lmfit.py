@@ -258,21 +258,16 @@ def _seed_shirley_params(
     """
     Seed/bound the active Shirley background from the data (in place).
 
-    lmfitxps evaluates B = k * sum(y - const) toward the last sample, so ``const`` must
-    be I_right (a free const adds a constant to every term and the sum becomes a linear
+    The Shirley model integrates the (I_right-subtracted) data toward the last sample, so
+    ``const`` must stay at I_right (a free const shifts the integrand and the sum becomes a linear
     ramp) and ``k`` must match the data scale. y must already be oriented low-BE-last.
     """
     if y.size < 8 or not np.all(np.isfinite(y)):
         return
     i_right, step, sigma, n_end = _shirley_endpoints(y)
     tol = max(4.0 * sigma / np.sqrt(n_end), 1e-4 * max(abs(i_right), 1.0))
-    try:
-        from lmfitxps.models import shirley as _shirley_fn
-
-        # Model's own integral at the high-BE edge for k=1 (not a plain sum of y - I_right).
-        total = float(_shirley_fn(y, 1.0, i_right)[0] - i_right)
-    except Exception:
-        total = 0.0
+    # The model is fed y - I_right (see _model_y_input), so its edge value for k=1 is this sum.
+    total = float(np.sum(y - i_right))
 
     for comp, keys, (s, _e) in zip(components, param_keys_per_comp, slices):
         if comp.component_type.strip().lower() != "shirley_bg":
@@ -294,6 +289,23 @@ def _seed_shirley_params(
                 # B(edge) = k * total + const <= edge intensity (+ noise tolerance).
                 if hi[ki] is None:
                     hi[ki] = (step + tol) / total
+
+
+def _model_y_input(problem: FitProblem, yf: np.ndarray) -> np.ndarray:
+    """
+    ``y`` passed to the lmfitxps background models.
+
+    lmfitxps ``shirley`` computes ``k * cumsum(y) + const`` WITHOUT subtracting const (despite
+    its docstring), so any baseline offset is integrated into a near-linear ramp. For a lone
+    Shirley background we hand it ``y - I_right`` so the integrand is the true step signal.
+    Arrays are already oriented low-BE-last here.
+    """
+    types = {c.component_type.strip().lower() for c in problem.components}
+    if "shirley_bg" not in types or (types & XPS_BACKGROUND_COMPONENT_TYPES) != {"shirley_bg"}:
+        return yf
+    if yf.size < 8 or not np.all(np.isfinite(yf)):
+        return yf
+    return yf - _shirley_endpoints(yf)[0]
 
 
 def _shirley_needs_flip(problem: FitProblem) -> bool:
@@ -506,7 +518,7 @@ def _fit_curve_lmfit(problem: FitProblem) -> FitResult:
     yf = problem.y.astype(float)
     fit_kws: dict[str, Any] = {"x": xf}
     if has_active_bg:
-        fit_kws["y"] = yf
+        fit_kws["y"] = _model_y_input(problem, yf)
     try:
         result = model.fit(yf, params, max_nfev=50_000, **fit_kws)
     except Exception as e:
@@ -627,7 +639,7 @@ def _evaluate_curve_lmfit(
     yf = problem.y.astype(float)
     fit_kws: dict[str, Any] = {"x": xf}
     if has_active_bg:
-        fit_kws["y"] = yf
+        fit_kws["y"] = _model_y_input(problem, yf)
     try:
         y_hat = np.asarray(model.eval(params=params, **fit_kws), dtype=float)
     except Exception as e:

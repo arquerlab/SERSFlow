@@ -310,6 +310,10 @@ def test_xps_shirley_bg_is_not_a_straight_line_and_tracks_truth(ascending: bool)
     # Background tracks the true Shirley within a fraction of its step height.
     step = float(np.ptp(bg_true))
     assert float(np.max(np.abs(bg_fit - bg_true))) < 0.35 * step
+    # Flat baseline on the low-BE side must give a flat background there (lmfitxps' shirley
+    # integrates raw y, so without baseline subtraction this became a linear ramp).
+    tail = slice(-60, None) if not ascending else slice(0, 60)
+    assert float(np.ptp(bg_fit[tail])) < 0.15 * step
     # And it is genuinely curved (not the chord between its endpoints).
     chord = np.linspace(bg_fit[0], bg_fit[-1], bg_fit.size)
     assert float(np.max(np.abs(bg_fit - chord))) > 0.05 * step
