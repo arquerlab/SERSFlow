@@ -39,3 +39,7 @@ XPS_PhD_Beighner.pdf
 # Deploy / SSH keys (never commit)
 sersflow_deploy
 sersflow_deploy.pub
+
+# Local MCP client config and exports
+.mcp.json
+.sersflow_mcp_exports/

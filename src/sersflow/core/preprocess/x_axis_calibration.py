@@ -71,7 +71,13 @@ def is_valence_partner_for_region(vb_region: str | None, core_region: str | None
     if not token:
         return False
     vb_norm = normalize_region_token(vb_region)
-    return token in vb_norm
+    if token in vb_norm:
+        return True
+    # VB labels often name only the element (``valencebandO`` for core ``O 1s``): match the
+    # remainder exactly so ``valencebandC`` pairs with C 1s but not with Co 2p.
+    element = re.sub(r"\d+[spdf]$", "", token)
+    remainder = re.sub(r"valence|band|vb|fermi|edge", "", vb_norm)
+    return bool(element) and remainder == element
 
 
 def resolve_calibration_target_x(
