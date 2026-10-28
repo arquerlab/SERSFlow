@@ -266,7 +266,13 @@ def _seed_shirley_params(
         return
     i_right, step, sigma, n_end = _shirley_endpoints(y)
     tol = max(4.0 * sigma / np.sqrt(n_end), 1e-4 * max(abs(i_right), 1.0))
-    total = float(np.sum(y - i_right))
+    try:
+        from lmfitxps.models import shirley as _shirley_fn
+
+        # Model's own integral at the high-BE edge for k=1 (not a plain sum of y - I_right).
+        total = float(_shirley_fn(y, 1.0, i_right)[0] - i_right)
+    except Exception:
+        total = 0.0
 
     for comp, keys, (s, _e) in zip(components, param_keys_per_comp, slices):
         if comp.component_type.strip().lower() != "shirley_bg":
@@ -283,10 +289,11 @@ def _seed_shirley_params(
             ki = s + keys.index("k")
             unset = (not np.isfinite(p0[ki])) or p0[ki] <= 0 or np.isclose(p0[ki], _SHIRLEY_K_SPEC_DEFAULT)
             if unset and step > 0 and total > 0:
-                k_est = step / total
-                p0[ki] = k_est
+                p0[ki] = step / total
+                # The background cannot exceed the data at the high-BE edge:
+                # B(edge) = k * total + const <= edge intensity (+ noise tolerance).
                 if hi[ki] is None:
-                    hi[ki] = 20.0 * k_est
+                    hi[ki] = (step + tol) / total
 
 
 def _shirley_needs_flip(problem: FitProblem) -> bool:
