@@ -103,6 +103,10 @@ def apply_fitting_recipe(
         default=None,
         description="Acquisition pass energy hint when pass_energy is omitted",
     ),
+    lock_satellites: bool = Query(
+        default=True,
+        description="Lock flagged satellite amplitudes to the main peak (literature area ratio); the link stays editable",
+    ),
 ) -> dict[str, Any]:
     try:
         return apply_recipe_id(
@@ -110,6 +114,7 @@ def apply_fitting_recipe(
             pass_energy=pass_energy,
             include_background=include_background,
             preferred_pass_energy=preferred_pass_energy,
+            lock_satellites=lock_satellites,
         )
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e

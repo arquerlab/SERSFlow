@@ -329,6 +329,7 @@ def apply_compound_fit_to_fitting_params(
     pass_energy: int | None = None,
     include_background: bool = True,
     preferred_pass_energy: int | None = None,
+    lock_satellites: bool = True,
 ) -> dict[str, Any]:
     warnings: list[str] = []
     peaks = list(fit.peaks)
@@ -596,6 +597,37 @@ def apply_compound_fit_to_fitting_params(
             key = (peak_comp_ids[i], "fwhm")
             if key not in driven:
                 add_link(peak_comp_ids[i], "fwhm", peak_comp_ids[0], "fwhm", "equal")
+
+    # Satellites (shake-up lines flagged ``"satellite": true`` in the recipe) have a
+    # literature intensity relative to the main line, so their amplitude is locked to
+    # the first non-satellite peak by default. Edit/remove the amp link to unlock.
+    if lock_satellites:
+        sat_idx = [i for i, p in enumerate(peaks) if p.get("satellite") is True and areas[i] is not None]
+        ref_idx = next(
+            (i for i, p in enumerate(peaks) if p.get("satellite") is not True and areas[i] is not None),
+            None,
+        )
+        if sat_idx and ref_idx is not None:
+            for i in sat_idx:
+                add_link(
+                    peak_comp_ids[i],
+                    "amp",
+                    peak_comp_ids[ref_idx],
+                    "amp",
+                    "scale",
+                    scale=height_scale_for_area_ratio(
+                        area_i=float(areas[i]),
+                        area_0=float(areas[ref_idx]),
+                        factor_i=factors[i],
+                        factor_0=factors[ref_idx],
+                    ),
+                )
+            warnings.append(
+                "satellite area ratio(s) locked to the main peak via amp links "
+                "(edit or remove the link to unlock; lock_satellites=false disables)"
+            )
+        elif sat_idx:
+            warnings.append("satellite peaks flagged but no area_pct reference peak; ratios not locked")
 
     _FWHM_KEYS = frozenset({"fwhm", "fwhm_g", "fwhm_l", "fwhm_lorentz", "fwhm_gauss"})
     _SHAPE_KEYS = frozenset({"m", "eta", "alpha", "beta", "a", "n", "m_asym"})
@@ -905,6 +937,7 @@ def apply_recipe_id(
     pass_energy: int | None = None,
     include_background: bool = True,
     preferred_pass_energy: int | None = None,
+    lock_satellites: bool = True,
 ) -> dict[str, Any]:
     fit = get_compound_fit(recipe_id)
     if fit is None:
@@ -914,6 +947,7 @@ def apply_recipe_id(
         pass_energy=pass_energy,
         include_background=include_background,
         preferred_pass_energy=preferred_pass_energy,
+        lock_satellites=lock_satellites,
     )
     rid = str(out.get("recipe_id") or recipe_id).strip()
     if rid:

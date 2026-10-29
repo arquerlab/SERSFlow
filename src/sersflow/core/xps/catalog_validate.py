@@ -133,6 +133,8 @@ def validate_fitting_recipes_raw(raw: dict[str, Any]) -> list[str]:
                     float(p["be_eV"])
                 except (TypeError, ValueError) as err:
                     raise ValueError(f"{pp}.be_eV: expected number") from err
+            if p.get("satellite") is True and not isinstance(p.get("area_pct"), (int, float)):
+                warnings.append(f"{pp}: satellite flagged but area_pct missing (ratio cannot be locked)")
             ls = p.get("lineshape")
             if ls is None:
                 warnings.append(f"{pp}: missing lineshape (apply will default to gl)")

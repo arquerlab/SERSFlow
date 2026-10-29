@@ -4726,6 +4726,7 @@
         {
           "index": 3,
           "label": "peak_3",
+          "satellite": true,
           "be_eV": 785.5,
           "delta_eV": 3.4,
           "area_pct": 1.6,
@@ -4742,6 +4743,7 @@
         {
           "index": 4,
           "label": "peak_4",
+          "satellite": true,
           "be_eV": 786.5,
           "delta_eV": 1.0,
           "area_pct": 26.1,
@@ -4807,6 +4809,7 @@
         {
           "index": 3,
           "label": "peak_3",
+          "satellite": true,
           "be_eV": 786.0,
           "delta_eV": 3.79,
           "area_pct": 33.0,
@@ -4823,6 +4826,7 @@
         {
           "index": 4,
           "label": "peak_4",
+          "satellite": true,
           "be_eV": 790.4,
           "delta_eV": 4.4,
           "area_pct": 2.4,
@@ -4904,6 +4908,7 @@
         {
           "index": 4,
           "label": "peak_4",
+          "satellite": true,
           "be_eV": 790.1,
           "delta_eV": 7.07,
           "area_pct": 8.9,
@@ -4987,6 +4992,7 @@
         {
           "index": 4,
           "label": "peak_4",
+          "satellite": true,
           "be_eV": 785.2,
           "delta_eV": 3.0,
           "area_pct": 8.1,
@@ -5003,6 +5009,7 @@
         {
           "index": 5,
           "label": "peak_5",
+          "satellite": true,
           "be_eV": 789.5,
           "delta_eV": 4.3,
           "area_pct": 7.2,

@@ -51,7 +51,8 @@ def test_co_multiplet_recipes_do_not_get_spin_orbit_links() -> None:
         assert fit.raw.get("spin_orbit_split_eV") is None
         labs = [str(p.get("label") or "") for p in fit.peaks]
         assert _find_so_pair(labs) is None
-        out = apply_recipe_id(rid, pass_energy=20, include_background=False)
+        # Spin-orbit logic only: satellite amp locks (default) are checked elsewhere.
+        out = apply_recipe_id(rid, pass_energy=20, include_background=False, lock_satellites=False)
         assert not any(L.get("source_key") == "amp" for L in out["param_links"])
 
 
@@ -87,7 +88,10 @@ def test_apply_multiplet_cr2o3() -> None:
 
 
 def test_recipe_fwhm_and_m_fixed_amps_free() -> None:
-    out = apply_recipe_id("co_2p32_co_oh2", pass_energy=20, include_background=False)
+    # Baseline recipe behaviour (area_pct is only an amplitude seed); satellite locking is opt-out.
+    out = apply_recipe_id(
+        "co_2p32_co_oh2", pass_energy=20, include_background=False, lock_satellites=False
+    )
     from sersflow.core.preprocess.fitting_specs import component_param_specs
 
     off = 0
@@ -210,3 +214,99 @@ def test_merge_fitting_recipe_params_skips_second_baseline_and_renames() -> None
     assert len(merged["bounds_lower"]) == n
     assert len(merged["bounds_upper"]) == n
     assert len(merged["vary"]) == n
+
+
+def _amp_links(out: dict) -> dict[str, dict]:
+    return {
+        lk["source_component_id"]: lk
+        for lk in out["param_links"]
+        if lk["source_key"] == "amp" and lk["mode"] == "scale"
+    }
+
+
+def _flat_index(out: dict, component_id: str, key: str) -> int:
+    from sersflow.core.preprocess.fitting_specs import component_param_specs
+
+    i = 0
+    for comp in out["components"]:
+        specs = component_param_specs(comp["component_type"])
+        for s in specs:
+            if comp["component_id"] == component_id and s.key == key:
+                return i
+            i += 1
+    raise KeyError((component_id, key))
+
+
+def test_satellites_locked_to_main_peak_by_default() -> None:
+    out = apply_recipe_id("co_2p32_coo", pass_energy=20, include_background=False)
+    links = _amp_links(out)
+    # CoO: peak_3 and peak_4 are flagged satellites; both tied to peak_1.
+    assert set(links) == {"peak_3", "peak_4"}
+    for sat, lk in links.items():
+        assert lk["target_component_id"] == "peak_1" and lk["target_key"] == "amp"
+        i_sat = _flat_index(out, sat, "amp")
+        i_ref = _flat_index(out, "peak_1", "amp")
+        assert out["vary"][i_sat] is False  # driven by the link
+        assert out["vary"][i_ref] is True
+        # link scale equals the seeded amplitude ratio (areas 1.6 and 26.1 vs 46.6)
+        assert lk["scale"] == pytest.approx(out["p0"][i_sat] / out["p0"][i_ref], rel=1e-9)
+    # non-satellite multiplet peak stays free
+    assert out["vary"][_flat_index(out, "peak_2", "amp")] is True
+    assert any("satellite" in w for w in out["warnings"])
+
+
+def test_lock_satellites_false_keeps_amplitudes_free() -> None:
+    out = apply_recipe_id(
+        "co_2p32_coo", pass_energy=20, include_background=False, lock_satellites=False
+    )
+    assert _amp_links(out) == {}
+    assert all(out["vary"][_flat_index(out, f"peak_{n}", "amp")] for n in (1, 2, 3, 4))
+
+
+def test_recipes_without_satellite_flags_are_unchanged() -> None:
+    out = apply_recipe_id("sc_2p_sc0", pass_energy=20, include_background=False)
+    assert _amp_links(out) == {}
+
+
+def test_satellite_flags_present_in_all_co_2p32_recipes_with_high_be_shakeup() -> None:
+    for rid in ("co_2p32_coo", "co_2p32_co_oh2", "co_2p32_coooh", "co_2p32_co3o4"):
+        fit = get_compound_fit(rid)
+        assert fit is not None
+        flagged = [p for p in fit.peaks if p.get("satellite") is True]
+        assert flagged, rid
+        assert all(isinstance(p.get("area_pct"), (int, float)) for p in flagged)
+        assert fit.peaks[0].get("satellite") is not True  # reference peak is never a satellite
+
+
+def test_locked_satellite_ratio_survives_a_fit() -> None:
+    """A fit with the amp link keeps the recipe area ratio between satellite and main peak."""
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("lmfit")
+    from sersflow.core.preprocess.fitting import FitComponent, FitProblem, fit_curve
+
+    out = apply_recipe_id("co_2p32_coo", pass_energy=20, include_background=False)
+    comps = [FitComponent(component_type=c["component_type"], component_id=c["component_id"]) for c in out["components"]]
+    x = np.linspace(792.0, 772.0, 300)
+    p0 = list(out["p0"])
+    # synthesize data from the seeded (locked-ratio) model plus noise, then shift/scale it
+    from sersflow.core.preprocess.fitting_specs import build_component_function
+
+    y = np.full_like(x, 500.0)
+    i = 0
+    for comp in comps:
+        f, specs = build_component_function(comp.component_type)
+        n = len(specs)
+        y = y + 900.0 * f(x, p0[i] + 0.2, *p0[i + 1 : i + n])
+        i += n
+    y = y + np.random.default_rng(5).normal(0.0, 5.0, size=y.shape)
+    res = fit_curve(
+        FitProblem(
+            x=x, y=y, components=comps, p0=p0,
+            bounds_lower=out["bounds_lower"], bounds_upper=out["bounds_upper"],
+            vary=out["vary"], param_links=out["param_links"], technique_family="xps",
+            initial_guess_mode="default",
+        )
+    )
+    i_ref = _flat_index(out, "peak_1", "amp")
+    i_sat = _flat_index(out, "peak_4", "amp")
+    assert res.p_opt[i_sat] / res.p_opt[i_ref] == pytest.approx(out["p0"][i_sat] / out["p0"][i_ref], rel=1e-6)

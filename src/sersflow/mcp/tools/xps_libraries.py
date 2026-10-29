@@ -250,8 +250,9 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         pass_energy: int | None = None,
         include_background: bool = True,
         preferred_pass_energy: int | None = None,
+        lock_satellites: bool = True,
     ) -> str:
-        """Expand an XPS fitting recipe into pipeline fitting-step params."""
+        """Expand an XPS fitting recipe into pipeline fitting-step params (satellite ratios locked by default)."""
 
         def _run():
             data = ctx.get_client().xps.apply_fitting_recipe(
@@ -259,6 +260,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 pass_energy=pass_energy,
                 include_background=include_background,
                 preferred_pass_energy=preferred_pass_energy,
+                lock_satellites=lock_satellites,
             )
             return {"ok": True, "data": data}
 
@@ -270,6 +272,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         pass_energy: int | None = None,
         include_background: bool = True,
         preferred_pass_energy: int | None = None,
+        lock_satellites: bool = True,
         pipeline: dict[str, Any] | None = None,
         confirm: bool = False,
     ) -> str:
@@ -282,6 +285,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 pass_energy=pass_energy,
                 include_background=include_background,
                 preferred_pass_energy=preferred_pass_energy,
+                lock_satellites=lock_satellites,
             )
             base = Pipeline.model_validate(pipeline) if pipeline else Pipeline(steps=[], technique_family="xps")
             merged = _merge_apply_into_pipeline(base, applied)
@@ -310,6 +314,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         pass_energy: int | None = None,
         include_background: bool = True,
         preferred_pass_energy: int | None = None,
+        lock_satellites: bool = True,
         confirm: bool = False,
     ) -> str:
         """Apply XPS recipe into session working pipeline as a fitting step (technique_family=xps)."""
@@ -322,6 +327,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 pass_energy=pass_energy,
                 include_background=include_background,
                 preferred_pass_energy=preferred_pass_energy,
+                lock_satellites=lock_satellites,
             )
             merged = _merge_apply_into_pipeline(sess.session.pipeline, applied)
             blocked = confirm_gates.check_fitting_components(

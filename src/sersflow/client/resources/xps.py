@@ -88,8 +88,12 @@ class XpsResource(_Base):
         pass_energy: int | None = None,
         include_background: bool = True,
         preferred_pass_energy: int | None = None,
+        lock_satellites: bool = True,
     ) -> dict[str, Any]:
-        params: dict[str, Any] = {"include_background": include_background}
+        params: dict[str, Any] = {
+            "include_background": include_background,
+            "lock_satellites": lock_satellites,
+        }
         if pass_energy is not None:
             params["pass_energy"] = pass_energy
         if preferred_pass_energy is not None:
