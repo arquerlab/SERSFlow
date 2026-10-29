@@ -1,0 +1,71 @@
+<h1>MCP server: tools and safety</h1>
+<p class="lead">Tool names mirror the web API: <code>get_…</code> reads, <code>post_…</code> creates or runs, <code>put_…</code> updates a session. The tools return short summaries and <b>file paths</b>, never whole tables.</p>
+
+<h2>Tool families</h2>
+<table>
+  <tr><th>Family</th><th>Main tools</th><th>Notes</th></tr>
+  <tr><td>Status and catalogs</td><td><code>get_health</code>, <code>get_mcp_meta</code>, <code>get_meta_formats</code>, <code>get_meta_pipeline_steps</code>, <code>get_pipeline_baseline_methods</code></td><td>Start every session with <code>get_mcp_meta</code>.</td></tr>
+  <tr><td>Uploads</td><td><code>post_io_upload</code>, <code>get_io_uploads</code>, <code>post_io_unload</code>, <code>post_io_purge_preview</code>, <code>post_io_purge</code>, <code>post_io_labels_auto</code>, <code>post_io_labels_update</code></td><td>Upload takes local paths or one folder. Purge permanently deletes and always needs <code>confirm=true</code>.</td></tr>
+  <tr><td>Datasets</td><td><code>post_datasets</code>, <code>get_datasets</code>, <code>get_datasets_by_id</code>, <code>get_datasets_spectrum_axes</code>, <code>get_datasets_xps_regions</code>, <code>get_datasets_filter_fields</code>, <code>get_datasets_export</code>, <code>post_datasets_import</code></td><td>No delete tool. For VAMAS files <code>vms_spectrum_mode</code> is <code>averages</code> (default), <code>individuals</code> or <code>all</code>.</td></tr>
+  <tr><td>Sessions</td><td><code>post_sessions</code>, <code>put_sessions_pipeline</code>, <code>put_sessions_subset</code>, <code>post_sessions_qc_preview</code>, <code>post_sessions_run</code></td><td>A session = working pipeline + subset. Safe place to iterate.</td></tr>
+  <tr><td>Pipeline library</td><td><code>get_pipelines</code>, <code>get_pipelines_by_id</code>, <code>post_pipelines</code>, <code>post_pipelines_import</code>, <code>get_pipelines_export</code></td><td>Create new names only. Overwrite and delete are refused.</td></tr>
+  <tr><td>Fitting</td><td><code>get_fitting_models</code>, <code>post_fitting_fit</code></td><td>Interactive fit on one spectrum; the curve goes to a file when requested.</td></tr>
+  <tr><td>XPS libraries</td><td><code>get_xps_chemical_states</code>, <code>get_xps_fitting_recipes_index</code>, <code>get_xps_fitting_recipes</code>, <code>apply_xps_fitting_recipe</code>, <code>post_xps_apply_recipe_to_pipeline_draft</code>, <code>post_xps_apply_recipe_to_session</code></td><td>Chemical states need a filter (element, line or text). Applying to a session replaces that region's fitting step.</td></tr>
+  <tr><td>Analysis</td><td><code>post_analysis_runs</code>, <code>get_analysis_jobs</code>, <code>post_analysis_jobs_wait</code>, <code>get_analysis_runs_export</code>, <code>get_analysis_runs_observation</code>, <code>get_analysis_runs_observation_columns</code>, <code>get_analysis_runs_export_manifest</code>, <code>get_analysis_runs_export_bundle</code>, <code>post_analysis_fit_curve_jobs</code></td><td>Runs need a <code>session_id</code> or an inline pipeline.</td></tr>
+  <tr><td>Explore</td><td><code>post_explore_correlation</code>, <code>post_explore_vif</code>, <code>post_explore_pca</code>, <code>post_explore_cluster</code>, <code>post_explore_matrix_jobs</code>, <code>post_explore_fpca_discrete</code>, <code>post_explore_spectrum_cluster</code>, <code>post_explore_fpca_fda</code></td><td>Feature-table tools take an analysis run; spectrum tools take a matrix job.</td></tr>
+  <tr><td>Plots</td><td><code>post_plot_spectrum</code>, <code>post_plot_series_points</code>, <code>post_plot_series_heatmap</code>, <code>post_plot_map_points</code>, <code>post_plot_multi_points</code>, <code>get_plot_map_preview_image</code></td><td>Write <b>Plotly JSON</b> files (open them in the web UI or Plotly), not images; the map preview is a PNG.</td></tr>
+  <tr><td>Local files</td><td><code>read_tabular_file</code></td><td>Reads CSV/Parquet slices from the export folder only.</td></tr>
+</table>
+
+<h2>Read-only resources</h2>
+<p>Six resources are offered, for example <code>sersflow://pipelines</code> (saved pipelines) and <code>sersflow://openapi/summary</code>. Many clients require you to attach resources by hand; the tools cover the same ground.</p>
+
+<h2>Running things: the job pattern</h2>
+<ol class="steps">
+  <li>Start with <code>post_analysis_runs</code> (or <code>post_explore_matrix_jobs</code>). You get a <code>run_id</code> and a <code>job_id</code>.</li>
+  <li>Wait with <code>post_analysis_jobs_wait</code>, or look with <code>get_analysis_jobs</code>.</li>
+  <li>When the status is <i>completed</i>, export or explore.</li>
+</ol>
+<div class="warn">The wait tools allow up to <b>3600 s</b> by default, longer than most clients tolerate. Ask the assistant to pass a short <code>timeout_s</code> (30–60) and call again. A timeout is <b>not a failure</b>: the reply is <code>{"error":"timeout","resume":{…}}</code> and tells it what to call next.</div>
+
+<h2>Saved pipelines and runs</h2>
+<p><code>pipeline_id</code> and <code>pipeline_name</code> given to <code>post_analysis_runs</code> or <code>post_explore_matrix_jobs</code> are <b>labels only</b>. To run a saved pipeline, either fetch it with <code>get_pipelines_by_id</code> and pass it inline (with a subset such as <code>{"kind":"all"}</code>), or create a session from it first with <code>post_sessions</code>.</p>
+
+<h2>Confirmation gates</h2>
+<p>When a guarded action is requested, the tool refuses with <code>needs_confirm: true</code> and a message. The assistant must show you that message and repeat the call with <code>confirm=true</code> only after you say yes.</p>
+<table>
+  <tr><th>Guarded action</th><th>Condition</th></tr>
+  <tr><td>Purge uploads</td><td>Always.</td></tr>
+  <tr><td>Upload, dataset import, plot output</td><td>Larger than 100 MiB (<code>upload_confirm_bytes</code>).</td></tr>
+  <tr><td>Create/run/save a pipeline</td><td>A fitting step has more than 20 components (<code>fitting_confirm_max_components</code>).</td></tr>
+  <tr><td>Write outside the export folder</td><td>Absolute <code>output_path</code> not inside <code>export_dir</code>.</td></tr>
+</table>
+
+<h2>What the server enforces, and what it only asks</h2>
+<table>
+  <tr><th>Enforced by the server</th><th>Only a convention (put it in your instructions)</th></tr>
+  <tr><td>No delete of datasets, pipelines, runs or jobs (only the confirmed purge of uploads).<br>No overwrite of library pipelines.<br>Confirmation gates above.<br>No password or cookie ever shown to the model.<br>You only see your own data (per-user scoping in the API).</td><td>Ask which method to use when you did not say.<br>Propose a plan and wait for approval before heavy work.<br>Fork a changed pipeline under a new name.</td></tr>
+</table>
+
+<h2>Things that surprise people</h2>
+<ul>
+  <li><b>Fixed file names overwrite.</b> Default output names such as <code>plot_spectrum.json</code> are fixed. Ask the assistant to give each export its own <code>output_path</code>.</li>
+  <li><b>XPS recipes replace.</b> Applying a recipe to a session replaces any existing fitting step for the same region.</li>
+  <li><b>Reading values.</b> The assistant should read a CSV only when a number is needed. If it passes an explicit <code>max_rows</code>, the default cap does not apply.</li>
+  <li><b>No prompt templates</b> are shipped; the examples in <a href="#" data-help="t-mcp">Tutorial 5</a> work as plain prompts.</li>
+</ul>
+
+<h2>Error messages</h2>
+<table>
+  <tr><th>You see</th><th>Meaning and fix</th></tr>
+  <tr><td>“API requires authentication…”</td><td>Add <code>SERSFLOW_USERNAME</code> and <code>SERSFLOW_PASSWORD</code> to the client's <code>env</code>, or use <code>SERSFLOW_AUTH_DISABLED=1</code> locally.</td></tr>
+  <tr><td>“SpecFlow API not reachable…”</td><td>Wrong <code>SERSFLOW_URL</code>, or <code>api_start_enabled = false</code>. Start <code>sersflow-api</code>.</td></tr>
+  <tr><td>“Timed out waiting for API health” / “exited early”</td><td>Read <code>api_spawn.log</code> in the export folder: port busy, slow first start (raise <code>api_health_timeout_s</code>), or auth enabled without <code>SERSFLOW_AUTH_SECRET</code>.</td></tr>
+  <tr><td>“MCP config not found”</td><td><code>SERSFLOW_MCP_CONFIG</code> points to a missing file.</td></tr>
+  <tr><td><code>incompatible</code></td><td>API and MCP versions differ by major version. Update the older one.</td></tr>
+  <tr><td><code>job_failed</code></td><td>Read <code>detail</code>, fix the pipeline or data, start a new run.</td></tr>
+  <tr><td>“Provide session_id or an inline pipeline”</td><td>See “Saved pipelines and runs” above.</td></tr>
+  <tr><td>“Path not allowed” (read_tabular_file)</td><td>The file is outside the export folder and was not produced by an export tool in this session.</td></tr>
+  <tr><td>“Library pipeline overwrite is forbidden”</td><td>Save under a new name.</td></tr>
+  <tr><td>Tools do not appear</td><td>Client not restarted, <code>mcp</code> extra not installed, or the command is not on the client's <code>PATH</code> (use the full path).</td></tr>
+</table>

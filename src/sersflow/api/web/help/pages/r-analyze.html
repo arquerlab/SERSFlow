@@ -1,0 +1,102 @@
+<h1>Analyze tab</h1>
+<p class="lead">The Analyze tab (“Features &amp; statistics”) runs your saved pipeline on the <b>entire</b> dataset and then lets you explore the resulting feature table. The random subset used for previews in Prepare plays no role here.</p>
+
+<h2>Header controls</h2>
+<table>
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td><span class="ui">Dataset</span></td><td>Choose the dataset. Changing it clears the Pipeline and Run selections. Pipelines are filtered to the dataset's technique; a mismatch gives “technique_family mismatch”.</td></tr>
+  <tr><td><span class="ui">Run</span></td><td>The analysis run that drives Exports and the statistics. Entries show the run name and status.</td></tr>
+  <tr><td><span class="ui">Pipeline</span></td><td>Shown only in <i>Overview</i> and <i>Spectrum matrix &amp; PCA</i>. Pick a saved pipeline to run.</td></tr>
+  <tr><td><span class="ui">Section</span></td><td><i>Overview</i>, <i>Exports</i>, <i>Correlation / VIF</i>, <i>PCA / Cluster</i>, <i>Heatmaps</i>, <i>Plots</i>, <i>Spectrum matrix &amp; PCA</i>.</td></tr>
+</table>
+<p>Your choices are remembered in the page address and in the browser, so a reload returns you to the same place. Computed results (PCA, k-means, correlation, VIF) are kept only in the open page and are lost on reload.</p>
+
+<h2>Overview: runs</h2>
+<ul>
+  <li><span class="ui">Run feature extraction (async)</span> starts a background job on <b>every spectrum</b> of the dataset (enabled once a dataset and pipeline are chosen). A line shows <i>Job: … – status (done/total)</i> and updates every second. The new run is selected automatically and is named “&lt;dataset&gt; &lt;pipeline&gt; NN”.</li>
+  <li>The <b>Runs</b> table lists Run, Status, Dataset, Pipeline and Created. Click a row to select it. <span class="ui">Delete</span> removes one run; <span class="ui">Delete all runs</span> removes all runs of the dataset, including running ones, with no undo. Saved exploration results and matrix jobs are kept.</li>
+  <li>Statuses: <i>pending</i> → <i>running</i> → <i>completed</i> or <i>failed</i>. Only <b>one run executes at a time</b> on the server; a second one waits as <i>pending</i>.</li>
+  <li>The server keeps at most <b>50</b> runs per dataset and automatically deletes the oldest.</li>
+</ul>
+<h3>What a run extracts</h3>
+<p>One feature table with a row per spectrum, built from the enabled <i>Peak Identification</i>, <i>Peak Integration</i>, <i>Peak Fitting</i> and <i>Metric Calculation</i> steps. QC steps (low-signal, outlier, metadata filter) remove spectra from the run. If the pipeline has <b>no</b> feature step, a default probe <code>I_analysis_fallback</code> (intensity at 1000 cm⁻¹) is added so the run is not empty. A spectrum whose extraction fails appears as an empty row.</p>
+
+<div class="warn"><b>The gate.</b> Exports, Correlation/VIF, PCA/Cluster, Heatmaps and Plots show only a hint until the selected run is <i>completed</i>. If a run <i>failed</i>, the usual causes are: a crop that does not overlap the data, a fit window with no points left after cropping, or an unsaved pipeline. Fix it and start a <b>new</b> run.</div>
+
+<h2>Exports</h2>
+<p>Download buttons for the selected run. Details of every column are on <a href="#" data-help="r-exports">Exports and column names</a>.</p>
+<ul>
+  <li><b>Observation table (recommended):</b> <span class="ui">Observation wide CSV (labels + axes)</span>, <span class="ui">Observation long CSV</span>, <span class="ui">Observation Parquet (wide)</span> (needs the optional <code>pyarrow</code> package on the server).</li>
+  <li><b>Features only:</b> <span class="ui">Features wide CSV</span> and <span class="ui">Features long CSV</span> (numbers only, ready for scikit-learn).</li>
+  <li><b>Manifest &amp; bundle:</b> <span class="ui">Load manifest (JSON)</span> shows provenance on screen; <span class="ui">Bundle (ZIP, features only)</span> contains the manifest plus the wide features CSV.</li>
+  <li><b>Fitting curves (on demand):</b> only when the pipeline has fitting steps. Choose a <i>Fitting step</i> and a <i>Content</i> (“data + fit + residuals” or “data + fit + components + residuals”). Tick spectra and press <span class="ui">Selected CSV zip</span> / <span class="ui">PNG zip</span> / <span class="ui">SVG zip</span> (made in the browser), or use <span class="ui">All CSV zip</span> / <span class="ui">PNG zip</span> / <span class="ui">SVG zip</span> (a background job, up to 10 minutes of waiting). CSV columns: <code>x</code>, <code>y</code>, <code>y_hat</code>, <code>residual</code> and one <code>comp_&lt;id&gt;</code> per component.</li>
+  <li><b>Spectra with step outputs:</b> tick pipeline steps and download one CSV per spectrum with the raw spectrum and the result of each chosen step. This re-runs the pipeline, so it can take a while.</li>
+</ul>
+
+<h2>Correlation / VIF</h2>
+<p>This is where you <b>choose the feature columns for all statistics</b>. The selection is shared by correlation, VIF, PCA and k-means; the PCA / Cluster section has no picker of its own.</p>
+<ul>
+  <li>Columns are grouped: <i>Spectral features</i> (with quick buttons for position, amplitude, area, FWHM, intensity families), <i>Axes &amp; grid</i> and <i>Experiment metadata (upload)</i>. Each group has <span class="ui">Select all</span> / <span class="ui">Clear</span>.</li>
+  <li>If your selection becomes empty (for example after switching run) it resets to all feature columns.</li>
+  <li><span class="ui">Run correlation</span> draws a heatmap of the pairwise <b>Pearson r</b>. There is no method choice. Non-numeric metadata columns are dropped. More than 80 columns will be slow to draw.</li>
+  <li><span class="ui">Run VIF</span> (needs at least two columns) draws the variance inflation factor per column. Rule of thumb: above 5 suggests collinearity, above 10 is strong. A perfectly redundant column gives an infinite value and its bar is blank.</li>
+  <li>Downloads: <span class="ui">Correlation PNG/SVG</span> and <span class="ui">VIF PNG/SVG</span>.</li>
+</ul>
+<div class="note">VIF, PCA and k-means use only the spectra that have a value in <b>every</b> selected column. If no spectrum qualifies, missing values are replaced by the column mean instead. The page does not tell you which happened. Mixing fit parameters with intensity features can therefore shrink the set of spectra used; check the observation table if numbers surprise you.</div>
+
+<h2>PCA / Cluster</h2>
+<table>
+  <tr><th>Control</th><th>Meaning</th></tr>
+  <tr><td>PCA method</td><td><i>PCA</i> or <i>Sparse PCA</i> (few non-zero loadings, easier to read). Sparse PCA gives no explained variance, so the scree and cumulative cards stay empty.</td></tr>
+  <tr><td>Scaling</td><td><i>None / mean-center only</i> (default) or <i>StandardScaler / unit variance</i>. Use the latter when columns have different units or magnitudes.</td></tr>
+  <tr><td>n_components</td><td>Blank = the smaller of the number of columns and 10 (and limited by the number of spectra).</td></tr>
+  <tr><td>spca_alpha, spca_ridge_alpha</td><td>Sparse PCA only: sparsity penalty (1) and ridge penalty (1e-5).</td></tr>
+  <tr><td>k (k-means), seed</td><td>Number of clusters (3) and random seed (0). k-means runs on the <b>raw</b> selected columns and ignores the Scaling setting, so large-valued columns dominate.</td></tr>
+</table>
+<p>Buttons: <span class="ui">Run PCA</span> (or <span class="ui">Run sparse PCA</span>) and <span class="ui">Run k-means</span>.</p>
+<h3>Plot options</h3>
+<ul>
+  <li><b>Plots to show:</b> Scores scatter, PC vs metadata, Scores pairplot, Scree, Cumulative EVR, Loadings topN, Loadings heatmap, Cluster on scores, Cluster sizes.</li>
+  <li><b>PC axes default to PC2 vs PC3</b> (pairplot PCs 2–6; PC vs metadata PCs 2,3). Set “Scatter X PC”, “Scatter Y PC” and the PC lists to 1 if you want PC1.</li>
+  <li><b>Color by (metadata)</b> colours scores by a numeric label. <b>PC vs metadata</b> plots a chosen PC against a metadata column (such as potential or time), one subplot per PC.</li>
+  <li><b>Loadings topN</b> shows the N columns with the largest absolute loading per PC.</li>
+  <li>Each card has <span class="ui">Download PNG / SVG / CSV</span>; <span class="ui">Export all PNG / SVG / CSV (zip)</span> covers the plots currently shown.</li>
+  <li>After a PCA run: <span class="ui">Download scores CSV</span>, <span class="ui">loadings CSV</span> and <span class="ui">variance CSV</span>. The scores file also contains the file path, axes and all metadata, so it can be re-plotted elsewhere.</li>
+</ul>
+<div class="warn">The server keeps one PCA result per analysis run. Running PCA again with other settings overwrites it, and downloading an older result gives you the newest one. Download what you need before changing settings.</div>
+<p>The k-means table in the right panel shows only the first 80 labels. For all labels, tick “Cluster on scores” and download that plot's CSV (needs a PCA run).</p>
+
+<h2>Heatmaps</h2>
+<p>For <b>maps</b> (position on a surface) and <b>time series</b>. Needs spectra with map or time axes (see <a href="#" data-help="t-maps">Tutorial 3</a>).</p>
+<ol class="steps">
+  <li>Choose a <span class="ui">Feature</span> (a run feature column).</li>
+  <li><span class="ui">Files</span>: <i>All files</i>, <i>Single file</i> or <i>Multiple selected</i>.</li>
+  <li><span class="ui">Layout</span>: <i>Individual plots</i> or <i>Subplots</i>.</li>
+  <li>Press <span class="ui">Plot heatmaps</span>.</li>
+</ol>
+<p>A map file gives a 2-D colour map; a time file gives a single-row map along time. <b>Click a cell</b> to overlay the processed spectrum from that position underneath (it re-runs the pipeline for that spectrum, so it may take a moment); <span class="ui">Clear spectra</span> empties the overlay. Each plot offers PNG and SVG.</p>
+
+<h2>Plots</h2>
+<h3>Parameter vs parameter</h3>
+<p>Scatter any numeric column against another (features, metadata, axes). Per plot choose <span class="ui">Style</span>: <i>Scatter</i>, <i>Line</i>, <i>Mean ± error bars</i>, <i>Line + error bars</i>, <i>Boxplot</i>; then <span class="ui">X</span>, one or more <span class="ui">Y</span> (<span class="ui">+ Y column</span>), optional <span class="ui">Color</span>, optional X/Y error columns; press <span class="ui">Plot</span>. <span class="ui">+ Add plot</span> adds another. Grouped styles group by identical X values; error bars are the sample standard deviation unless you supply an error column. Export as PNG, SVG or CSV.</p>
+<h3>Fit diagnostics</h3>
+<p>Pick a <span class="ui">Fitting step</span> and up to <b>10 spectra</b>. SpecFlow re-fits them on demand and draws data, fit, individual peaks and residuals, with <i>RMSE</i>, <i>R²</i> and <i>BIC</i> for each. Use this to check that automatic fits across the dataset are sensible.</p>
+
+<h2>Spectrum matrix &amp; PCA</h2>
+<p>Statistics on whole spectra rather than on extracted peaks. Not gated by a completed run.</p>
+<ol class="steps">
+  <li>Select the pipeline and, optionally, <span class="ui">up_to_step</span>: <i>Final (all steps)</i>, <i>Raw spectra</i> or a numbered step.</li>
+  <li>Press <span class="ui">Start matrix job (async)</span>. This builds a table with one row per spectrum and one column per wavenumber for the full dataset.</li>
+  <li>Select the finished job in the table (<span class="ui">Use</span>). Download it with <span class="ui">Download matrix CSV</span>, or load one back with <span class="ui">Import matrix CSV</span>.</li>
+  <li>Run <span class="ui">Run discrete PCA</span>, <span class="ui">k-means (PC embedding)</span> or the functional <b>FDA FPCA</b>.</li>
+</ol>
+<div class="warn"><ul>
+<li><b>All spectra must share the same x grid.</b> Otherwise the job fails with “inconsistent Raman shift grid”. Add an <i>Alignment &amp; Resampling</i> step after cropping and set <span class="ui">up_to_step</span> to that step or later.</li>
+<li>If a <b>Run</b> is selected, the job uses <b>that run's stored pipeline</b>, not the Pipeline dropdown.</li>
+<li>FDA FPCA needs the optional <code>scikit-fda</code> package on the server (<code>pip install -e ".[explore-fda]"</code>).</li>
+</ul></div>
+<ul>
+  <li><b>Discrete method:</b> <i>PCA on Y</i> or <i>Sparse PCA on Y</i>, with the same Scaling choices. Unit-variance scaling can amplify noisy regions; use it deliberately. Loadings are spectra: the plot shows each PC's loading against wavenumber, which you read like a difference spectrum.</li>
+  <li><b>Spectrum k-means:</b> k, seed and <i>n_pc_embedding</i> (how many PCs feed the clustering).</li>
+  <li>Downloads: scores, loadings, variance and mean-spectrum CSVs for discrete and FDA results.</li>
+</ul>

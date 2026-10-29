@@ -27,7 +27,7 @@ describe("buildParamPlot", () => {
     const res = buildParamPlot(cfg({ style: "scatter", ys: ["f1", "f2", ""] }), rows);
     expect(res.figure.data.map((t) => t.name)).toEqual(["f1", "f2"]);
     expect(res.figure.data[1].y).toEqual([200, 300]);
-    expect(res.figure.layout.yaxis.title).toBe("value");
+    expect(res.figure.layout.yaxis.title).toEqual({ text: "value" });
     expect(res.csvHeader).toEqual(["spectrum_id", "t", "f1", "f2"]);
     // Row d has no Y values at all and is dropped.
     expect(res.csvRows.map((r) => r[0])).toEqual(["a", "b", "c"]);

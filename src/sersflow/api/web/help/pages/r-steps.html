@@ -1,0 +1,84 @@
+<h1>Pipeline steps A–Z</h1>
+<p class="lead">Every step, what it does, its settings and the advice that saves time. Units: cm⁻¹ for vibrational data, eV for XPS (some labels say cm⁻¹ even for XPS; enter eV there).</p>
+
+<h2>Alignment &amp; Resampling</h2>
+<p>Interpolates every spectrum onto a common x grid.</p>
+<ul>
+  <li><b>min_x / max_x</b>: grid bounds. Defaults are <b>400 and 2000</b>; change them for your data (and for XPS).</li>
+  <li><b>grid_mode</b>: <i>step</i> (with <b>step</b>, default 1.0) or <i>points</i> (with <b>n_points</b>, default 512).</li>
+  <li><b>interp</b>: <i>linear</i> or <i>cubic</i> (cubic falls back to linear for fewer than 4 points).</li>
+</ul>
+<p>Outside the measured range the edge value is held flat (not empty). A descending axis comes out ascending. <b>Needed before</b> Outlier Detection and before a spectrum matrix in Analyze, which require identical grids.</p>
+
+<h2>Baseline Correction</h2>
+<p>Subtracts an estimated slowly varying background. Choose a <b>category</b>, then a <b>method</b>, then its parameters. Full list: <a href="#" data-help="r-baseline">Baseline methods</a>.</p>
+
+<h2>Cosmic Ray Removal (vibrational only)</h2>
+<p>Finds narrow spikes and replaces them by interpolation.</p>
+<ul>
+  <li><b>method</b>: <i>zscore</i> (threshold 5, window 5) or <i>derivative</i> (threshold 3, window 3). Switching resets the settings below.</li>
+  <li><b>interpolation</b>: <i>median</i> (default), <i>linear</i>, <i>cubic</i>. <b>max_width</b> (10 points): wider features are never treated as spikes. <b>min_intensity_ratio</b> (2.0): spike height relative to local background. <b>n_iterations</b> (3).</li>
+</ul>
+<div class="warn">Run it <b>before</b> baseline subtraction: spots with zero or negative local background are never corrected. Use an <b>odd</b> window. With very fine sampling, narrow genuine bands can be mistaken for spikes: lower <i>max_width</i> or raise the threshold.</div>
+
+<h2>Cropping</h2>
+<p><b>min_x</b>, <b>max_x</b>: keep only points in this inclusive range. A new Cropping step starts <b>empty</b>: fill both fields. Crop first, to the region you trust.</p>
+
+<h2>Derivative</h2>
+<p><b>order</b> (default 1): repeated numerical gradient. It amplifies noise, so smooth first.</p>
+
+<h2>Low-Signal Filter</h2>
+<p>Removes whole spectra that are too weak (dead acquisitions).</p>
+<ul>
+  <li><b>metric</b>: <i>mean</i>, <i>median</i> (default), <i>integrated</i>, <i>maximum</i> intensity, or <i>intensity percentile</i> (with <b>percentile</b>, default 10).</li>
+  <li><b>threshold</b>: spectra whose metric is below it are removed. The default 0 removes nothing.</li>
+  <li>A histogram shows the distribution with the threshold as a dotted red line; hover a bar to overlay up to 12 of its spectra. “Affected: n / total” updates live.</li>
+</ul>
+<div class="warn">The <b>action</b> menu (exclude/flag) has no effect: spectra below the threshold are always <b>excluded</b>. The metric is computed on the output of the steps above, so position matters; place the filter just after Cropping.</div>
+
+<h2>Metadata Filter</h2>
+<p>Keeps only spectra whose labels match, <i>on this branch</i>: others become empty and later steps ignore them. It does not delete them from the dataset. Use <b>Input = Initial</b> on a later filter to start again from everything (for example one branch per XPS region).</p>
+<ul>
+  <li><span class="ui">Add filter</span>: choose a label (<b>Filter by</b>), then tick values (categorical) or choose an operator (=, !=, &gt;, &gt;=, &lt;, &lt;=) and a number.</li>
+  <li>Several values in one row = OR; several rows = AND. No filters = everything passes.</li>
+</ul>
+
+<h2>Normalization</h2>
+<p><b>method</b>: <i>max</i> (default), <i>min</i>, <i>mean</i>, <i>median</i>, <i>vector (L2)</i>, <i>spectrum point</i> (divide by the intensity at <b>point_x</b>, default 1000), <i>baseline point</i> (divide by the baseline value at <b>point_x</b>, needs an earlier enabled Baseline step chosen under “baseline step”).</p>
+<ul>
+  <li>Use <i>max</i> for overlays, <i>vector (L2)</i> for PCA and clustering, <i>spectrum point</i> on an internal-standard band for quantification.</li>
+  <li>Normalize <b>after</b> baseline and spike removal. A zero denominator is silently replaced by 1; min/mean/median can be near zero on baseline-subtracted data.</li>
+</ul>
+
+<h2>Outlier Detection</h2>
+<p>Removes whole spectra that look unlike the rest. Needs identical x grids: add Alignment &amp; Resampling above it.</p>
+<ul>
+  <li><b>correlation to median</b> (default): removed if Pearson r to the median spectrum is below the threshold (start at 0.9–0.98). Lower r = more anomalous.</li>
+  <li><b>PCA reconstruction error</b> and <b>PCA score-space distance</b>: removed if the score is above the threshold; extra settings <b>PCA scaler</b> (none/standard) and <b>n_components</b> (8). Thresholds are in raw score units; read them from the histogram.</li>
+  <li>As with the Low-Signal Filter, the <b>action</b> menu is ignored: outliers are always excluded. Normalize first, and inspect the hovered overlays before tightening.</li>
+</ul>
+
+<h2>Peak Fitting, Peak Integration, Peak Identification, Metric Calculation</h2>
+<p>See <a href="#" data-help="r-fitting">Peak fitting</a> and <a href="#" data-help="r-features">Features: integration, peaks, metrics</a>.</p>
+
+<h2>Reference Transformation</h2>
+<p>Subtracts or divides every spectrum by a reference spectrum (blank, solvent, substrate).</p>
+<ul>
+  <li><b>reference file</b>: a spectrum of the active dataset.</li>
+  <li><b>operation</b>: <i>subtract reference</i> or <i>divide by reference</i> (division by near-zero gives empty values).</li>
+  <li><b>reference stage</b>: <i>Raw data</i> or <i>After step N</i>. The reference goes through the same pipeline up to that step, then is interpolated onto each spectrum. To subtract a processed blank, choose the stage that matches your sample processing. N counts enabled steps only.</li>
+</ul>
+<p>The reference spectrum itself is excluded from the analysis and exports.</p>
+
+<h2>Smoothing</h2>
+<p>Savitzky–Golay: <b>window_length</b> (odd, default 11) and <b>polyorder</b> (default 3, must be smaller than the window). A window longer than the spectrum, or polyorder not below the window, silently leaves the spectrum unchanged. Choose a window of about a third of the narrowest peak's width in points; over-smoothing broadens peaks and biases fitted widths.</p>
+
+<h2>X-axis Calibration</h2>
+<p>Shifts the x axis (x_new = x + shift).</p>
+<ul>
+  <li><b>fixed offset</b>: add <b>offset</b> to every x value.</li>
+  <li><b>single reference band</b> (and the legacy “reference peak”): fit a reference band in selected spectra, average its position and apply <b>one</b> shift so it lands on <b>target_x</b> (default 284.8 eV for XPS) for <b>all</b> spectra. Choose reference spectra with <span class="ui">Add reference filter</span>. <b>With no filter, every spectrum is a reference.</b> If nothing matches or the fits fail, the shift is 0 with only a warning.</li>
+  <li><b>grouped reference band</b>: <b>group by</b> a label (for example sample or potential) and calibrate each group separately. <b>reference mode</b> <i>core level</i> shifts all spectra of a group by the offset measured on the first spectrum of the <b>reference region</b> (for example C1s) in that group; <i>valence band</i> shifts each core region by its own valence-band partner's Fermi edge (target 0 eV).</li>
+</ul>
+<p>Reference modes need an <b>earlier, enabled Peak Fitting</b> step (choose it under “fitting step”) and the fitted position (<b>position / center key</b>). Use a simple one- or two-peak model for the reference fit and check its residual first. Typical choices: C 1s adventitious at 284.8 eV; Fermi edge at 0 eV.</p>
+<p>The preview “After: fitting” runs the earlier steps on the whole cohort, so valence-band partners are available.</p>

@@ -3,6 +3,7 @@ import { createUploadsController, createUploadedLabelsEditorController, formatFi
 import { fetchFigure, getSelectedPaths, plotFromEndpoint } from "./ui/plot.js?v=multi-nest-2";
 import { buildFileOptionsHtml, createMapUi, createMultiUi, createSeriesUi } from "./ui/plot_selectors.js?v=multi-nest-2";
 import { wireColumnSplitter } from "./ui/column_splitter.js";
+import { openHelp } from "./help/help.js";
 
 const drop = $("drop");
 const fileInput = $("files");
@@ -527,6 +528,7 @@ function initTabs() {
   const tabUploads = $("tab-uploads");
   const tabRaw = $("tab-raw");
   const tabSpa = $("tab-spa");
+  const tabHelp = $("tab-help");
 
   if (!tabUploads || !tabRaw || !tabSpa) return;
 
@@ -537,7 +539,7 @@ function initTabs() {
   }
 
   function showPanel(el) {
-    for (const p of [tabUploads, tabRaw, tabSpa]) p.classList.remove("active");
+    for (const p of [tabUploads, tabRaw, tabSpa, tabHelp]) p?.classList.remove("active");
     el.classList.add("active");
   }
 
@@ -553,6 +555,9 @@ function initTabs() {
       } else if (key === "analyze") {
         showPanel(tabSpa);
         window.location.hash = "#/analyze";
+      } else if (key === "help" && tabHelp) {
+        showPanel(tabHelp);
+        openHelp();
       }
     });
   }

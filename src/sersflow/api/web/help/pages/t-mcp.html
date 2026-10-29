@@ -1,0 +1,51 @@
+<h1>Tutorial 5 · Work with an AI assistant (MCP)</h1>
+<p class="lead">Goal: let an assistant do the clicking. You describe the science, it calls SpecFlow's tools, and you approve the important steps. About 20 minutes the first time.</p>
+
+<h2>Before you start</h2>
+<ol class="steps">
+  <li>Install and connect the MCP server for your client: <a href="#" data-help="r-mcp">MCP server: setup</a>.</li>
+  <li>Start the SpecFlow API (<code>sersflow-api</code>), or let the MCP start it.</li>
+  <li>Open the web interface in a browser too. Everything the assistant creates (datasets, saved pipelines, runs) appears there, which is the easiest way to check its work.</li>
+</ol>
+
+<h2>Step 0: set the ground rules</h2>
+<p>Paste this once at the start of the conversation (or into your client's standing instructions):</p>
+<pre><code>You are operating SpecFlow through its MCP tools.
+- Start with get_mcp_meta.
+- Reuse existing datasets and pipelines when they fit.
+- If I did not name a method (baseline, smoothing, fit model...), ask me.
+- Propose a plan and wait for my approval before creating datasets,
+  running analyses or fitting.
+- Never overwrite a saved pipeline: save changes under a new name.
+- When a tool asks for confirm=true, tell me why and wait for my yes.
+- Waiting for jobs: use timeout_s=30 and call again until it finishes.
+- Give every export its own output_path.</code></pre>
+
+<h2>Example A: vibrational data to a correlation</h2>
+<ol class="steps">
+  <li><b>Look around.</b> <i>“List my datasets and saved pipelines. Don't create or run anything. Which pair looks best for baseline-corrected SERS peaks near 1080 and 1580 cm⁻¹?”</i></li>
+  <li><b>Upload.</b> <i>“Upload C:\Data\SERS\run42 (all .txt) and create a vibrational dataset called run42. Show me the spectrum axes and the label fields it found, then stop.”</i> Check in the <span class="ui">Uploads</span> tab that the labels are right.</li>
+  <li><b>Plan.</b> <i>“Propose a pipeline for run42: crop, despike, baseline, normalization, fits for the 1080 and 1580 bands. Ask me which methods you should use.”</i> Answer its questions (see <a href="#" data-help="r-baseline">Baseline methods</a> if unsure).</li>
+  <li><b>Try it.</b> <i>“After I approve: create a session, run a QC preview and a metrics-only run on a subset, and tell me what you see. Then save the pipeline as run42_v1.”</i> The pipeline shows up in <span class="ui">Prepare</span> → saved pipelines.</li>
+  <li><b>Run on everything.</b> <i>“Run the analysis on the whole dataset. Poll with timeout_s=30, repeat for up to 10 minutes, then report the job id.”</i> You can watch it in <span class="ui">Analyze</span> → <span class="ui">Runs</span>.</li>
+  <li><b>Answer the question.</b> <i>“Export the observation table to run42_obs.csv and report the Pearson correlation between the two peak areas and the file path.”</i></li>
+</ol>
+
+<h2>Example B: PCA on a finished run</h2>
+<p><i>“Run PCA on analysis run &lt;run id&gt; with standard scaling and 3 components. Summarise the variance explained and export the scores as scores_run42.csv.”</i></p>
+
+<h2>Example C: XPS fitting with a recipe</h2>
+<ol class="steps">
+  <li><i>“Dataset &lt;id&gt; has Ag 3d and O 1s. Search chemical states for Ag 3d and suggest a fitting recipe from the index. Wait for my OK.”</i></li>
+  <li><i>“Apply the recipe to session &lt;id&gt;.”</i> Remember that this replaces an existing fit for that region. If SpecFlow asks for <code>confirm=true</code>, the assistant should explain why and wait.</li>
+  <li><i>“Run the analysis and produce the fit-curve plots with data, fit, components and residuals.”</i></li>
+</ol>
+
+<h2>What good looks like</h2>
+<ul>
+  <li>The assistant reports <b>ids and file paths</b>, not pasted tables.</li>
+  <li>It asks before choosing methods and before heavy runs.</li>
+  <li>You can reproduce anything it did by opening the same dataset, pipeline and run in the web interface.</li>
+</ul>
+
+<div class="tip">When something fails, ask the assistant to show the exact error message and the tool it came from, then look it up in <a href="#" data-help="r-mcp-tools#error-messages">Error messages</a>.</div>

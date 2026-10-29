@@ -1,0 +1,51 @@
+<h1>Labels and file naming</h1>
+<p class="lead">Labels describe each file: sample, pH, gas, potential, laser settings and so on. SpecFlow reads them from your <b>file names and folder names</b> using fixed rules, and you can then correct them by hand.</p>
+
+<h2>Name your files for automatic labels</h2>
+<p>The text searched is the file name (without extension) plus up to <b>three parent folder names</b>, so a folder called <code>pH2</code> or <code>K2SO4</code> can supply labels too. Matching is case-insensitive and tokens are separated by underscores. A decimal point can be written <code>.</code>, <code>d</code> or <code>_</code>: <code>0d5</code>, <code>0.5</code> and <code>0_5</code> all mean 0.5.</p>
+<table>
+  <tr><th>Label</th><th>Write it as</th><th>Examples</th></tr>
+  <tr><td><code>sample</code></td><td>The first underscore-separated words of the <b>file name</b>, up to the first recognised setting.</td><td><code>CuAq_785nm_…</code> → <i>CuAq</i>; <code>Cu_300_…</code> → <i>Cu_300</i></td></tr>
+  <tr><td><code>gas</code></td><td><code>Ar</code>, <code>O2</code>, <code>N2</code>, <code>CO2</code>, <code>12CO2</code> (→ CO2), <code>13CO2</code></td><td><code>…_CO2_…</code></td></tr>
+  <tr><td><code>ph</code></td><td><code>pH</code> + number</td><td><code>pH2</code>, <code>pH_6d8</code>, <code>pH7.5</code></td></tr>
+  <tr><td><code>laser_nm</code></td><td>Three digits + <code>nm</code></td><td><code>785nm</code>, <code>532_nm</code></td></tr>
+  <tr><td><code>laser_power_pct</code></td><td>Number + <code>%</code> or <code>p</code></td><td><code>50%</code>, <code>0d05p</code> (0.05 %)</td></tr>
+  <tr><td><code>current_density_A_cm2</code></td><td>Number + <code>uA</code>, <code>mA</code> or <code>A</code>; stored in A·cm⁻²</td><td><code>-1mA</code>, <code>0_50_mA_cm2</code>, <code>-5uA</code></td></tr>
+  <tr><td><code>potential_V</code>, <code>potential_ref</code></td><td>Number + reference</td><td><code>-0d8VRHE</code> or <code>-0d8RHE</code> → VRHE;<br><code>-0d5VAgAgCl</code> → converted to VRHE (needs pH in the name);<br><code>-0d365V</code> → ref “V” (no reference assumed);<br><code>OCP</code> → 0.0, ref “OCP”</td></tr>
+  <tr><td><code>electrolyte</code>, <code>concentration_M</code></td><td>Concentration + compound, in either order</td><td><code>0d1M_KHCO3</code>, <code>KHCO3_0d1M</code>, <code>10mM_KOH</code> (converted to molar). Bare <code>KHCO3</code>, <code>K2SO4</code>, <code>H2SO4</code>, <code>KOH</code> are recognised without concentration.</td></tr>
+</table>
+<p>A complete example:</p>
+<pre><code>CuAq_785nm_0d05p_2s_25aqq_-0d05VRHE_-1mA_1M_KHCO3_pH2_CO2_map.txt
+→ sample CuAq · 785 nm · 0.05 % · −0.05 VRHE · −0.001 A/cm² · KHCO3 1 M · pH 2 · CO2</code></pre>
+<div class="warn"><ul>
+<li>The token <code>OCP</code> also sets the current density to 0.</li>
+<li>A trailing number after a dash in a name, like <code>-3</code> or <code>-3-6</code>, is treated as a repeat counter and removed. That also affects a folder named <code>pH-13</code>: write <code>pH13</code> or <code>pH_13</code> instead.</li>
+<li>Labels that are not recognised stay empty. Always check the summary shown next to each file.</li>
+</ul></div>
+
+<h2>XPS files</h2>
+<p>For VAMAS and NeXus files, every region (block) gets its own structural information (region name, average or individual, pass energy, excitation energy, replicate number) <b>plus</b> experiment labels read from the path and from the block name and comments. For VAMAS, the block's sample identifier string is kept as <code>sample</code> and is also searched for gas, pH, current, potential and electrolyte. Block labels take priority over labels from the path.</p>
+
+<h2>Editing labels by hand</h2>
+<ol class="steps">
+  <li>Tick the file (or the block row, for XPS) you want to change. The <b>Edit labels</b> panel shows its labels.</li>
+  <li>Type new values in the table. Fixed rows are: <code>acquired_utc</code> (read-only), <code>sample</code>, <code>gas</code>, <code>ph</code>, <code>current_density_A_cm2</code>, <code>potential_V</code>, <code>potential_ref</code>, <code>laser_nm</code>, <code>laser_power_pct</code>, <code>electrolyte</code>, <code>concentration_M</code>.</li>
+  <li>For your own label, press <span class="ui">Add custom row</span> and type a key and value (<span class="ui">Remove last custom row</span> undoes it). Custom rows are available when editing a single file.</li>
+  <li>Press <span class="ui">Save</span> (one item) or <span class="ui">Apply to N files</span> / <span class="ui">Apply to N blocks</span>. Only the cells you changed are sent.</li>
+</ol>
+
+<h3>How values are interpreted</h3>
+<ul>
+  <li>Empty cell → stored as empty (null).</li>
+  <li><code>true</code> / <code>false</code> → yes/no.</li>
+  <li><code>2</code> or <code>0.5</code> → a <b>number</b>. Text in double quotes → text. If the cell cannot be read as a number or JSON it is kept as plain text.</li>
+  <li>A sample called <code>300</code> becomes the number 300. Type <code>"300"</code> with quotes to keep it as text.</li>
+</ul>
+
+<h3>Editing many files at once</h3>
+<p>The editor follows the last file you ticked. To edit several files together, first select many (use a folder checkbox or <span class="ui">Select all</span>), then <b>untick one file</b>; the panel switches to “Bulk edit mode for N files”. In bulk mode the table starts blank and only the cells you fill are written. You cannot mix files and XPS blocks in one edit.</p>
+
+<h3>Reload auto labels</h3>
+<p><span class="ui">Reload auto labels</span> re-reads the names and <b>replaces</b> the stored labels. Your hand-edited values and custom rows are lost, and so are hand-edited block labels in XPS files. Use it only to start over.</p>
+
+<div class="note">Units: current density is stored in A·cm⁻² (1 mA·cm⁻² = 0.001). Potential references used are <i>VRHE</i>, <i>OCP</i>, <i>V</i> and <i>VAgAgCl</i>.</div>

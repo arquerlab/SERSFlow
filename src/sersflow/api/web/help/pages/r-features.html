@@ -1,0 +1,40 @@
+<h1>Features: integration, peaks, metrics</h1>
+<p class="lead">Feature steps do not change the spectrum. They add columns to the table that Analyze produces. Together with Peak Fitting they define what you can correlate and plot.</p>
+
+<h2>Peak Identification</h2>
+<p>Reads an intensity (and optionally a peak position) at places you define. Press <span class="ui">+ Add probe</span> for each.</p>
+<table>
+  <tr><th>Setting</th><th>Meaning</th></tr>
+  <tr><td>id</td><td>Name used in the column (<code>p1</code>, <code>p2</code>… if empty).</td></tr>
+  <tr><td>source</td><td><i>signal (processed spectrum)</i> or <i>baseline</i> (with “baseline step”: samples the estimated baseline curve).</td></tr>
+  <tr><td>target</td><td>Position to read (default 1000; eV for XPS).</td></tr>
+  <tr><td>acquisition</td><td><i>fixed (interpolate at target)</i> or <i>nearest_peak</i> (with an optional <b>window</b> around the target).</td></tr>
+  <tr><td>method</td><td><i>linear_interp</i> or <i>nearest</i>.</td></tr>
+  <tr><td>extrapolation</td><td><i>nan (outside range)</i> or <i>clip</i>.</td></tr>
+  <tr><td>no_peak_fallback</td><td><i>none</i> or <i>fixed_nearest</i> (use the intensity at the target if no peak is found).</td></tr>
+</table>
+<p>Columns: <code>I_&lt;id&gt;</code>, and for nearest_peak also <code>peak_pos_cm1_&lt;id&gt;</code>.</p>
+<div class="warn"><b>nearest_peak counts every local maximum as a peak</b> (no height or prominence limit). On noisy spectra it can lock onto a noise bump. Always set a <b>window</b> and smooth first.</div>
+
+<h2>Peak Integration</h2>
+<p>Integrates the spectrum over x windows (<span class="ui">+ Add window</span>).</p>
+<ul>
+  <li><b>id</b> (band1, band2…), <b>min</b> and <b>max</b> (defaults 1900 and 2150; enter eV for XPS), <b>mode</b>: <i>signed</i>, <i>positive only</i> (negatives clipped to 0) or <i>absolute</i>.</li>
+  <li>Column <code>area_&lt;id&gt;</code>. Trapezoid rule with interpolated edges. A window that only partly overlaps the spectrum integrates just the overlap; no overlap gives an empty value.</li>
+  <li>No baseline is removed automatically: place it after Baseline Correction.</li>
+  <li>This step integrates windows only. Areas of fitted peaks come from Peak Fitting (<code>fit_…_area</code>).</li>
+</ul>
+
+<h2>Metric Calculation</h2>
+<p>Computes new columns from columns produced by <i>earlier</i> feature steps, for example ratios.</p>
+<ul>
+  <li><span class="ui">+ Add operation</span>: <b>id</b> (the column becomes <code>op_&lt;id&gt;</code>) and a <b>formula</b>.</li>
+  <li>Write columns in braces: <code>{fit_p1_area}/{fit_p2_area}</code>, <code>log10({area_band1}/{area_band2})</code>. Allowed: <code>+ - * / ** % ( )</code>, numeric constants and the functions <code>abs sqrt log log10 exp min max</code>.</li>
+  <li><span class="ui">Insert variable</span> or the list of available variables inserts a name for you.</li>
+  <li>Evaluated per spectrum. A missing input, a division by zero or a math error gives an <b>empty cell</b>, not an error.</li>
+</ul>
+<div class="warn">The variable list shows fit names without the XPS region and without the <code>s&lt;N&gt;_</code> prefix used when a pipeline has several fitting steps. If a metric comes out empty, compare your formula with the real column names in the exported table (<a href="#" data-help="r-exports">Exports and column names</a>) and edit the formula to match.</div>
+
+<h2>Where do the columns end up?</h2>
+<p>When you press <span class="ui">Run feature extraction (async)</span> in Analyze, all enabled feature steps contribute columns, in step order. If the pipeline has none, a default probe is added so the run is not empty.</p>
+<div class="tip">Plan your questions before building the pipeline: “How does the CO band area change with potential?” needs an integration or fit of that band plus a <code>potential</code> label.</div>

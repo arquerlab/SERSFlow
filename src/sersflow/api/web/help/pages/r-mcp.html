@@ -1,0 +1,98 @@
+<h1>MCP server: setup</h1>
+<p class="lead">The SpecFlow MCP server lets an AI assistant (Cursor, Claude Desktop, Claude Code, or any other MCP-capable LLM client) operate SpecFlow with tools instead of clicks. It speaks MCP over <b>stdio</b> and wraps the same HTTP API the web interface uses.</p>
+
+<h2>1. Install</h2>
+<p>From the repository root, in the Python environment you use for SpecFlow:</p>
+<pre><code>pip install -e ".[mcp]"</code></pre>
+<p>This installs the <code>sersflow-mcp</code> command (also runnable as <code>python -m sersflow.mcp</code>). Optional extras: <code>[parquet]</code> for Parquet exports, <code>[explore-fda]</code> for functional PCA.</p>
+
+<h2>2. Decide how the API is reached</h2>
+<ul>
+  <li><b>Start the API yourself</b> (recommended while learning): <code>sersflow-api</code>. The MCP connects if <code>GET /health</code> answers; it never starts a duplicate.</li>
+  <li><b>Let the MCP start it</b> (default, <code>api_start_enabled = true</code>): on the first tool call, if the API is down, the MCP launches <code>python -m uvicorn sersflow.api.main:app</code> and stops it again when the MCP exits. Its output goes to <code>api_spawn.log</code> in the export folder.</li>
+</ul>
+
+<h2>3. Environment variables (secrets and addresses)</h2>
+<table>
+  <tr><th>Variable</th><th>Meaning</th></tr>
+  <tr><td><code>SERSFLOW_URL</code></td><td>API address. Default <code>http://127.0.0.1:8000</code>.</td></tr>
+  <tr><td><code>SERSFLOW_USERNAME</code> + <code>SERSFLOW_PASSWORD</code></td><td>Log in when the server requires authentication. Set <b>both or neither</b>.</td></tr>
+  <tr><td><code>SERSFLOW_AUTH_DISABLED=1</code></td><td>Read by the <i>API</i>, not by the MCP. Runs the API open, for local use. Because the MCP passes its environment to an API it spawns, set it in the client's <code>env</code> block.</td></tr>
+  <tr><td><code>SERSFLOW_MCP_CONFIG</code></td><td>Path to the TOML settings file (below). If set and the file is missing, the MCP refuses to start.</td></tr>
+</table>
+<div class="warn">Put passwords only in the client's <code>env</code> block, never in the TOML file and never in a chat message.</div>
+
+<h2>4. TOML settings (non-secret)</h2>
+<p>Copy <code>config/sersflow_mcp.example.toml</code> to <code>sersflow_mcp.toml</code> and point <code>SERSFLOW_MCP_CONFIG</code> at it. Unknown keys are ignored silently.</p>
+<table>
+  <tr><th>Key</th><th>Default</th><th>Meaning</th></tr>
+  <tr><td><code>export_dir</code></td><td><code>./.sersflow_mcp_exports</code></td><td>Where exports, plots and logs are written. <b>Use an absolute path.</b></td></tr>
+  <tr><td><code>http_timeout_s</code></td><td>30</td><td>Timeout of each request to the API.</td></tr>
+  <tr><td><code>job_wait_timeout_s</code></td><td>3600</td><td>Default maximum wait of the <code>*_wait</code> tools.</td></tr>
+  <tr><td><code>job_poll_interval_s</code></td><td>0.25</td><td>How often a wait tool checks the job.</td></tr>
+  <tr><td><code>api_start_enabled</code></td><td>true</td><td>Allow the MCP to start the API.</td></tr>
+  <tr><td><code>api_health_timeout_s</code></td><td>60</td><td>How long to wait for a started API to answer.</td></tr>
+  <tr><td><code>upload_confirm_bytes</code></td><td>104857600 (100 MiB)</td><td>Uploads, dataset imports and plot files above this need <code>confirm=true</code>.</td></tr>
+  <tr><td><code>fitting_confirm_max_components</code></td><td>20</td><td>A pipeline whose fitting step has more components than this needs <code>confirm=true</code>.</td></tr>
+  <tr><td><code>tabular_max_rows</code> / <code>tabular_max_cols</code></td><td>50 / 30</td><td>Default size of what <code>read_tabular_file</code> returns to the model.</td></tr>
+  <tr><td><code>analysis_async_default</code></td><td>true</td><td>Whether analysis runs and matrix jobs start in the background by default.</td></tr>
+</table>
+
+<h2>5. Connect your client</h2>
+<p>All clients need the same three things: the <b>command</b> (<code>sersflow-mcp</code>), the <b>environment</b> from section 3, and a <b>restart</b> of the client afterwards. Use the full path to the executable when the client does not inherit your shell's <code>PATH</code> (typical for desktop apps). Find it with <code>where sersflow-mcp</code> in the activated environment.</p>
+
+<h3>Cursor</h3>
+<p>Create <code>.cursor/mcp.json</code> in your project (or <code>~/.cursor/mcp.json</code>):</p>
+<pre><code>{
+  "mcpServers": {
+    "sersflow": {
+      "command": "sersflow-mcp",
+      "env": {
+        "SERSFLOW_URL": "http://127.0.0.1:8000",
+        "SERSFLOW_AUTH_DISABLED": "1",
+        "SERSFLOW_MCP_CONFIG": "C:/Users/you/Documents/SERSFlow/config/sersflow_mcp.example.toml"
+      }
+    }
+  }
+}</code></pre>
+<p>If <code>sersflow-mcp</code> is not on <code>PATH</code>, use <code>"command": "python", "args": ["-m", "sersflow.mcp"]</code> with the full path of the right interpreter.</p>
+
+<h3>Claude Desktop</h3>
+<p>Edit <code>claude_desktop_config.json</code> (Settings → Developer → Edit Config; on Windows usually under <code>%APPDATA%\Claude\</code>), then restart the app completely. In JSON, write Windows paths with forward slashes or doubled backslashes.</p>
+<pre><code>{
+  "mcpServers": {
+    "sersflow": {
+      "command": "C:/Users/you/venvs/sersflow/Scripts/sersflow-mcp.exe",
+      "args": [],
+      "env": {
+        "SERSFLOW_URL": "http://127.0.0.1:8000",
+        "SERSFLOW_AUTH_DISABLED": "1",
+        "SERSFLOW_MCP_CONFIG": "C:/Users/you/Documents/SERSFlow/sersflow_mcp.toml"
+      }
+    }
+  }
+}</code></pre>
+
+<h3>Claude Code</h3>
+<pre><code>claude mcp add sersflow --env SERSFLOW_URL=http://127.0.0.1:8000 --env SERSFLOW_AUTH_DISABLED=1 --env SERSFLOW_MCP_CONFIG=C:/Users/you/Documents/SERSFlow/sersflow_mcp.toml -- sersflow-mcp</code></pre>
+<p>Then run <code>claude mcp list</code> to confirm it connects.</p>
+
+<h3>Any other LLM client or framework</h3>
+<p>Launch <code>sersflow-mcp</code> as a child process, speak MCP over its stdin/stdout, and pass the environment variables above. Start it in a writable working directory. Logs go to stderr, so stdout stays clean for the protocol.</p>
+
+<div class="note">The Claude Desktop and Claude Code commands follow those products' usual conventions; the repository itself only documents Cursor. If a client's menu has changed, check its own MCP documentation. The server side (command, env, TOML) is the same everywhere.</div>
+
+<h2>6. Check that it works</h2>
+<ol class="steps">
+  <li>Open the client and confirm that a server named <b>sersflow</b> (display name “SpecFlow”) is listed with its tools.</li>
+  <li>Ask: <i>“Call get_mcp_meta and tell me the auth mode and any warnings.”</i> This is the first call, so it also starts the API if needed and logs in.</li>
+  <li>Ask: <i>“List my SpecFlow datasets.”</i></li>
+</ol>
+
+<h2>7. Good habits</h2>
+<ul>
+  <li>Set an <b>absolute</b> <code>export_dir</code> and an absolute <code>SERSFLOW_MCP_CONFIG</code>. Relative paths resolve against whatever folder the client launched the MCP from, which is often not the one you expect.</li>
+  <li>Add a standing instruction to your assistant: <i>“Propose a plan and wait for my approval before creating datasets, running analyses or fitting.”</i> The server does not enforce this; it is a convention.</li>
+  <li>Keep MCP and API from the same checkout. A different major version makes every tool except <code>get_health</code> and <code>get_mcp_meta</code> answer <code>incompatible</code>.</li>
+</ul>
+<p>Continue with <a href="#" data-help="r-mcp-tools">tools and safety</a>, or follow <a href="#" data-help="t-mcp">Tutorial 5</a> for a worked session.</p>

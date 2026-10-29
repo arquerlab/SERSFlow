@@ -236,7 +236,7 @@ export function buildParamPlot(cfg: ParamPlotConfig, rows: Record<string, unknow
         marker.color = pts.map((p) => p.color);
         marker.colorscale = "Viridis";
         marker.showscale = i === 0;
-        if (i === 0) marker.colorbar = { title: cfg.color };
+        if (i === 0) marker.colorbar = { title: { text: cfg.color } };
       }
       data.push({
         type: "scatter",
@@ -277,7 +277,7 @@ export function buildParamPlot(cfg: ParamPlotConfig, rows: Record<string, unknow
     }
     titleSuffix = " (boxplot grouped by X)";
     layoutExtra = {
-      xaxis: { title: cfg.x, categoryorder: "array", categoryarray: allX.map((v) => stableNumberKey(v, 6)) },
+      xaxis: { title: { text: cfg.x }, categoryorder: "array", categoryarray: allX.map((v) => stableNumberKey(v, 6)) },
       boxmode: "group",
       margin: { l: 60, r: 20, t: 40, b: 70 },
     };
@@ -295,8 +295,8 @@ export function buildParamPlot(cfg: ParamPlotConfig, rows: Record<string, unknow
       data: data.length ? data : [empty],
       layout: {
         title: `${titleY} vs ${cfg.x}${titleSuffix}`,
-        xaxis: { title: cfg.x },
-        yaxis: { title: yTitle },
+        xaxis: { title: { text: cfg.x } },
+        yaxis: { title: { text: yTitle } },
         ...layoutExtra,
       },
     },

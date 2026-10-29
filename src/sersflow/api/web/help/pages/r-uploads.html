@@ -1,0 +1,46 @@
+<h1>Uploads tab</h1>
+<p class="lead">The Uploads tab is the front door: it stores your instrument files on the server and shows the labels SpecFlow read from them.</p>
+
+<h2>Supported file formats</h2>
+<table>
+  <tr><th>Format</th><th>Extension</th><th>Technique</th><th>Contains</th></tr>
+  <tr><td>ASCII XY table</td><td><code>.txt</code></td><td>from the header</td><td>Single spectra, time series, maps.</td></tr>
+  <tr><td>Renishaw WDF</td><td><code>.wdf</code></td><td>Vibrational (Raman/SERS)</td><td>Single spectra, series, maps.</td></tr>
+  <tr><td>VAMAS / CasaXPS</td><td><code>.vms</code></td><td>XPS</td><td>Many regions (“blocks”) per file.</td></tr>
+  <tr><td>NeXus XPS (HDF5)</td><td><code>.nxs</code>, <code>.nx5</code></td><td>XPS</td><td>Many regions; regions without a binding-energy axis are skipped (the number skipped is shown in the list).</td></tr>
+</table>
+
+<h3>Text file rules</h3>
+<ul>
+  <li>The <b>first non-empty line is always a header</b>. Tabs, commas, semicolons or spaces are detected automatically.</li>
+  <li>The <b>number of columns</b> decides the type: <b>2</b> = spectrum (x, intensity); <b>3</b> = time series (time, x, intensity); <b>4</b> = map (position x, position y, x, intensity). Any other count is an error.</li>
+  <li>The <b>first header cell</b> decides the technique: names such as <i>wavenumber</i>, <i>raman shift</i>, <i>cm-1</i> mean vibrational; <i>binding energy</i> or <i>BE</i> means XPS. Anything else produces “Cannot infer technique” when you create the dataset, not at upload.</li>
+  <li>In time series, rows with negative time are dropped.</li>
+</ul>
+
+<h2>Uploading</h2>
+<ol class="steps">
+  <li>Use the file picker (several files) or the folder picker (keeps sub-folders, which is useful because folder names can supply labels). Or drag files onto the drop zone: <b>dropping uploads immediately</b>.</li>
+  <li>Check <span class="ui">Filter mode</span> and <span class="ui">Extensions</span>. <i>Only</i> (default) keeps just the listed extensions; <i>Skip</i> drops them. Use the folder picker with <i>Only</i> to ignore stray files such as <code>.csv</code> or <code>.png</code>.</li>
+  <li>Press <span class="ui">Upload</span>. Files go in batches of 25; progress shows as “Uploaded N/M files…”.</li>
+</ol>
+<ul>
+  <li>Single-spectrum files are stored without parsing. VAMAS and NeXus files <i>are</i> read at upload to find their blocks and labels.</li>
+  <li>Uploading the same file twice creates two independent copies.</li>
+  <li>The file's last-modified time is stored as the label <code>acquired_utc</code>.</li>
+</ul>
+<div class="warn">If the status mentions “online-only” files, your folder is in OneDrive and not downloaded to the computer. Copy it to a local folder (for example <code>C:\temp\</code>) and upload from there.</div>
+
+<h2>Uploaded files &amp; metadata</h2>
+<p>A tree of your folders and files: tick a folder to tick everything inside it. Each file shows its name, size, a summary of its labels (sample, pH, gas, potential, current, laser…) and, for multi-region files, the number of spectra. Multi-region files expand into indented block rows.</p>
+<table>
+  <tr><th>Button</th><th>What it does</th></tr>
+  <tr><td><span class="ui">Select all</span> / <span class="ui">Select none</span></td><td>Tick or untick every file.</td></tr>
+  <tr><td><span class="ui">Hide selected</span>, <span class="ui">Hide all</span>, per-folder <span class="ui">Hide folder</span></td><td><b>Hide, not delete.</b> The files disappear from Uploads, Raw visualization and the Prepare picker but stay on disk. Datasets already built from them keep working. To bring them back, use <span class="ui">Restore files to uploads</span> in Prepare (<a href="#" data-help="r-datasets">datasets reference</a>).</td></tr>
+  <tr><td><span class="ui">Purge hidden unused</span></td><td>Permanently deletes <b>hidden</b> files, after showing how many files and how much space. Files still needed by an old dataset are kept. Cannot be undone.</td></tr>
+  <tr><td><span class="ui">Refresh list</span></td><td>Reloads the list.</td></tr>
+</table>
+<p>Your uploads are private to your user account. The Prepare tab updates automatically after changes made here.</p>
+
+<h2>Editing labels</h2>
+<p>The right-hand <b>Edit labels</b> panel shows a Key/Value table for the selected file(s). Labels matter: they become the <code>meta_*</code> columns in your exports, the filters in Prepare, and the colours in plots. See <a href="#" data-help="r-labels">Labels and file naming</a> for what is read automatically and how to edit by hand.</p>

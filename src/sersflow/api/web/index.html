@@ -6,6 +6,7 @@
     <title>SpecFlow</title>
     <link rel="icon" type="image/png" href="/static/SpecFlow.png" />
     <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/help/help.css" />
     <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
   </head>
   <body>
@@ -43,6 +44,7 @@
             <button class="tab" data-tab="raw" type="button">Raw visualization</button>
             <button class="tab" data-tab="prepare" type="button" title="Prepare spectra and pipelines">Prepare</button>
             <button class="tab" data-tab="analyze" type="button" title="Batch analysis and exploration">Analyze</button>
+            <button class="tab" data-tab="help" type="button" title="Tutorials and reference manual">Help</button>
           </nav>
         </div>
         <img class="specflow-logo specflow-logo--header" src="/static/SpecFlow.png" alt="SpecFlow" />
@@ -159,6 +161,12 @@
           <div class="preprocess-scope">
             <div id="preprocess-root"></div>
           </div>
+        </div>
+      </section>
+
+      <section class="panel" id="tab-help">
+        <div class="card help-card">
+          <div id="help-root" class="help-root"></div>
         </div>
       </section>
 

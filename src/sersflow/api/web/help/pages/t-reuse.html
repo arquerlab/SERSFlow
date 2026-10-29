@@ -1,0 +1,52 @@
+<h1>Tutorial 4 · Reuse, share and export</h1>
+<p class="lead">Goal: apply a pipeline you already built to new data, hand datasets and pipelines to colleagues, and keep your work reproducible. About 15 minutes.</p>
+
+<h2>Reuse a pipeline on new data</h2>
+<ol class="steps">
+  <li>Upload the new files and create a dataset (the technique must match the pipeline's).</li>
+  <li>In the <b>Pipeline</b> card, pick the saved pipeline in the <span class="ui">Saved</span> list. <b>It loads immediately</b> and replaces whatever is in the editor.</li>
+  <li>Preview on a subset (<span class="ui">Create subset</span>). Adjust only what the new data needs (crop range, baseline <code>lam</code>, fit window).</li>
+  <li>If you changed anything, save under a <b>new name</b> (for example <code>run43_v1</code>) rather than overwriting. Then run it in Analyze.</li>
+</ol>
+<div class="warn">Leave <span class="ui">Overwrite if name exists</span> unticked unless you really want to replace the stored steps. Earlier runs and your notes refer to the name.</div>
+
+<h2>Share a pipeline</h2>
+<ul>
+  <li><span class="ui">Export selected</span> (or <span class="ui">Export current pipeline</span>) downloads a <code>.sersflow-pipeline.json</code> file. Send it to a colleague (or attach it to a paper's SI).</li>
+  <li>They press <span class="ui">Import pipeline</span>, then <span class="ui">Reload</span> to load the steps into the editor.</li>
+</ul>
+
+<h2>Share a dataset</h2>
+<ul>
+  <li><span class="ui">Export dataset</span> downloads <code>&lt;name&gt;.sersflow-dataset.zip</code>: the source files plus their labels.</li>
+  <li>A colleague presses <span class="ui">Import dataset</span> and gets an identical dataset (and a fresh session).</li>
+</ul>
+
+<h2>Edit labels of an existing dataset's files</h2>
+<p>Hid or purged the files? Select the dataset and press <span class="ui">Restore files to uploads</span>. The files and their labels reappear in the Uploads tab for editing.</p>
+
+<h2>Keep a record</h2>
+<ol class="steps">
+  <li>Name datasets and pipelines meaningfully and with a version (<code>run42</code>, <code>run42_v1</code>, <code>run42_v2</code>).</li>
+  <li>In Analyze → Exports, <span class="ui">Load manifest (JSON)</span> shows the run, dataset, pipeline hash and feature list. Keep the manifest (or the <b>Bundle</b> ZIP) next to your results.</li>
+  <li>Export the pipeline JSON to your project folder together with the observation CSV.</li>
+</ol>
+
+<h2>Choosing an export</h2>
+<table>
+  <tr><th>For</th><th>Use</th></tr>
+  <tr><td>Excel, Origin, R, pandas</td><td>Observation wide CSV</td></tr>
+  <tr><td>Big tables, fast loading</td><td>Observation Parquet</td></tr>
+  <tr><td>Machine learning on numbers only</td><td>Features wide CSV</td></tr>
+  <tr><td>Publication figures of fits</td><td>Fitting curves: CSV (data + fit + components + residuals) or SVG</td></tr>
+  <tr><td>Processed spectra after each step</td><td>Spectra with step outputs, or the Matrix CSV</td></tr>
+  <tr><td>PCA in other software</td><td>Scores / loadings / variance CSVs</td></tr>
+</table>
+<p>Column definitions: <a href="#" data-help="r-exports">Exports and column names</a>.</p>
+
+<h2>Housekeeping</h2>
+<ul>
+  <li>The server keeps at most 50 runs per dataset and deletes the oldest automatically. Download anything you need to keep.</li>
+  <li>Running PCA again overwrites the previous PCA result of that run: download first.</li>
+  <li>Hide ≠ delete. <span class="ui">Purge hidden unused</span> is permanent.</li>
+</ul>

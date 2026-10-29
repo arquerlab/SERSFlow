@@ -1,0 +1,47 @@
+<h1>Tutorial 3 · Maps and time series</h1>
+<p class="lead">Goal: handle files that contain many spectra in space (maps) or in time (series), see them as heatmaps and extract a feature for every point. About 20 minutes.</p>
+
+<h2>What counts as a map or a series</h2>
+<table>
+  <tr><th>Kind</th><th>File</th><th>What each spectrum has</th></tr>
+  <tr><td>Time series</td><td>3-column <code>.txt</code> (time, x, intensity) or a WDF series</td><td><code>axis_time_s</code></td></tr>
+  <tr><td>Map</td><td>4-column <code>.txt</code> (position x, position y, x, intensity) or a WDF map</td><td><code>axis_map_x</code>, <code>axis_map_y</code></td></tr>
+</table>
+<p>One file is enough: when you create a dataset from it, it expands into one spectrum per time point or map position.</p>
+
+<h2>1. Look at the raw data</h2>
+<ol class="steps">
+  <li><span class="ui">Uploads</span> → upload the file.</li>
+  <li><span class="ui">Raw visualization</span> → select it. For a series, use the <b>Time/Depth points</b> slider; for a map, click cells in <b>Map points</b>. At most 30 traces are drawn.</li>
+  <li>For a series, press <span class="ui">Series heatmap</span> (exactly one file selected): time against wavenumber, colour = intensity. You will see when bands appear, shift or disappear.</li>
+</ol>
+
+<h2>2. Build a dataset and pipeline</h2>
+<p>Follow steps 3–4 of <a href="#" data-help="t-vibrational">Tutorial 1</a>. For maps and series, especially:</p>
+<ul>
+  <li>Use <b>Cosmic Ray Removal</b> and a <b>Baseline</b>: the same settings must work for hundreds of spectra, so check several subset spectra from different places and times (<span class="ui">Resample</span>).</li>
+  <li>Add a <b>Low-Signal Filter</b> after Cropping to drop dead or empty acquisitions (choose the threshold from the histogram).</li>
+  <li>End with Peak Integration or Peak Fitting for the band(s) you want to map.</li>
+</ul>
+
+<h2>3. Run and make heatmaps</h2>
+<ol class="steps">
+  <li><span class="ui">Analyze</span> → dataset + pipeline → <span class="ui">Run feature extraction (async)</span> → wait for <i>completed</i>.</li>
+  <li><span class="ui">Section</span> → <b>Heatmaps</b>. Choose a <span class="ui">Feature</span> (for example <code>area_band1</code>).</li>
+  <li><span class="ui">Files</span>: <i>All files</i>, <i>Single file</i> or <i>Multiple selected</i>; <span class="ui">Layout</span>: <i>Individual plots</i> or <i>Subplots</i>; press <span class="ui">Plot heatmaps</span>.</li>
+  <li>A map gives a 2-D colour map; a series gives a single row along time. Click any cell to overlay the processed spectrum from that position underneath; <span class="ui">Clear spectra</span> resets.</li>
+</ol>
+<div class="note">If you see “No map/time rows with numeric values were found for this feature”, the feature is empty for those spectra (for example a window outside the cropped range), or the files have no map/time axes.</div>
+
+<h2>4. Time courses and correlations</h2>
+<ul>
+  <li><b>Plots → Parameter vs parameter:</b> X = <code>axis_time_s</code>, Y = a feature, style <i>Line (sorted by X, no error)</i>.</li>
+  <li>For several files with the same conditions, use <i>Mean ± error bars (group by X)</i>.</li>
+  <li><b>Correlation / VIF</b> and <b>PCA / Cluster</b> work as in Tutorial 1; colour PCA scores by <code>axis_time_s</code> to see trajectories.</li>
+</ul>
+
+<h2>5. Whole-spectrum analysis (optional)</h2>
+<p>To analyse the full spectra instead of picked bands, use <b>Spectrum matrix &amp; PCA</b>: add <b>Alignment &amp; Resampling</b> after Cropping so all spectra share one grid, start a matrix job and run <i>Run discrete PCA</i> or <i>k-means (PC embedding)</i>. The loadings are spectra: they show which wavenumbers drive each component. See <a href="#" data-help="r-analyze">Analyze tab</a>.</p>
+
+<h2>Export</h2>
+<p>The observation table has <code>axis_time_s</code>, <code>axis_map_x</code>, <code>axis_map_y</code>, <code>grid_nx</code>, <code>grid_ny</code> and <code>file_kind</code>, so you can re-plot maps in any external tool.</p>

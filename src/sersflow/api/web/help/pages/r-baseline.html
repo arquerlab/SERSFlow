@@ -1,0 +1,41 @@
+<h1>Baseline methods</h1>
+<p class="lead">Baseline Correction subtracts an estimated background: output = spectrum − baseline. The catalog comes from the server and is grouped into families.</p>
+
+<h2>Choosing</h2>
+<table>
+  <tr><th>Situation</th><th>Start with</th></tr>
+  <tr><td>SERS/Raman with broad fluorescence</td><td><b>asls</b> (<code>lam</code> 1e5–1e7, <code>p</code> 0.001–0.05), or arpls / airpls</td></tr>
+  <tr><td>Complex, curved background</td><td>Whittaker or P-spline variants (<code>pspline_*</code>)</td></tr>
+  <tr><td>Quick, parameter-light</td><td><b>snip</b> (<code>max_half_window</code>), or morphological <b>mor</b> / <b>mormol</b> (<code>half_window</code>)</td></tr>
+  <tr><td>Smooth polynomial trend</td><td><b>modpoly</b>, <b>imodpoly</b> (<code>poly_order</code> 2)</td></tr>
+  <tr><td>XPS core level</td><td><b>shirley</b> or <b>tougaard</b> (family “lmfitxps (XPS)”)</td></tr>
+</table>
+<div class="tip">Compare methods visually: View → <b>After: baseline</b> draws the input spectrum with the estimated baseline curve on top. Adjust until the curve touches the bottom of the peaks without cutting into them.</div>
+
+<h2>Two parameters that matter most</h2>
+<ul>
+  <li><b>lam</b> (smoothness): larger = stiffer baseline. Raise it if the baseline follows peaks; lower it if it misses broad fluorescence.</li>
+  <li><b>p</b> (asymmetry): smaller = baseline hugs the bottom and ignores peaks more strongly.</li>
+  <li><b>half_window</b> / <b>max_half_window</b> (morphological, SNIP): set about the widest peak width, in data points.</li>
+</ul>
+
+<h2>Families and defaults</h2>
+<table>
+  <tr><th>Family</th><th>Methods</th><th>Main parameters (defaults)</th></tr>
+  <tr><td>Whittaker</td><td>asls, iasls, airpls, arpls, drpls, iarpls, aspls, psalsa, derpsalsa, brpls, lsrpls</td><td><code>lam</code> (1e5–1e6), <code>p</code> for asls, iasls, psalsa, derpsalsa (0.01–0.5)</td></tr>
+  <tr><td>Smoothing</td><td>noise_median, snip, swima, ipsa, ria, peak_filling</td><td>window sizes (empty = estimated automatically)</td></tr>
+  <tr><td>Splines</td><td>mixture_model, irsqr, corner_cutting, pspline_asls … pspline_lsrpls</td><td><code>lam</code>, <code>num_knots</code> (100)</td></tr>
+  <tr><td>Polynomial</td><td>poly, modpoly, imodpoly, penalized_poly, goldindec, loess, quant_reg</td><td><code>poly_order</code> (2; loess 1), loess <code>fraction</code> 0.2, quant_reg <code>quantile</code> 0.05</td></tr>
+  <tr><td>Morphological</td><td>mpls, mor, imor, mormol, amormol, rolling_ball, mwmv, tophat, mpspline, jbcd</td><td><code>half_window</code> (empty = estimated)</td></tr>
+  <tr><td>Miscellaneous</td><td>beads</td><td><code>freq_cutoff</code> 0.005</td></tr>
+  <tr><td>lmfitxps (XPS)</td><td>shirley, tougaard</td><td>shirley: <code>tol</code> 1e-5, <code>maxit</code> 10; tougaard: <code>tb</code> 2866, <code>tc</code> 1643 (advanced <code>tcd</code>, <code>td</code>, <code>maxit</code>)</td></tr>
+</table>
+<ul>
+  <li>Primary parameters are shown first; use <span class="ui">add argument</span> (“Additional arguments”) for advanced ones. Switching method resets to that method's defaults.</li>
+  <li>A new step starts as <b>asls</b>, <code>lam</code> = 1e6, <code>p</code> = 0.01.</li>
+  <li>Baseline before normalization; after Cropping, Cosmic Ray Removal and (optionally) Smoothing.</li>
+  <li>The methods rely on the packages <code>pybaselines</code> and (XPS) <code>lmfitxps</code>; a missing package is named in the error message.</li>
+</ul>
+
+<h2>XPS: static backgrounds</h2>
+<p>Shirley and Tougaard here subtract a <b>static</b> background before fitting. The alternative is an <b>active</b> background inside the fit (see <a href="#" data-help="r-xps">XPS specifics</a>). Use one or the other, never both.</p>

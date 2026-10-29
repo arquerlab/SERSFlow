@@ -1,0 +1,51 @@
+<h1>XPS specifics</h1>
+<p class="lead">Everything that works differently for X-ray photoelectron spectroscopy: data handling, calibration, backgrounds, recipes and links.</p>
+
+<h2>Data</h2>
+<ul>
+  <li>Load <code>.vms</code> (VAMAS/CasaXPS) or <code>.nxs</code> (NeXus) files. Each region is a <b>block</b>; the dataset keeps the region name for every spectrum.</li>
+  <li>A whole-file selection keeps the <b>averaged</b> spectra only. Tick block rows to include replicates (<a href="#" data-help="r-datasets">datasets</a>).</li>
+  <li>Choose <b>XPS</b> as pipeline type (automatic when the dataset is XPS). A dataset cannot mix XPS and vibrational files.</li>
+  <li>Use a <b>Metadata Filter</b> on <code>xps_region</code> to work on one region, and use <b>Input = Initial</b> for a second branch on another region.</li>
+</ul>
+
+<h2>Charge correction (X-axis Calibration)</h2>
+<ul>
+  <li>Adventitious C 1s at <b>284.8 eV</b> (the editor's default target), or the Fermi edge at <b>0 eV</b> for metals.</li>
+  <li>Use <b>grouped reference band</b> with <i>group by</i> the label that distinguishes measurements (sample, potential…), and <b>reference mode</b> <i>core level</i> or <i>valence band</i>.</li>
+  <li>The calibration needs an earlier enabled Peak Fitting step to measure the reference position.</li>
+  <li>Details: <a href="#" data-help="r-steps#x-axis-calibration">X-axis Calibration</a>.</li>
+</ul>
+
+<h2>Backgrounds: static or active, never both</h2>
+<table>
+  <tr><th></th><th>Static (Baseline step)</th><th>Active (inside the fit)</th></tr>
+  <tr><td>How</td><td>Baseline Correction → <i>lmfitxps (XPS)</i> → <b>shirley</b> or <b>tougaard</b></td><td>Fitting step → add <i>Shirley background (active)</i>, <i>Tougaard background (active)</i> or <i>Slope background (active)</i></td></tr>
+  <tr><td>Effect</td><td>Subtracted once, before fitting</td><td>Fitted together with the peaks, re-seeded from the data</td></tr>
+  <tr><td>Parameters</td><td>Shirley <code>tol</code>, <code>maxit</code>; Tougaard <code>tb</code> 2866, <code>tc</code> 1643</td><td>Shirley <code>k</code>, <code>const</code>; Tougaard <code>B</code>, <code>C</code>, <code>C_d</code>, <code>D</code>, <code>extend</code>; Slope <code>k</code></td></tr>
+</table>
+<div class="warn">A static Shirley/Tougaard baseline and an active Shirley/Tougaard background cannot be enabled at the same time. A red banner appears, saving is refused and the server returns an error. Applying a recipe with “Replace” adds an active Shirley background, so remove or disable the static baseline step first. (The slope background is not covered by this check: do not combine it with another background by accident.)</div>
+
+<h2>Fitting recipes</h2>
+<p>A recipe pre-fills the Peak Fitting editor for a known chemistry (for example “C 1s adventitious” or a metal oxide) with peak types, positions, widths and bounds taken from the packaged tables.</p>
+<ol class="steps">
+  <li>In the Peak Fitting editor, find <b>XPS fitting recipe</b>. Filter by element chips or type into the box (for example <i>C 1s</i> or <i>NiO</i>).</li>
+  <li>Choose the <b>Pass energy (eV)</b> that matches your measurement; widths come from the table for that pass energy.</li>
+  <li>Pick a recipe. If the editor already has peaks, SpecFlow asks whether to <b>Add</b> (new peaks only, no extra background) or <b>Replace</b> (everything, including an active Shirley background).</li>
+  <li>The recipe turns on amplitude Auto and fills “Initial area ratios”. Check <b>Warnings</b> under the picker for provenance notes.</li>
+  <li>Preview with View → After: fitting, then adjust positions, bounds and links.</li>
+</ol>
+<ul>
+  <li>Positions get bounds of about ±0.5 eV or more; widths have an upper bound of at least 8 eV; amplitudes are not negative.</li>
+  <li>Spin–orbit doublets are seeded 2:1 in area but <b>not locked</b>. Add Links if you want them tied.</li>
+  <li>“Active recipes” lists the base and added recipes; <span class="ui">Remove</span> drops one. Fermi-edge recipes give a single Fermi-edge component.</li>
+</ul>
+
+<h2>Links for doublets</h2>
+<p>Example for a 2p doublet: set the 2p1/2 peak's <b>FWHM</b> link to <i>equal</i> to the 2p3/2 FWHM, and its <b>pos</b> link to <i>offset</i> by the spin–orbit splitting. Use <i>scale</i> with care: on amplitude it fixes a height ratio, not an area ratio.</p>
+
+<h2>XPS safeguards</h2>
+<p>Widths without an upper bound are limited automatically, and if all peak amplitudes look tiny compared to the data (as with seeds near 1) they are rescaled. You still must place peak centres sensibly: they start at 1000 unless a recipe sets them.</p>
+
+<h2>XPS results</h2>
+<p>Column names include the region, for example <code>fit_C1s_p1_pos</code>, <code>fit_C1s_p1_area</code> and <code>fit_C1s_gof_r2</code>. Use <b>Metric Calculation</b> for ratios such as the area of one component over a total (<a href="#" data-help="r-features">metrics</a>).</p>

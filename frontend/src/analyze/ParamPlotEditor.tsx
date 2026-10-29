@@ -90,7 +90,7 @@ export function ParamPlotEditor({
         {config.ys.map((y, i) => (
           <label key={i} className="inline">
             {config.ys.length > 1 ? `Y${i + 1}` : "Y"}
-            <span className="row" style={{ gap: 2 }}>
+            <span style={{ display: "flex", flexDirection: "row", flexWrap: "nowrap", alignItems: "center", gap: 4 }}>
               <ColumnSelect
                 value={y}
                 columns={columns}

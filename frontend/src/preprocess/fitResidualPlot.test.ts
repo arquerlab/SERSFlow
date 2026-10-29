@@ -68,7 +68,7 @@ describe("fitResidualPlot helpers", () => {
     expect(fit.y[1]).toBe(22);
     expect(Number.isNaN(fit.y[3]!)).toBe(true);
 
-    const peak = fig.data.find((t) => t.name === "gl [p1]") as { y: number[] };
+    const peak = fig.data.find((t) => t.name === "p1") as { y: number[] };
     expect(Number.isNaN(peak.y[0]!)).toBe(true);
     expect(peak.y[1]).toBe(22); // peak + bg
     expect(Number.isNaN(peak.y[3]!)).toBe(true);

@@ -1,0 +1,62 @@
+<h1>Exports and column names</h1>
+<p class="lead">Everything you download from Analyze is UTF-8, comma-separated, with a header row. Missing values are empty cells. Use the observation table whenever you want features <i>and</i> labels together.</p>
+
+<h2>Which file should I download?</h2>
+<table>
+  <tr><th>I want…</th><th>Download</th></tr>
+  <tr><td>One table for Excel, Origin, R, pandas (features + labels + axes)</td><td><b>Observation wide CSV</b></td></tr>
+  <tr><td>Tidy/long data for plotting libraries</td><td>Observation long CSV</td></tr>
+  <tr><td>A compact, fast file for big datasets</td><td>Observation Parquet (needs <code>pyarrow</code> on the server)</td></tr>
+  <tr><td>Only numeric feature columns for machine learning</td><td>Features wide CSV</td></tr>
+  <tr><td>Proof of how the table was made</td><td>Manifest (JSON), or the Bundle ZIP</td></tr>
+  <tr><td>Fitted curves for figures</td><td>Fitting curves ZIPs (see <a href="#" data-help="r-analyze#exports">Analyze: Exports</a>)</td></tr>
+  <tr><td>Whole spectra after processing</td><td>Spectra with step outputs, or the Matrix CSV</td></tr>
+</table>
+
+<h2>Observation wide CSV</h2>
+<p>One row per spectrum. Column order:</p>
+<ol>
+  <li><code>spectrum_id</code></li>
+  <li><b>Feature columns</b> in pipeline order (see below).</li>
+  <li><b>Axes:</b> <code>axis_time_s</code>, <code>axis_map_x</code>, <code>axis_map_y</code>, <code>grid_nx</code>, <code>grid_ny</code>, <code>file_kind</code> (<i>single</i>, <i>series</i> or <i>map</i>).</li>
+  <li><b>Labels:</b> <code>meta_*</code>, one column per label found in any file, alphabetical. Empty where a file lacks that label.</li>
+</ol>
+<div class="note">The observation table has no file-name column. If you need to know which file a row came from, put it in a label (for example <code>sample</code>) or use the PCA scores CSV, which includes the file path.</div>
+
+<h3>meta_ columns</h3>
+<p>These are the labels you saw in the Uploads tab (sample, gas, pH, potential, laser…). Names are made safe by replacing every run of characters other than letters, digits and underscore with <code>_</code>, then prefixed with <code>meta_</code>. Labels holding lists or dictionaries are written as JSON text.</p>
+
+<h3>Feature column names</h3>
+<table>
+  <tr><th>Pattern</th><th>Produced by</th><th>Meaning</th></tr>
+  <tr><td><code>I_&lt;probe&gt;</code></td><td>Peak Identification</td><td>Intensity at (or near) the probe position, e.g. <code>I_cm1_1000_0</code>.</td></tr>
+  <tr><td><code>peak_pos_cm1_&lt;probe&gt;</code></td><td>Peak Identification (nearest peak)</td><td>Position of the nearest detected peak.</td></tr>
+  <tr><td><code>area_&lt;window&gt;</code></td><td>Peak Integration</td><td>Integrated area of the window or fitted peak (defaults <code>band1</code>…).</td></tr>
+  <tr><td><code>op_&lt;id&gt;</code></td><td>Metric Calculation</td><td>Derived metric (defaults <code>op1</code>…).</td></tr>
+  <tr><td><code>fit_[&lt;region&gt;_]&lt;component&gt;_&lt;param&gt;</code></td><td>Peak Fitting</td><td>Fitted parameter such as <code>pos</code>, <code>amp</code>, <code>fwhm</code> (model-specific ones like <code>fwhm_g</code>/<code>fwhm_l</code> too). Peak components also get <code>_area</code>. The XPS region is part of the name.</td></tr>
+  <tr><td><code>fit_[&lt;region&gt;_]gof_&lt;stat&gt;</code></td><td>Peak Fitting</td><td>Goodness of fit: <code>rmse</code>, <code>r2</code>, <code>r2_adj</code>, <code>aic</code>, <code>bic</code>, <code>aicc</code>, <code>chi2</code>, <code>redchi</code>, <code>resid_mad</code>, <code>max_abs_resid</code>, <code>success</code>, <code>n_points</code>, <code>n_vary</code>, <code>nfev</code>, <code>median_rel_stderr</code>.</td></tr>
+  <tr><td><code>I_analysis_fallback</code></td><td>automatic</td><td>Added only when the pipeline defines no feature at all.</td></tr>
+</table>
+<p>When a pipeline has several steps of the same kind, names are prefixed <code>s&lt;N&gt;_</code> (the step number). If two names would still collide, a suffix <code>__2</code>, <code>__3</code>… is added.</p>
+<div class="tip">Give fit components short, meaningful IDs (for example <code>CO_top</code> or <code>Co3O4</code>) in the fitting editor: they end up in every column name.</div>
+
+<h2>Observation long CSV</h2>
+<p>Columns: <code>run_id</code>, <code>dataset_id</code>, <code>spectrum_id</code>, <code>feature_key</code>, <code>value</code>, <code>kind</code>, where <code>kind</code> is <i>feature</i>, <i>axis</i> or <i>meta</i>. The features-only long file has <code>run_id</code>, <code>spectrum_id</code>, <code>feature_key</code>, <code>value</code>, <code>kind</code>.</p>
+
+<h2>Manifest</h2>
+<p>A JSON record of the run: <code>run_id</code>, <code>dataset_id</code>, <code>pipeline_hash</code>, <code>subset_hash</code>, <code>created_at</code>, <code>finished_at</code>, <code>feature_columns</code> and the file format (encoding, delimiter, how missing values are written). Keep it with your results for reproducibility.</p>
+
+<h2>Uncertainties</h2>
+<p>There are no per-value error columns. The only uncertainty summary is the fit column <code>fit_[region_]gof_median_rel_stderr</code>, the median relative standard error of the fitted parameters.</p>
+
+<h2>PCA downloads</h2>
+<table>
+  <tr><th>File</th><th>Columns</th></tr>
+  <tr><td>Scores</td><td><code>spectrum_id</code>, <code>PC1</code>…<code>PCn</code>, <code>relative_path</code>, axes, <code>meta_*</code></td></tr>
+  <tr><td>Loadings</td><td><code>feature_name</code>, <code>PC&lt;i&gt;_loading</code></td></tr>
+  <tr><td>Variance</td><td><code>component</code>, <code>explained_variance_ratio</code> (blank for sparse PCA)</td></tr>
+  <tr><td>Spectrum PCA loadings</td><td><code>x_cm1</code>, <code>PC&lt;i&gt;_loading</code></td></tr>
+  <tr><td>Spectrum mean</td><td><code>x_cm1</code>, <code>mean_intensity</code></td></tr>
+  <tr><td>Matrix CSV</td><td><code>spectrum_id</code>, then one column per wavenumber</td></tr>
+</table>
+<p>A matrix CSV you import must follow the same layout: first column <code>spectrum_id</code>, then numeric wavenumber headers, one row per spectrum.</p>

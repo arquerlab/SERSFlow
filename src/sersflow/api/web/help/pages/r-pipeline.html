@@ -1,0 +1,57 @@
+<h1>Prepare: the pipeline builder</h1>
+<p class="lead">A pipeline is an ordered list of steps applied to every spectrum. You build it in the <b>Pipeline</b> card at the bottom of the Prepare tab and preview the effect in the Plot card above it.</p>
+
+<h2>Pipeline type</h2>
+<p>The selector offers <i>Vibrational (Raman / SERS / FTIR)</i> and <i>XPS</i>. With a dataset loaded, its technique wins; the other choice is refused (“Pipeline type must match the loaded dataset”). The type changes:</p>
+<ul>
+  <li>the fitting engine: SciPy <code>curve_fit</code> (vibrational) or <code>lmfit</code> with constraints and XPS backgrounds (XPS);</li>
+  <li>the available steps (<i>Cosmic Ray Removal</i> is vibrational only) and baseline families (Shirley/Tougaard only for XPS);</li>
+  <li>the “Saved” library list, filtered to the current technique.</li>
+</ul>
+
+<h2>Adding and arranging steps</h2>
+<p>The palette has four groups; press <span class="ui">+ &lt;step&gt;</span> to append a step with default settings and select it:</p>
+<table>
+  <tr><th>Group</th><th>Steps</th></tr>
+  <tr><td>Data Preparation</td><td>Cropping, Low-Signal Filter, Metadata Filter, Outlier Detection</td></tr>
+  <tr><td>Preprocessing</td><td>Alignment &amp; Resampling, Baseline Correction, Cosmic Ray Removal, Smoothing, X-axis Calibration</td></tr>
+  <tr><td>Transformation</td><td>Normalization, Reference Transformation, Derivative</td></tr>
+  <tr><td>Feature Extraction</td><td>Metric Calculation, Peak Fitting, Peak Integration, Peak Identification</td></tr>
+</table>
+<p>Each step is described in <a href="#" data-help="r-steps">Pipeline steps A–Z</a>. A step can be added more than once.</p>
+<p>Each row of the step list has:</p>
+<ul>
+  <li><b>N. name</b>: click to select it and edit its parameters on the right. N is the position in the list and includes disabled steps.</li>
+  <li><span class="ui">↑</span> / <span class="ui">↓</span>: move. Moving renumbers.</li>
+  <li><span class="ui">OFF</span> / <span class="ui">ON</span>: the button shows the action; it reads <b>OFF</b> while the step is enabled. A disabled step passes data through. Disabling a step that others refer to (a fit used by a calibration, a baseline used by a normalization) breaks those references.</li>
+  <li><span class="ui">Del</span>: deletes the step <b>without asking</b>.</li>
+  <li><b>Input XY for this step</b>: <i>Previous</i> (default), <i>Initial</i> (the raw spectrum, restarting the chain) or <i>After step K</i>. Use it to branch, for example to fit from the raw data while another branch is processed.</li>
+</ul>
+<div class="note">Low-Signal Filter and Outlier Detection do not change spectra; they remove whole spectra, judged on the output of the steps <i>above</i> them. Place them accordingly.</div>
+
+<h2>Previewing</h2>
+<p>Use the Plot card's <span class="ui">View</span>: <i>Raw (subset)</i>, <i>Final</i>, or <i>After: &lt;step&gt;</i> to see the result of any single step. With <span class="ui">Auto-run</span> on, edits redraw automatically; for “After:” views press <span class="ui">Run preview plot (subset)</span> after editing parameters. See <a href="#" data-help="r-datasets">Prepare: datasets, sessions, subsets</a>.</p>
+
+<h2>Saving, loading, sharing</h2>
+<table>
+  <tr><th>Button</th><th>What it does</th></tr>
+  <tr><td><span class="ui">Save pipeline</span></td><td>Writes the editor to the active <b>session</b>. Previews do this automatically, but press it before going to Analyze.</td></tr>
+  <tr><td><span class="ui">Export current pipeline</span></td><td>Downloads <code>&lt;name&gt;.sersflow-pipeline.json</code> built from the editor. No session needed.</td></tr>
+  <tr><td><span class="ui">Name (optional)</span> + <span class="ui">Save to library</span></td><td>Stores a named copy in the shared pipeline library, so it can be reused on other datasets and used by Analyze. Blank gives “Unnamed pipeline …”. A name already in use is refused unless <span class="ui">Overwrite if name exists</span> is ticked.</td></tr>
+  <tr><td><span class="ui">Saved</span> dropdown</td><td>Choosing an entry <b>loads it immediately</b>, discarding unsaved edits without asking, and writes it to the session.</td></tr>
+  <tr><td><span class="ui">Reload</span>, <span class="ui">Update selected</span>, <span class="ui">Delete selected</span>, <span class="ui">Export selected</span>, <span class="ui">Refresh list</span></td><td>Re-fetch the saved entry; rename or replace its steps; delete it; download it; refresh the list.</td></tr>
+  <tr><td><span class="ui">Import pipeline</span></td><td>Adds a downloaded pipeline file to the library and selects it, but does not load its steps. Press <span class="ui">Reload</span> to load them.</td></tr>
+</table>
+<div class="warn">Save a <i>new name</i> for every meaningful variant instead of overwriting. The exported feature tables and manifests identify a run by its pipeline, so a stable named pipeline is your record of what was done.</div>
+
+<h2>Rules that stop you</h2>
+<ul>
+  <li><b>No double XPS background.</b> A static Shirley/Tougaard <i>baseline step</i> cannot be enabled together with an active <code>shirley_bg</code>/<code>tougaard_bg</code> component in a fitting step. A red banner appears and saving is refused. Choose one. See <a href="#" data-help="r-xps">XPS specifics</a>.</li>
+  <li>The pipeline's technique must equal the dataset's technique.</li>
+</ul>
+
+<h2>Good starting chains</h2>
+<ul>
+  <li><b>SERS / Raman:</b> Cropping → Cosmic Ray Removal → Smoothing → Baseline Correction → Normalization → Peak Fitting or Peak Integration.</li>
+  <li><b>XPS:</b> Metadata Filter (one region) → X-axis Calibration → Peak Fitting with a recipe (active Shirley background) <i>or</i> a static Shirley baseline plus peaks → Metric Calculation.</li>
+</ul>

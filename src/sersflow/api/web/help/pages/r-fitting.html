@@ -1,0 +1,67 @@
+<h1>Peak fitting</h1>
+<p class="lead">The Peak Fitting step describes a model (a sum of peaks and optionally a background), fits it to each spectrum and writes the fitted parameters as feature columns.</p>
+
+<h2>What the step does</h2>
+<ul>
+  <li><b>Engines:</b> vibrational pipelines use SciPy bounded <code>curve_fit</code>; XPS pipelines use <code>lmfit</code>, which adds the Vary checkboxes, parameter links, active backgrounds and the Fermi edge.</li>
+  <li><b>It replaces the spectrum with the fitted curve.</b> Any later step (Normalization, Integration…) sees the model, not the data. Points outside the fit window keep their original values.</li>
+  <li>The exported columns come from re-fitting the step's <i>input</i>, so they are independent of later steps.</li>
+  <li>If a fit fails, the spectrum passes through unchanged <b>without an error</b>; its fit columns are empty and <code>gof_success</code> is 0. Check this in Analyze → Plots → Fit diagnostics.</li>
+</ul>
+
+<h2>Editor controls</h2>
+<table>
+  <tr><th>Control</th><th>Meaning</th></tr>
+  <tr><td>Region / band (XPS)</td><td>Which region this fit applies to (for example C1s). It becomes part of the column names. Spectra of another region are <b>not</b> fitted. “all valence bands” matches region names containing <i>valence</i>, <i>fermi</i> or <i>vb</i>.</td></tr>
+  <tr><td>Fit window (internal crop)</td><td><b>from / to</b>: only this range is fitted (either side may be empty). Start and end on baseline.</td></tr>
+  <tr><td>Auto-guess for bands amplitude</td><td>Estimates each peak's height from the data at its position, relative to a straight line across the window. Needs peak positions close to the true ones.</td></tr>
+  <tr><td>Initial area ratios</td><td>For example <code>1:0.6:0.3</code>: scales the guessed amplitudes so peak <i>areas</i> follow the ratio. The count must equal the number of peaks.</td></tr>
+  <tr><td>Peak shift (eV)</td><td>Moves all peak position guesses and their bounds together in 0.2 eV steps.</td></tr>
+  <tr><td>Peak fill opacity</td><td>Plot appearance only.</td></tr>
+  <tr><td>+ Add model / Remove</td><td>Adds a Gaussian component; removes one (removing the last resets to a Gaussian).</td></tr>
+  <tr><td>Peak name</td><td>Used in plots and column names. Leave empty for p1, p2…; non-alphanumeric characters become <code>_</code>. Use short meaningful names.</td></tr>
+  <tr><td>Type</td><td>The model, see below.</td></tr>
+  <tr><td>Parameter | Initial Guess | Bounds</td><td>Starting value and lower/upper limits (empty = unbounded). XPS adds <b>Vary</b> (let the fit change it) and <b>Link</b>.</td></tr>
+</table>
+
+<h2>Initial guesses</h2>
+<ul>
+  <li><b>Centre (pos)</b> starts at 1000 in every pipeline, including XPS. <b>Always set it</b> near the real peak (or use a recipe).</li>
+  <li><b>Amplitude</b> is the peak <i>height</i>. The <b>Auto</b> checkbox lets SpecFlow estimate it. Typing 0 or a negative number switches Auto back on.</li>
+  <li><b>Widths</b> (FWHM): the vibrational engine has no safety limits, so set an upper bound; XPS applies sensible limits automatically.</li>
+  <li>With Vary off in a vibrational fit, the value is fixed.</li>
+</ul>
+
+<h2>Models</h2>
+<table>
+  <tr><th>Type</th><th>Parameters</th><th>Typical use</th></tr>
+  <tr><td>Gaussian, Lorentzian</td><td><code>pos</code>, <code>amp</code>, <code>fwhm</code></td><td>Raman/SERS bands</td></tr>
+  <tr><td>Pseudo-Voigt</td><td>+ <code>eta</code> (Lorentzian fraction 0–1)</td><td>Raman/SERS bands</td></tr>
+  <tr><td>Voigt</td><td><code>fwhm_g</code>, <code>fwhm_l</code></td><td>When both widths matter</td></tr>
+  <tr><td>Gaussian–Lorentzian (GL)</td><td><code>fwhm</code>, <code>m</code> (% Lorentzian, 0–100, start 30)</td><td>XPS core levels</td></tr>
+  <tr><td>Doniach–Šunjić (DS), Gaussian-convoluted DS (GDS)</td><td><code>gamma</code>, <code>alpha</code> (asymmetry), GDS also <code>sigma</code></td><td>Metals (asymmetric lines)</td></tr>
+  <tr><td>Asymmetric Lorentzian (LA), Finite Lorentzian (LF)</td><td><code>fwhm</code>, <code>alpha</code>, <code>beta</code>, <code>fwhm_g</code>; LF adds <code>w</code></td><td>Asymmetric XPS lines</td></tr>
+  <tr><td>Asymmetric GL, APV, Asymmetric Voigt</td><td>left/right widths and mixing</td><td>Asymmetric lines</td></tr>
+  <tr><td>Polynomial</td><td>coefficients <code>c0</code>…, degree 0–12</td><td>Background only (no area)</td></tr>
+  <tr><td>XPS only: Shirley / Tougaard / Slope background (active)</td><td>see <a href="#" data-help="r-xps">XPS specifics</a></td><td>Backgrounds fitted together with the peaks</td></tr>
+  <tr><td>XPS only: Fermi edge (valence)</td><td><code>amplitude</code>, <code>center</code>, <code>sigma</code>, <code>temperature_K</code>, <code>const</code></td><td>Valence band / energy calibration</td></tr>
+</table>
+
+<h2>Links (XPS only)</h2>
+<p>In the <b>Link</b> column choose a target “&lt;peak&gt;.&lt;parameter&gt;” and a relation: <i>equal</i>, <i>scale</i> (× factor) or <i>offset</i> (+ value). The linked parameter then follows its target and is no longer free. Typical use for a doublet: FWHM <i>equal</i> to the main component, position <i>offset</i> by the spin–orbit splitting. A scale link on amplitude fixes a <i>height</i> ratio, not an area ratio.</p>
+
+<h2>Previewing a fit</h2>
+<p>There is no interactive fitting. Set View → <b>After: fitting</b> (or <b>Final</b> if the fit is the last step). SpecFlow fits each spectrum of the subset once and draws data, total fit, individual components and a residual panel with diagnostics. It refreshes when you change the view or subset, or press <span class="ui">Run preview plot (subset)</span>, <b>not</b> after every parameter edit.</p>
+<div class="tip">Start with one peak on one spectrum, check the residual, then add peaks one at a time. Narrow the fit window rather than adding background peaks.</div>
+
+<h2>Fitting results</h2>
+<p>Per component: <code>fit_[region_]&lt;peak&gt;_&lt;param&gt;</code> and <code>…_area</code> (all peak types except DS and GDS). Per fit: <code>fit_[region_]gof_&lt;rmse|r2|r2_adj|aic|bic|aicc|chi2|redchi|…&gt;</code>. See <a href="#" data-help="r-exports">Exports and column names</a>. AIC and BIC assume unit variance, so compare models only on the same data. There are no per-parameter error columns, only <code>gof_median_rel_stderr</code>.</p>
+
+<h2>Common messages</h2>
+<table>
+  <tr><th>Message</th><th>Do this</th></tr>
+  <tr><td>“Insufficient points for fit…”</td><td>Widen the crop or fit window, or use fewer parameters.</td></tr>
+  <tr><td>“Nonlinear fit did not converge…”</td><td>Improve the initial centres and bounds, widen the window, simplify the model.</td></tr>
+  <tr><td>“Fitting failed for &lt;id&gt;…”</td><td>Inspect that spectrum; it may be noise or outside the region.</td></tr>
+  <tr><td>“No spectra match fitting region X…”</td><td>Check the Region / band name against your dataset's regions.</td></tr>
+</table>

@@ -1,0 +1,64 @@
+<h1>Prepare: datasets, sessions, subsets</h1>
+<p class="lead">The top of the Prepare tab handles everything before the pipeline: building datasets from uploads, previewing on a subset, and managing what you have.</p>
+
+<h2>How the pieces fit</h2>
+<ul>
+  <li><b>Dataset:</b> the spectra you chose, copied into durable storage, with one technique (vibrational <i>or</i> XPS).</li>
+  <li><b>Session:</b> created <b>automatically</b> whenever you pick, create or import a dataset. It holds your working pipeline and current subset. The line “Session: …” is informational; there is no button to create one.</li>
+  <li><b>Subset:</b> a few randomly chosen spectra used only for preview plots. Batch feature extraction and Analyze always use the full dataset.</li>
+</ul>
+<p>Picking a different dataset empties the pipeline editor and clears the subset.</p>
+
+<h2>Dataset bar</h2>
+<table>
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td><span class="ui">Dataset</span></td><td>Select the active dataset. Entries show name, id and number of spectra.</td></tr>
+  <tr><td><span class="ui">Delete current dataset</span></td><td>Deletes the selected dataset and its sessions. <b>No confirmation.</b> Raw uploads are not affected.</td></tr>
+  <tr><td><span class="ui">Clear all datasets</span></td><td>Intended to delete everything. The server no longer offers a bulk delete, so this button may fail without deleting anything. Delete datasets one at a time instead.</td></tr>
+  <tr><td><span class="ui">Restore files to uploads</span></td><td>Makes the dataset's source files visible again in Uploads (re-activating hidden files, or copying them back from the dataset's stored copy, labels included). Use it when you need to edit labels of files you hid or purged.</td></tr>
+  <tr><td><span class="ui">Export dataset</span></td><td>Downloads <code>&lt;name&gt;.sersflow-dataset.zip</code>: the source files plus a manifest with labels. Share it with a colleague.</td></tr>
+  <tr><td><span class="ui">Import dataset</span></td><td>Loads such a zip as a <b>new</b> dataset. Identical stored files are not duplicated.</td></tr>
+</table>
+
+<h2>Create new dataset</h2>
+<ol class="steps">
+  <li><b>Select spectra</b> in the tree. Ticking a whole file takes all of its spectra: one file is enough for a series or a map. For multi-region XPS files, tick individual block rows to take only those.</li>
+  <li><b>Narrow the list</b> if needed:
+    <ul>
+      <li><span class="ui">Select all visible</span> and <span class="ui">Clear</span>.</li>
+      <li><span class="ui">Range</span> (vibrational): groups files by spectral range in 100 cm⁻¹ steps; choosing a group <i>replaces</i> your selection.</li>
+      <li><span class="ui">XPS region</span>: selects matching region blocks across files (shown instead of Range when XPS files outnumber vibrational ones).</li>
+      <li><span class="ui">Filters</span>: pick label values (AND between keys, OR within a key). Filters only hide rows in the picker; they do not alter what a ticked file contains.</li>
+    </ul></li>
+  <li>For XPS, optionally use <span class="ui">Regions</span> to keep only some regions. “all valence bands” matches any region with <i>valence</i>, <i>fermi</i> or <i>vb</i> in the name.</li>
+  <li>Optionally type a <span class="ui">Dataset name</span> (duplicates are allowed; blank gives “Unnamed dataset …”).</li>
+  <li>Press <span class="ui">Create dataset</span>.</li>
+</ol>
+<div class="warn"><ul>
+<li><b>No mixing.</b> A dataset cannot hold both XPS and vibrational files. Deselect one technique first.</li>
+<li><b>Averages only by default.</b> Ticking a <i>whole</i> VAMAS/NeXus file keeps only its averaged spectra. To include individual replicates, tick the individual block rows.</li>
+<li>Files that cannot be read are skipped, with a banner naming the first few. Only if nothing loads does creation fail.</li>
+</ul></div>
+<p>Afterwards the dataset is active, a session exists and the pipeline editor is empty. The subset is empty too, so press <span class="ui">Create subset</span> before expecting a plot.</p>
+<div class="note">Datasets keep their own copy of the data. Hiding or purging uploads later does not break them.</div>
+
+<h2>Session and preview bar</h2>
+<table>
+  <tr><th>Control</th><th>What it does</th></tr>
+  <tr><td><span class="ui">Mode</span>: Explore / Batch</td><td><b>Explore</b> (default): interactive preview on a subset. <b>Batch</b>: hides the subset tools; the run button becomes <span class="ui">Quick metrics (all spectra, peak / FWHM)</span> over the full dataset, and <span class="ui">Outliers → Explore</span> finds spectra with unusual peak height and switches to Explore with them as a locked subset.</td></tr>
+  <tr><td><span class="ui">Create subset</span> / <span class="ui">Resample</span></td><td>Both draw <span class="ui">Subset size</span> random spectra with a <b>new random seed</b> and save them as a tile. The shown seed is informational; there is no seed input.</td></tr>
+  <tr><td><span class="ui">Lock subset</span></td><td>Freezes the subset: disables Create subset, Resample, Subset size and region subsets. Not remembered after reload.</td></tr>
+  <tr><td><span class="ui">Regions</span> + <span class="ui">Create region subset</span> (XPS)</td><td>Samples spectra only from the chosen regions (up to 30).</td></tr>
+  <tr><td><span class="ui">Plot mode</span>, <span class="ui">Stack separation</span></td><td>Overlay or stacked traces, as in Raw visualization.</td></tr>
+  <tr><td><span class="ui">Ghost overlay</span> (on)</td><td>Draws the previous figure faintly behind the new one so you can see what a parameter change did.</td></tr>
+  <tr><td><span class="ui">Auto-run</span> (on)</td><td>Redraws the preview shortly after any change to pipeline, subset or view (saving the pipeline to the session first). For “After: step” views it does not rerun on parameter edits (too slow); press <span class="ui">Run preview plot (subset)</span>.</td></tr>
+</table>
+
+<h2>The Plot card</h2>
+<ul>
+  <li><span class="ui">View</span>: <i>Raw (subset)</i> = untouched source spectra; <i>Final</i> = after the whole pipeline (if it ends in a fit you get fit + residual figures per spectrum); <i>After: &lt;step&gt;</i> = the result right after that step. Use “After:” to debug one step at a time.</li>
+  <li><span class="ui">Subset size</span>: 1–30, default 15. At most 30 spectra are ever plotted.</li>
+  <li><span class="ui">Subsets</span>: tiles of saved subsets (up to 15 per dataset, stored <b>in this browser only</b>). Click a tile to reuse exactly those spectra, <span class="ui">Delete</span> to drop it, <span class="ui">Clear all subsets</span> to reset.</li>
+  <li>After reloading the page your settings return, but the <b>active subset does not</b>: click a tile or <span class="ui">Create subset</span>.</li>
+</ul>
+<div class="tip">Use a fixed set of tricky spectra (noisy, spiky, high background) as a saved subset and re-check it after every change to your pipeline.</div>

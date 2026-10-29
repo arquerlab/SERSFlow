@@ -1,0 +1,30 @@
+<h1>Raw visualization tab</h1>
+<p class="lead">Look at your data exactly as measured, before any processing. Nothing here changes or stores anything.</p>
+
+<h2>Plotting</h2>
+<ol class="steps">
+  <li>Pick a file in <b>Files to plot</b>. Press <span class="ui">+</span> to add another selector (<span class="ui">−</span> removes one).</li>
+  <li>The plot appears <b>automatically</b>. Changing a file, a tick, <span class="ui">Plot mode</span> or <span class="ui">Stack separation</span> redraws after a moment. <span class="ui">Plot spectrum</span> forces a redraw.</li>
+  <li>Choose <span class="ui">Plot mode</span>: <i>Overlay</i> (all traces on top of each other) or <i>Stack</i> (each trace shifted up by <span class="ui">Stack separation</span>, default 1000, in intensity units, in trace order).</li>
+</ol>
+<p>Drag the divider between the list and the plot to resize it. Only files you have not hidden are listed.</p>
+
+<h2>What you get depends on the file</h2>
+<table>
+  <tr><th>File type</th><th>Extra controls</th></tr>
+  <tr><td>Single spectrum</td><td>None. x = first column, y = second.</td></tr>
+  <tr><td>Time series (3-column text, WDF series)</td><td><b>Time/Depth points</b> slider with <span class="ui">All</span> / <span class="ui">None</span>. Move the bar, and click it to toggle points. Starts with point 0 only.</td></tr>
+  <tr><td>Map (WDF map, 4-column text)</td><td><b>Map points</b>: click cells to toggle them; a preview image of the mapped area sits behind the grid. All points start selected.</td></tr>
+  <tr><td>Multi-region XPS (VAMAS / NeXus)</td><td><b>Multi-spectrum blocks</b>: <span class="ui">Add filter</span> / <span class="ui">Clear filters</span>. By default only the averaged spectra of the first region are shown. Tick individual blocks to override the filters. Categorical fields use tick boxes (matching any ticked value); numeric fields use an operator (=, !=, &gt;, …) and a number. Several filter rows combine with AND.</td></tr>
+</table>
+<div class="warn"><b>30-trace limit.</b> At most 30 spectra are drawn. If you select more (for example all points of a map), only the first 30 are plotted, without a warning. Select fewer points, or use the heatmap view for series.</div>
+
+<h2>Series heatmap</h2>
+<p>Select <b>exactly one</b> time-series file and press <span class="ui">Series heatmap</span>. It shows time on one axis, wavenumber on the other and intensity as colour: a quick way to see changes over time. A file that is not a series answers “Not a series dataset”.</p>
+
+<h2>What to look for</h2>
+<ul>
+  <li>Is the x axis in the right range and unit (wavenumber in cm⁻¹ or binding energy in eV)?</li>
+  <li>Are there spikes (cosmic rays), a steep background, saturated or empty spectra?</li>
+  <li>Do spectra within a group look alike? This tells you which cleaning steps you will need in Prepare.</li>
+</ul>

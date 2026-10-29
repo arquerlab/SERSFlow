@@ -1,0 +1,28 @@
+<h1>Glossary</h1>
+<dl>
+  <dt><b>Active background</b></dt><dd>An XPS background (Shirley, Tougaard, slope) fitted together with the peaks inside a Peak Fitting step. Opposite: <i>static baseline</i>.</dd>
+  <dt><b>Analysis run</b></dt><dd>One execution of a pipeline over the whole dataset (Analyze → Run feature extraction). Produces a feature table. Statuses: pending, running, completed, failed.</dd>
+  <dt><b>Baseline</b></dt><dd>Slowly varying background (fluorescence in Raman, inelastic background in XPS) that is estimated and subtracted.</dd>
+  <dt><b>Batch mode</b></dt><dd>Prepare mode that works on the full dataset (quick metrics) instead of previewing a subset.</dd>
+  <dt><b>Block</b></dt><dd>One region/spectrum inside a multi-spectrum XPS file (VAMAS, NeXus).</dd>
+  <dt><b>Dataset</b></dt><dd>A named collection of spectra of a single technique, built from uploads and stored durably.</dd>
+  <dt><b>EVR</b></dt><dd>Explained variance ratio: the fraction of total variance captured by a principal component.</dd>
+  <dt><b>Feature</b></dt><dd>A number extracted per spectrum (intensity, area, fitted position…). One column in the results.</dd>
+  <dt><b>FPCA</b></dt><dd>Functional PCA: PCA on whole spectra treated as curves. “Discrete” does PCA on the matrix; “FDA” uses a functional-data library.</dd>
+  <dt><b>FWHM</b></dt><dd>Full width at half maximum of a peak.</dd>
+  <dt><b>Label</b></dt><dd>A piece of metadata about a file (sample, pH, potential…). Appears as <code>meta_*</code> in exports.</dd>
+  <dt><b>Library (pipelines)</b></dt><dd>The shared list of saved, named pipelines.</dd>
+  <dt><b>Manifest</b></dt><dd>JSON record of a run: ids, pipeline hash, feature list, file format.</dd>
+  <dt><b>MCP</b></dt><dd>Model Context Protocol: a standard that lets an AI assistant call SpecFlow's functions as tools.</dd>
+  <dt><b>Observation table</b></dt><dd>The main export: one row per spectrum with features, axes and labels.</dd>
+  <dt><b>Pass energy</b></dt><dd>XPS analyser setting; determines peak widths and selects the matching recipe width.</dd>
+  <dt><b>PCA / sparse PCA</b></dt><dd>Principal component analysis; the sparse version forces most loadings to zero for easier reading.</dd>
+  <dt><b>Pipeline</b></dt><dd>An ordered list of processing and feature steps.</dd>
+  <dt><b>Recipe (XPS)</b></dt><dd>A packaged starting point for fitting a known chemistry, with peak types, positions, widths and bounds.</dd>
+  <dt><b>Region (XPS)</b></dt><dd>The core level or band a spectrum belongs to, such as C1s or O1s.</dd>
+  <dt><b>Session</b></dt><dd>The working pipeline and subset attached to a dataset in Prepare. Created automatically.</dd>
+  <dt><b>Subset</b></dt><dd>A few random spectra used only for preview plots.</dd>
+  <dt><b>Technique family</b></dt><dd>“Vibrational” (SERS/Raman/FTIR) or “XPS”. Datasets and pipelines each have exactly one.</dd>
+  <dt><b>Upload</b></dt><dd>A raw file stored on the server.</dd>
+  <dt><b>VIF</b></dt><dd>Variance inflation factor: how well one feature is explained by the others. Above about 5–10 means collinearity.</dd>
+</dl>

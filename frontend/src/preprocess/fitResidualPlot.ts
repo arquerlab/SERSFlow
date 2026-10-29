@@ -143,7 +143,7 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
     if (!cyRaw?.length) continue;
     const cy = gapSeries(cyRaw, n);
     const ct = comp.component_type;
-    const label = `${ct} [${comp.component_id}]`;
+    const label = String(comp.component_id ?? "").trim() || ct;
     if (isBackgroundComponentType(ct)) {
       traces.push({
         type: "scatter",

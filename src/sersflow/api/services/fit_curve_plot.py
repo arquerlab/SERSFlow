@@ -8,6 +8,11 @@ from typing import Any, Sequence
 import numpy as np
 
 
+def _component_label(comp: dict[str, Any]) -> str:
+    """Peak name (component_id) as used in feature columns; falls back to the type."""
+    return str(comp.get("component_id") or "").strip() or str(comp.get("component_type") or "")
+
+
 def _is_background(component_type: str) -> bool:
     t = str(component_type or "").strip().lower()
     return t == "polynomial_background" or t.endswith("_bg")
@@ -70,7 +75,7 @@ def render_fit_residual_figure(
                 else:
                     both = np.isfinite(bg_sum) & finite
                     bg_sum = np.where(both, bg_sum + arr, np.where(finite, arr, bg_sum))
-                ax_top.plot(xf, arr, color="#7f8c8d", lw=1.0, ls=":", label=f"{ct} [{comp.get('component_id')}]")
+                ax_top.plot(xf, arr, color="#7f8c8d", lw=1.0, ls=":", label=_component_label(comp))
 
         for comp in components:
             ct = str(comp.get("component_type") or "")
@@ -84,12 +89,12 @@ def render_fit_residual_figure(
                 continue
             if has_bg:
                 plot_y = np.where(np.isfinite(arr) & np.isfinite(bg_sum), bg_sum + arr, np.nan)
-                label = f"{ct} [{comp.get('component_id')}]"
+                label = _component_label(comp)
                 ax_top.fill_between(xf, bg_sum, plot_y, alpha=0.25, label=label, where=np.isfinite(plot_y))
                 ax_top.plot(xf, plot_y, lw=1.0)
             else:
                 plot_y = arr
-                label = f"{ct} [{comp.get('component_id')}]"
+                label = _component_label(comp)
                 ax_top.fill_between(xf, 0, plot_y, alpha=0.25, label=label, where=np.isfinite(plot_y))
                 ax_top.plot(xf, plot_y, lw=1.0)
 

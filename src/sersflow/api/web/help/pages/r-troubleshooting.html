@@ -1,0 +1,58 @@
+<h1>Troubleshooting</h1>
+<p class="lead">Look for your symptom. The first column is what you see.</p>
+
+<h2>Uploading and datasets</h2>
+<table>
+  <tr><th>Symptom</th><th>Cause and fix</th></tr>
+  <tr><td>Upload stalls or mentions “online-only”</td><td>The folder lives in OneDrive and is not on disk. Copy it to a local folder.</td></tr>
+  <tr><td>“Unknown TXT layout”</td><td>Text files need 2 (spectrum), 3 (series) or 4 (map) columns, and the first line must be a header.</td></tr>
+  <tr><td>“Cannot infer technique”</td><td>The first header cell must say wavenumber / Raman shift / cm-1 (vibrational) or binding energy / BE (XPS).</td></tr>
+  <tr><td>“Selection mixes XPS and vibrational files”</td><td>A dataset has one technique. Deselect one kind.</td></tr>
+  <tr><td>Labels missing or wrong</td><td>Rename files following <a href="#" data-help="r-labels">Labels and file naming</a>, or edit by hand. Reload auto labels overwrites manual edits.</td></tr>
+  <tr><td>XPS dataset has fewer spectra than expected</td><td>Whole-file selection keeps averaged spectra only. Tick block rows for replicates. NeXus regions without a binding-energy axis are skipped.</td></tr>
+  <tr><td>A file I hid is gone from Prepare</td><td>Hidden files vanish from pickers. Use <span class="ui">Restore files to uploads</span> from a dataset made from them.</td></tr>
+  <tr><td><span class="ui">Clear all datasets</span> does nothing</td><td>The server has no bulk delete. Delete datasets one by one with <span class="ui">Delete current dataset</span>.</td></tr>
+</table>
+
+<h2>Preview in Prepare</h2>
+<table>
+  <tr><th>Symptom</th><th>Cause and fix</th></tr>
+  <tr><td>“No active subset…”, empty plot</td><td>Press <span class="ui">Create subset</span> (or click a saved tile). The subset is not restored after a reload.</td></tr>
+  <tr><td>Plot does not update after editing a parameter</td><td>“After:” views do not auto-run on edits. Press <span class="ui">Run preview plot (subset)</span>.</td></tr>
+  <tr><td>“Pipeline type must match the loaded dataset”</td><td>Switch dataset to change technique, or build the right pipeline type.</td></tr>
+  <tr><td>Red banner about Shirley/Tougaard</td><td>A static baseline and an active background are both enabled. Keep one (<a href="#" data-help="r-xps">XPS specifics</a>).</td></tr>
+  <tr><td>Cropping gives an error or nothing</td><td>New Cropping steps start empty; fill min and max.</td></tr>
+  <tr><td>Spikes remain after Cosmic Ray Removal</td><td>Lower the threshold, use an odd window, and run the step before the baseline.</td></tr>
+  <tr><td>Baseline eats the peaks</td><td>Raise <code>lam</code> (or lower <code>p</code>); check with View → After: baseline.</td></tr>
+  <tr><td>Smoothing seems to do nothing</td><td>Window longer than the spectrum, or polyorder not below the window: the step silently returns the data unchanged.</td></tr>
+  <tr><td>Fit looks like the data, or later steps look strange</td><td>A fitting step replaces the spectrum with the model. Put normalization and integrations before it, or use <b>Input XY = After step K</b> to branch.</td></tr>
+  <tr><td>Fit does not converge / insufficient points</td><td>Set peak centres near the real peaks, set FWHM bounds, widen the fit window, simplify the model.</td></tr>
+  <tr><td>Calibration does not shift the axis</td><td>The reference fit failed or no spectrum matched the reference filter: the shift is 0 with only a warning. Check the reference fit.</td></tr>
+  <tr><td>Outlier Detection error about a shared grid</td><td>Add Alignment &amp; Resampling above it.</td></tr>
+  <tr><td>Filters “flag” but still remove spectra</td><td>The <i>action</i> setting has no effect: Low-Signal and Outlier filters always exclude.</td></tr>
+</table>
+
+<h2>Analyze</h2>
+<table>
+  <tr><th>Symptom</th><th>Cause and fix</th></tr>
+  <tr><td>Sections show only a hint</td><td>The selected run is not <i>completed</i>. Wait, or pick another run.</td></tr>
+  <tr><td>Run stays <i>pending</i></td><td>Runs execute one at a time on the server; another run is in progress.</td></tr>
+  <tr><td>Run <i>failed</i></td><td>Crop does not overlap the data, fit window empty, pipeline unsaved, or technique mismatch. Fix and start a new run.</td></tr>
+  <tr><td>Only one feature <code>I_analysis_fallback</code></td><td>The pipeline has no feature step. Add integration, identification or fitting.</td></tr>
+  <tr><td>Metric Calculation column is empty</td><td>A variable name does not match the real column (region or <code>s&lt;N&gt;_</code> prefix), or an input is missing. Check the exported column names.</td></tr>
+  <tr><td>PCA uses fewer spectra than expected</td><td>Only spectra with values in every selected column are used. Remove sparse columns from the selection.</td></tr>
+  <tr><td>PCA starts at PC2</td><td>Default axes are PC2/PC3. Set X/Y PC to 1.</td></tr>
+  <tr><td>Scree plot empty</td><td>Sparse PCA gives no explained variance. Use plain PCA for scree.</td></tr>
+  <tr><td>My PCA download changed</td><td>Re-running PCA overwrites the saved result of that run.</td></tr>
+  <tr><td>Matrix job: “inconsistent Raman shift grid”</td><td>Add Alignment &amp; Resampling after Cropping and set <i>up_to_step</i> to it or later.</td></tr>
+  <tr><td>FDA FPCA error (501)</td><td>Install the optional package: <code>pip install -e ".[explore-fda]"</code>.</td></tr>
+  <tr><td>Parquet export error (501)</td><td>Install <code>pyarrow</code> on the server (<code>pip install -e ".[parquet]"</code>).</td></tr>
+  <tr><td>“No map/time rows with numeric values…”</td><td>The feature is empty for these spectra or the files have no map/time axes.</td></tr>
+</table>
+
+<h2>Still stuck?</h2>
+<ul>
+  <li>Open the browser's developer console (F12) to see errors, and check the “Errors” box at the bottom of the page.</li>
+  <li>The interactive API reference is at <code>/docs</code> (link at the top of the page).</li>
+  <li>When asking for help, include the dataset name, pipeline name, run status, the exact message and what you pressed.</li>
+</ul>

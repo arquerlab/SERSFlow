@@ -1,0 +1,58 @@
+<h1>Tutorial 2 · XPS: calibrate, fit, compare</h1>
+<p class="lead">Goal: from a multi-region VAMAS or NeXus file to fitted peak areas for one region (here C 1s and O 1s), compared across conditions. About 40 minutes.</p>
+<p>You will need: a <code>.vms</code>, <code>.nxs</code> or <code>.nx5</code> file. Conditions (potential, current…) can be in the block names or file path; see <a href="#" data-help="r-labels">Labels</a>.</p>
+
+<h2>1. Upload and inspect</h2>
+<ol class="steps">
+  <li><span class="ui">Uploads</span> → upload the file. Each file row shows the number of spectra (blocks); expand it to see rows such as “C 1s — OCP”.</li>
+  <li>Check the labels of a few blocks (<code>sample</code>, <code>potential_V</code>, <code>current_density_A_cm2</code>…). Correct block labels by ticking the block rows (not the file) and saving.</li>
+  <li><span class="ui">Raw visualization</span> → select the file. By default the first region's <i>averaged</i> spectra are drawn; change the filter to look at others. The x axis is binding energy.</li>
+</ol>
+
+<h2>2. Create an XPS dataset</h2>
+<ol class="steps">
+  <li><span class="ui">Prepare</span> → in <b>Create new dataset</b>, tick the file (this keeps the <b>averaged</b> spectra). To take only some regions, use the <span class="ui">XPS region</span> menu or the <span class="ui">Regions</span> dropdown, or tick block rows.</li>
+  <li>Name it (for example <code>xps_insitu</code>) and press <span class="ui">Create dataset</span>. The pipeline type switches to <b>XPS</b>.</li>
+  <li>Use <span class="ui">Create region subset</span> with <i>C 1s</i> to preview only that region.</li>
+</ol>
+
+<h2>3. Select one region</h2>
+<p>Add <span class="ui">+ Metadata Filter</span>: <b>Filter by</b> <code>xps_region</code>, tick <i>C 1s</i>. Everything after this step works on C 1s only. (Later, add another Metadata Filter with <b>Input = Initial</b> to start an O 1s branch.)</p>
+
+<h2>4. Fit a reference peak and calibrate the axis</h2>
+<p>Charge correction needs a fit of a reference band first, so the order is: fit, then calibrate.</p>
+<ol class="steps">
+  <li>Add <span class="ui">+ Peak Fitting</span>. Set <b>Region / band</b> to <i>C1s</i>. In the recipe picker choose <i>C 1s adventitious</i>, select your <b>Pass energy</b> and <b>Replace</b>.</li>
+  <li>View → <b>After: fitting</b>. Check the fit and residual of several spectra.</li>
+  <li>Add <span class="ui">+ X-axis Calibration</span> <b>after</b> this reference fit (it needs an earlier fitting step to measure the peak). Because a fitting step replaces the spectrum with the fitted curve, set the calibration's <b>Input XY for this step</b> to <i>After step K</i> where K is the step <i>before</i> the reference fit (for example the Metadata Filter). Then the shift is applied to your data, not to the fitted curve. The fits for your actual analysis come after the calibration (step 5).</li>
+  <li>In X-axis Calibration choose <b>grouped reference band</b>, <b>fitting step</b> = your first fit, <b>position key</b> = the main C 1s peak position, <b>target_x</b> = 284.8, <b>group by</b> = the label that identifies each measurement (sample or potential), <b>reference mode</b> = <i>core level</i>, <b>reference region</b> = C1s.</li>
+  <li>View → <b>After: X-axis Calibration</b>: the C 1s main peak should now sit at 284.8 eV in every group. Remember that a failed reference fit gives a shift of 0 with only a warning, so verify.</li>
+</ol>
+<div class="note">If the dataset has the same reference measured for every spectrum (one sample), <b>single reference band</b> is simpler. Without reference filters every spectrum counts as a reference and one average shift is applied to all.</div>
+
+<h2>5. Fit the region you care about</h2>
+<ol class="steps">
+  <li>Add the second <span class="ui">+ Peak Fitting</span> for the analysis region, for example <b>Region / band</b> <i>O1s</i> (add an O 1s branch with its own Metadata Filter, <b>Input = Initial</b>), and pick a recipe.</li>
+  <li><b>Background:</b> a recipe with <b>Replace</b> includes an active Shirley background. Do <b>not</b> also add a static Shirley baseline step (the pipeline refuses to save). Use one or the other.</li>
+  <li>Tune: set the <b>Fit window</b> to begin and end on baseline; adjust peak centres and bounds; add Links for doublets (FWHM <i>equal</i>, position <i>offset</i>).</li>
+  <li>Check with View → <b>After: fitting</b>: look at the residual panel and at the RMSE/R²/BIC values for several spectra from different conditions.</li>
+</ol>
+
+<h2>6. Derive metrics</h2>
+<p>Add <span class="ui">+ Metric Calculation</span>. Example: <b>id</b> <code>ox_frac</code>, <b>formula</b> <code>{fit_O1s_p2_area}/({fit_O1s_p1_area}+{fit_O1s_p2_area})</code>. Verify the names against the real exported columns later (see the caution on <a href="#" data-help="r-features">Features</a>). Use your own peak names.</p>
+
+<h2>7. Save and run</h2>
+<ol class="steps">
+  <li>Name the pipeline (for example <code>xps_O1s_v1</code>), <span class="ui">Save to library</span>, <span class="ui">Save pipeline</span>.</li>
+  <li><span class="ui">Analyze</span> → dataset + pipeline → <span class="ui">Run feature extraction (async)</span> → wait for <i>completed</i>.</li>
+  <li><b>Plots</b> → <b>Fit diagnostics</b>: choose the fitting step and up to 10 spectra to verify the fits across conditions. Check there that no fit silently failed (a failed fit leaves empty columns and <code>gof_success</code> = 0).</li>
+</ol>
+
+<h2>8. Compare conditions and export</h2>
+<ol class="steps">
+  <li><b>Plots</b> → <b>Parameter vs parameter</b>: X = <code>meta_potential_V</code> (or current density), Y = <code>fit_O1s_p2_area</code> or your metric, style <i>Line + error bars</i> if several spectra share a condition.</li>
+  <li><b>Exports</b> → <b>Fitting curves</b> → choose the fitting step and content <i>data + fit + components + residuals</i> → <span class="ui">All PNG zip</span> for figures; <span class="ui">Observation wide CSV</span> for the table.</li>
+</ol>
+
+<div class="tip">XPS columns include the region name, such as <code>fit_O1s_p1_pos</code>. Give peaks meaningful names (for example <code>lattice_O</code>, <code>OH</code>) in the fitting editor: they end up in every column name.</div>
+<p>See also <a href="#" data-help="r-xps">XPS specifics</a> for backgrounds, recipes and links, and <a href="#" data-help="r-fitting">Peak fitting</a> for every model.</p>

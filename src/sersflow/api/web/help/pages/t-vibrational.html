@@ -1,0 +1,69 @@
+<h1>Tutorial 1 · SERS / Raman: files to correlation</h1>
+<p class="lead">Goal: turn a folder of Raman/SERS files into a table of peak areas, check how two bands relate, and export the result. About 30 minutes. FTIR data follow the same path.</p>
+<p>You will need: your spectra (<code>.txt</code> with a wavenumber header, or Renishaw <code>.wdf</code>), preferably with experiment details in the file names (see <a href="#" data-help="r-labels">Labels and file naming</a>).</p>
+
+<h2>1. Upload and check labels</h2>
+<ol class="steps">
+  <li>Open the <span class="ui">Uploads</span> tab. Choose your folder with the folder picker (extension filter <i>Only</i>, <code>txt,wdf</code>) and press <span class="ui">Upload</span>.</li>
+  <li>In <b>Uploaded files &amp; metadata</b>, read the summary beside each file: sample, pH, potential, laser… Wrong or missing? Tick the file, correct the cells in <b>Edit labels</b> and press <span class="ui">Save</span>.</li>
+</ol>
+<figure><img src="/static/help/img/uploads.png" alt="Uploads tab" loading="lazy"><figcaption>Uploads tab: drop zone on top, file tree and label editor below.</figcaption></figure>
+<div class="tip">Fix labels now. They become the <code>meta_*</code> columns of your results and the colours and filters you use later.</div>
+
+<h2>2. Look at the raw spectra</h2>
+<ol class="steps">
+  <li>Open <span class="ui">Raw visualization</span> and select a file. For a series or map, tick a handful of points.</li>
+  <li>Try <span class="ui">Overlay</span> and <span class="ui">Stack</span>. Note: spikes? slanted background? weak or empty spectra?</li>
+</ol>
+<figure><img src="/static/help/img/raw.png" alt="Raw visualization" loading="lazy"><figcaption>Raw visualization: file selectors on the left, Plotly figure on the right.</figcaption></figure>
+
+<h2>3. Create a dataset</h2>
+<ol class="steps">
+  <li>Open <span class="ui">Prepare</span>. In <b>Create new dataset</b> tick the files (one file is enough for a series or map).</li>
+  <li>Type a <span class="ui">Dataset name</span>, for example <code>run42</code>, and press <span class="ui">Create dataset</span>.</li>
+  <li>Press <span class="ui">Create subset</span>. The plot card now shows <b>Raw (subset)</b> spectra: a random handful used only for previews.</li>
+</ol>
+<figure><img src="/static/help/img/prepare.png" alt="Prepare tab" loading="lazy"><figcaption>Prepare tab: dataset bar, Create new dataset, Plot card with Subsets.</figcaption></figure>
+
+<h2>4. Build the pipeline</h2>
+<p>Add steps from the palette in this order, previewing after each. Set View to <b>After: &lt;step&gt;</b> to see exactly what a step did.</p>
+<ol class="steps">
+  <li><span class="ui">+ Cropping</span>: fill <b>min_x</b> and <b>max_x</b> with the region you trust (for example 400 and 1800).</li>
+  <li><span class="ui">+ Cosmic Ray Removal</span>: keep <i>zscore</i>, threshold 5, window 5 (odd). Check on a spiky spectrum that spikes vanish and real bands stay.</li>
+  <li><span class="ui">+ Smoothing</span>: window 11, polyorder 3. Increase the window only while peak shapes still look the same.</li>
+  <li><span class="ui">+ Baseline Correction</span>: start with <b>asls</b>, <code>lam</code> 1e6, <code>p</code> 0.01. Use <b>After: baseline</b> to see the baseline curve; raise <code>lam</code> if it follows the peaks, lower it if it misses broad background.</li>
+  <li><span class="ui">+ Normalization</span>: <i>max</i> for a first look (use <i>vector (L2)</i> if you plan PCA).</li>
+  <li>Features: <span class="ui">+ Peak Integration</span> with one window per band (for example <b>band1</b> = 1050–1110, <b>band2</b> = 1550–1620), or <span class="ui">+ Peak Fitting</span> to fit them (see <a href="#" data-help="r-fitting">Peak fitting</a>).</li>
+</ol>
+<figure><img src="/static/help/img/pipeline.png" alt="Pipeline card" loading="lazy"><figcaption>The Pipeline card: palette, step list on the left, parameters on the right.</figcaption></figure>
+<div class="note">Peak Integration does not remove a baseline by itself; that is why Baseline Correction comes first.</div>
+<ol class="steps" style="counter-reset: step 6">
+  <li>Switch View to <b>Final</b> and check several subset spectra (press <span class="ui">Resample</span> for new ones). Save the tricky ones as tiles and re-check them whenever you change something.</li>
+  <li>Type a name such as <code>run42_v1</code> and press <span class="ui">Save to library</span>, then <span class="ui">Save pipeline</span>.</li>
+</ol>
+
+<h2>5. Run it on all spectra</h2>
+<ol class="steps">
+  <li>Open <span class="ui">Analyze</span>. Choose your <span class="ui">Dataset</span> and the <span class="ui">Pipeline</span> you saved.</li>
+  <li>Press <span class="ui">Run feature extraction (async)</span>. Watch the progress line; the run appears in the <b>Runs</b> table. Wait for status <i>completed</i>.</li>
+</ol>
+<figure><img src="/static/help/img/analyze.png" alt="Analyze tab" loading="lazy"><figcaption>Analyze, Overview section: dataset, pipeline, runs table.</figcaption></figure>
+<div class="warn">If the run <i>fails</i>, read the message in Overview. Typical causes: crop that does not cover the data, a fit window left with no points, or a pipeline that was not saved. Fix, then start a <b>new</b> run.</div>
+
+<h2>6. Explore</h2>
+<ol class="steps">
+  <li><span class="ui">Section</span> → <b>Correlation / VIF</b>. Select your two band areas (and maybe a metadata column such as potential) and press <span class="ui">Run correlation</span>. The heatmap shows Pearson r.</li>
+  <li><span class="ui">Section</span> → <b>Plots</b> → <b>Parameter vs parameter</b>: <b>X</b> = <code>area_band1</code>, <b>Y</b> = <code>area_band2</code>, <b>Color</b> = <code>meta_potential_V</code>, press <span class="ui">Plot</span>.</li>
+  <li>Optionally <b>PCA / Cluster</b> with scaling <i>StandardScaler</i> to see which spectra group together. Remember the default plots start at PC2 vs PC3.</li>
+</ol>
+
+<h2>7. Export</h2>
+<p>In <span class="ui">Exports</span> press <span class="ui">Observation wide CSV (labels + axes)</span>: one row per spectrum with your features, <code>meta_*</code> labels and axes. Also download the manifest if you need to document how it was made. Column meanings: <a href="#" data-help="r-exports">Exports and column names</a>.</p>
+
+<h2>What you learned</h2>
+<ul>
+  <li>Preview on a subset, run on everything.</li>
+  <li>Order matters: crop → spikes → smooth → baseline → normalize → features.</li>
+  <li>Name and save your pipeline: it is the record of your processing.</li>
+</ul>
+<p>Next: <a href="#" data-help="t-maps">Tutorial 3 · Maps and time series</a>, or <a href="#" data-help="t-reuse">Tutorial 4 · Reuse and share</a>.</p>
