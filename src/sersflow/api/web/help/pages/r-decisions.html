@@ -1,0 +1,85 @@
+<h1>Which method should I use?</h1>
+<p class="lead">Rules of thumb for the choices you meet most often. They are starting points: always confirm with the “After:” previews.</p>
+
+<h2>Baseline method</h2>
+<table>
+  <tr><th>Your data</th><th>Try</th><th>Why</th></tr>
+  <tr><td>Smooth fluorescence background, sharp bands</td><td><b>asls</b> or <b>arpls</b></td><td>Two knobs (<code>lam</code>, <code>p</code>); robust default</td></tr>
+  <tr><td>Strongly curved, changing background</td><td>P-spline variants (<code>pspline_*</code>), <b>airpls</b></td><td>More flexible</td></tr>
+  <tr><td>You want no tuning</td><td><b>snip</b>, <b>mor</b> / <b>mormol</b></td><td>Only a window size, about the widest peak in points</td></tr>
+  <tr><td>Gentle slope only</td><td><b>modpoly</b> / <b>imodpoly</b> order 2–3</td><td>Simple, predictable</td></tr>
+  <tr><td>XPS core level</td><td><b>shirley</b> (static) or an active Shirley in the fit</td><td>Physical step background</td></tr>
+</table>
+<p>Check with <b>After: baseline</b>. If the baseline cuts into peaks raise <code>lam</code>; if it floats above the bottom, lower <code>p</code> or raise <code>lam</code>.</p>
+
+<h2>Smoothing</h2>
+<ul>
+  <li>Noise is not hurting your integrals or fits? <b>Skip smoothing</b>. Smoothing broadens peaks.</li>
+  <li>Needed for peak finding (<i>nearest_peak</i>) or derivatives: window about a third of the narrowest peak, polyorder 2–3.</li>
+</ul>
+
+<h2>Normalization</h2>
+<table>
+  <tr><th>Goal</th><th>Use</th></tr>
+  <tr><td>Compare shapes in an overlay</td><td><i>max</i></td></tr>
+  <tr><td>PCA / clustering on whole spectra</td><td><i>vector (L2)</i></td></tr>
+  <tr><td>Quantify against an internal standard band</td><td><i>spectrum point</i> at that band</td></tr>
+  <tr><td>You care about absolute intensities</td><td>No normalization</td></tr>
+</table>
+
+<h2>Peak Integration, Peak Fitting or Peak Identification?</h2>
+<table>
+  <tr><th>Question</th><th>Use</th></tr>
+  <tr><td>How much signal is in this band?</td><td><b>Peak Integration</b> (after a baseline). Fast, no model.</td></tr>
+  <tr><td>Where is the peak, how wide, which components?</td><td><b>Peak Fitting</b></td></tr>
+  <tr><td>Overlapping bands, XPS chemical states</td><td><b>Peak Fitting</b> with a recipe</td></tr>
+  <tr><td>Just the intensity at one wavenumber</td><td><b>Peak Identification</b> (fixed target)</td></tr>
+  <tr><td>Ratio of two results</td><td><b>Metric Calculation</b></td></tr>
+</table>
+<div class="tip">Integrate first. If areas already answer your question, you save a lot of fit tuning. Fit when bands overlap or when you need positions and widths.</div>
+
+<h2>Peak shape</h2>
+<table>
+  <tr><th>Technique</th><th>Start with</th></tr>
+  <tr><td>Raman / SERS bands</td><td><b>Lorentzian</b> or <b>Pseudo-Voigt</b></td></tr>
+  <tr><td>XPS non-metals</td><td><b>GL</b> (about 30 % Lorentzian)</td></tr>
+  <tr><td>XPS metals (asymmetric)</td><td><b>DS / GDS</b> or <b>LA</b></td></tr>
+  <tr><td>Fermi edge</td><td><b>Fermi edge (valence)</b></td></tr>
+</table>
+
+<h2>XPS background: static or active?</h2>
+<ul>
+  <li><b>Active</b> (inside the fit) when you use recipes or fit several overlapping peaks; the background is optimised with the peaks.</li>
+  <li><b>Static baseline step</b> when you want the same background subtraction for everything, or a Tougaard shape.</li>
+  <li>Never both.</li>
+</ul>
+
+<h2>X-axis calibration mode</h2>
+<table>
+  <tr><th>Situation</th><th>Mode</th></tr>
+  <tr><td>You know the shift</td><td><i>fixed offset</i></td></tr>
+  <tr><td>One sample, one charging shift</td><td><i>single reference band</i></td></tr>
+  <tr><td>Different charging per measurement</td><td><i>grouped reference band</i>, core level (needs region labels, typical for VAMAS/NeXus)</td></tr>
+  <tr><td>Metals / valence band partners available</td><td><i>grouped</i>, valence band mode (Fermi edge at 0 eV)</td></tr>
+</table>
+
+<h2>Removing bad spectra</h2>
+<table>
+  <tr><th>Problem</th><th>Step</th></tr>
+  <tr><td>Dead or empty acquisitions</td><td>Low-Signal Filter (threshold from the histogram)</td></tr>
+  <tr><td>Spectra that look unlike the others</td><td>Outlier Detection (<i>correlation to median</i> first)</td></tr>
+  <tr><td>Only some conditions or regions</td><td>Metadata Filter</td></tr>
+</table>
+
+<h2>Statistics</h2>
+<table>
+  <tr><th>Question</th><th>Use</th></tr>
+  <tr><td>Do two features move together?</td><td>Correlation (Pearson r); check the scatter in Plots</td></tr>
+  <tr><td>Are my features redundant?</td><td>VIF (above 5–10 means collinear)</td></tr>
+  <tr><td>What drives variation among spectra?</td><td>PCA on features (scaling <i>standard</i> when units differ), or <b>Spectrum matrix &amp; PCA</b> on whole spectra</td></tr>
+  <tr><td>Want few non-zero loadings</td><td>Sparse PCA (no explained variance shown)</td></tr>
+  <tr><td>Group similar spectra</td><td>k-means (on raw columns) or spectrum k-means on PC embedding</td></tr>
+</table>
+
+<h2>Which export?</h2>
+<p>See the table in <a href="#" data-help="r-exports#which-file-should-i-download">Exports and column names</a>. If unsure: Observation wide CSV.</p>

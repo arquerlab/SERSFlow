@@ -1,7 +1,7 @@
 <h1>Features: integration, peaks, metrics</h1>
 <p class="lead">Feature steps do not change the spectrum. They add columns to the table that Analyze produces. Together with Peak Fitting they define what you can correlate and plot.</p>
 
-<h2>Peak Identification</h2>
+<h2 id="step-identification">Peak Identification</h2>
 <p>Reads an intensity (and optionally a peak position) at places you define. Press <span class="ui">+ Add probe</span> for each.</p>
 <table>
   <tr><th>Setting</th><th>Meaning</th></tr>
@@ -16,7 +16,7 @@
 <p>Columns: <code>I_&lt;id&gt;</code>, and for nearest_peak also <code>peak_pos_cm1_&lt;id&gt;</code>.</p>
 <div class="warn"><b>nearest_peak counts every local maximum as a peak</b> (no height or prominence limit). On noisy spectra it can lock onto a noise bump. Always set a <b>window</b> and smooth first.</div>
 
-<h2>Peak Integration</h2>
+<h2 id="step-integration">Peak Integration</h2>
 <p>Integrates the spectrum over x windows (<span class="ui">+ Add window</span>).</p>
 <ul>
   <li><b>id</b> (band1, band2…), <b>min</b> and <b>max</b> (defaults 1900 and 2150; enter eV for XPS), <b>mode</b>: <i>signed</i>, <i>positive only</i> (negatives clipped to 0) or <i>absolute</i>.</li>
@@ -25,7 +25,7 @@
   <li>This step integrates windows only. Areas of fitted peaks come from Peak Fitting (<code>fit_…_area</code>).</li>
 </ul>
 
-<h2>Metric Calculation</h2>
+<h2 id="step-metric">Metric Calculation</h2>
 <p>Computes new columns from columns produced by <i>earlier</i> feature steps, for example ratios.</p>
 <ul>
   <li><span class="ui">+ Add operation</span>: <b>id</b> (the column becomes <code>op_&lt;id&gt;</code>) and a <b>formula</b>.</li>

@@ -276,3 +276,205 @@
     max-height: none;
   }
 }
+
+.help-content a.help-auto {
+  color: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  text-decoration-color: #a995ff;
+}
+
+.help-content a.help-auto:hover {
+  color: #a995ff;
+  text-decoration-style: solid;
+}
+
+/* In-app "Help" links next to section titles */
+.help-ctx {
+  margin-left: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #a995ff;
+  text-decoration: none;
+  border: 1px solid rgba(124, 92, 255, 0.5);
+  border-radius: 999px;
+  padding: 1px 8px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.help-ctx:hover {
+  background: rgba(124, 92, 255, 0.25);
+}
+
+/* Search highlights */
+.help-content mark,
+.help-hit mark {
+  background: rgba(255, 214, 10, 0.35);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* Copy button on code blocks */
+.help-content pre.has-copy {
+  position: relative;
+}
+
+.help-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.help-copy:hover {
+  background: rgba(124, 92, 255, 0.3);
+}
+
+/* "Reviewed against version" line */
+.help-foot {
+  max-width: 880px;
+  margin-top: 28px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.help-foot.stale {
+  color: #ffb454;
+}
+
+/* Visible keyboard focus */
+.help-nav-link:focus-visible,
+.help-content a:focus-visible,
+.help-pager a:focus-visible,
+.help-toc a:focus-visible,
+.help-copy:focus-visible,
+.help-ctx:focus-visible {
+  outline: 2px solid #a995ff;
+  outline-offset: 2px;
+}
+
+/* Tutorial extras */
+.help-content .meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.help-content .check {
+  margin: 12px 0;
+  padding: 8px 13px;
+  border-radius: 10px;
+  border: 1px dashed rgba(91, 227, 125, 0.7);
+  background: rgba(91, 227, 125, 0.06);
+}
+
+.help-content .check::before {
+  content: "You should see";
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #5be37d;
+}
+
+.help-content .path-choice {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.help-content .path-choice > div {
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.help-content details {
+  margin: 8px 0;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.help-content details > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.help-content .download {
+  display: inline-block;
+  margin: 4px 8px 4px 0;
+  padding: 5px 12px;
+  border: 1px solid rgba(124, 92, 255, 0.6);
+  border-radius: 10px;
+  background: rgba(124, 92, 255, 0.16);
+  text-decoration: none;
+  font-weight: 700;
+}
+
+/* Print / save as PDF: only the current page */
+@media print {
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  header,
+  .tabs,
+  .help-nav,
+  .help-toc,
+  .help-pager,
+  .help-copy,
+  .help-ctx,
+  #error,
+  .card:not(.help-card) {
+    display: none !important;
+  }
+  .help-card {
+    border: 0;
+    background: none;
+    backdrop-filter: none;
+  }
+  .help-root {
+    display: block;
+  }
+  .help-content {
+    max-width: none;
+    color: #000;
+    font-size: 11pt;
+  }
+  .help-content a {
+    color: #000;
+    text-decoration: none;
+  }
+  .help-content .ui,
+  .help-content code,
+  .help-content pre {
+    background: #eee;
+    color: #000;
+    border-color: #bbb;
+  }
+  .help-content h2 {
+    border-top-color: #bbb;
+    break-after: avoid;
+  }
+  .help-content table,
+  .help-content figure,
+  .help-content pre {
+    break-inside: avoid;
+  }
+}

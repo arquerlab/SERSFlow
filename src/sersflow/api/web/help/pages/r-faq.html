@@ -1,0 +1,36 @@
+<h1>FAQ</h1>
+
+<h2>General</h2>
+<details><summary>Where is my data stored?</summary><p>On the machine running the SpecFlow server: uploads in <code>.sersflow_uploads/</code>, durable dataset copies in <code>.sersflow_data/</code>, large outputs in <code>.sersflow_artifacts/</code>, metadata in <code>sersflow.db</code>.</p></details>
+<details><summary>Does Prepare change my data?</summary><p>No. A pipeline is a recipe applied on the fly; your raw files and datasets stay untouched. Results exist only as analysis runs and exports.</p></details>
+<details><summary>Why are previews limited to 30 spectra?</summary><p>To keep them fast. Preview plots use a random subset (at most 30 spectra). The Analyze run always uses every spectrum.</p></details>
+<details><summary>Do I need to press Save pipeline?</summary><p>Previews save automatically to the session, but press <span class="ui">Save pipeline</span> before going to Analyze, and <span class="ui">Save to library</span> to keep a named copy.</p></details>
+
+<h2>Uploading and labels</h2>
+<details><summary>Can I upload a whole folder?</summary><p>Yes, with the folder picker. Sub-folders are kept, and folder names can supply labels (for example <code>pH2</code>).</p></details>
+<details><summary>My labels are wrong. What now?</summary><p>Tick the file and edit the cells in <b>Edit labels</b>, then Save. For many files, select many then untick one. See <a href="#" data-help="r-labels#editing-labels-by-hand">Editing labels by hand</a>.</p></details>
+<details><summary>How do I add my own label, like “batch”?</summary><p>Edit one file, press <span class="ui">Add custom row</span>, type a key and value, Save. It appears as <code>meta_batch</code> in exports.</p></details>
+<details><summary>Can I mix Raman and XPS files in one dataset?</summary><p>No. Create one dataset per technique.</p></details>
+
+<h2>Pipelines</h2>
+<details><summary>Why does my normalization or integration look wrong after a fit?</summary><p>A Peak Fitting step replaces the spectrum with the fitted model. Put steps that need the data before it, or give them <b>Input XY</b> = <i>Initial</i> / <i>After step K</i>.</p></details>
+<details><summary>What is the difference between Save pipeline and Save to library?</summary><p>Save pipeline writes the editor to the current session (what Analyze uses). Save to library stores a named copy that you can reuse on other datasets and share.</p></details>
+<details><summary>I picked a saved pipeline and lost my edits.</summary><p>Choosing from the <span class="ui">Saved</span> menu loads immediately and discards unsaved edits. Save your edits first, under a new name.</p></details>
+<details><summary>Can I run the same pipeline on a different dataset?</summary><p>Yes, if the technique matches. Select the dataset, then load the pipeline from the library.</p></details>
+<details><summary>My fit failed but there is no error.</summary><p>A failed fit lets the spectrum pass through unchanged; its fit columns are empty and <code>gof_success</code> is 0. Check <b>Plots → Fit diagnostics</b> after a run.</p></details>
+
+<h2>Analysis and exports</h2>
+<details><summary>How long does a run take?</summary><p>From seconds (tens of spectra) to many minutes (tens of thousands, with fits). Only one run executes at a time on the server; others wait as <i>pending</i>.</p></details>
+<details><summary>Where is the file name in the export?</summary><p>The observation table has no file-name column. Put what you need into a label (sample, batch…). The PCA scores CSV includes the file path.</p></details>
+<details><summary>How do I get error bars?</summary><p>In <b>Plots → Parameter vs parameter</b> choose <i>Mean ± error bars (group by X)</i>: the bars are the standard deviation of replicates with the same X, or supply an error column.</p></details>
+<details><summary>Can I keep my PCA results?</summary><p>Download the CSVs right away. The server keeps one PCA result per run; running again overwrites it. Results are also lost from the page on reload.</p></details>
+
+<h2>AI assistants and Python</h2>
+<details><summary>Can an AI assistant use SpecFlow?</summary><p>Yes, through the MCP server. See <a href="#" data-help="t-mcp">Tutorial 6</a> and <a href="#" data-help="r-mcp">MCP server: setup</a>.</p></details>
+<details><summary>Can I script SpecFlow?</summary><p>Yes: <a href="#" data-help="r-python">Python client</a>, or call the HTTP API directly (see <code>/docs</code>).</p></details>
+<details><summary>Is anything sent to the internet?</summary><p>SpecFlow runs locally. The page loads the Plotly library from a CDN. If you use an AI assistant through MCP, what the assistant sees depends on that service; the MCP server returns ids, summaries and file paths rather than full tables.</p></details>
+
+<h2>Help itself</h2>
+<details><summary>How do I link to a Help page?</summary><p>Copy the address from the browser: it ends in <code>#help/&lt;page&gt;/&lt;section&gt;</code>. Anyone with access to your SpecFlow server can open it.</p></details>
+<details><summary>How do I print a page?</summary><p>Ctrl+P (or Cmd+P) prints only the page you are reading; choose “Save as PDF” to make a file.</p></details>
+<details><summary>I found a mistake or something out of date.</summary><p>The pages are plain HTML in <code>src/sersflow/api/web/help/pages/</code>. The footer of each page shows which version it was reviewed against.</p></details>

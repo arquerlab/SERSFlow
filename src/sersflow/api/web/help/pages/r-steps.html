@@ -1,7 +1,10 @@
 <h1>Pipeline steps A–Z</h1>
 <p class="lead">Every step, what it does, its settings and the advice that saves time. Units: cm⁻¹ for vibrational data, eV for XPS (some labels say cm⁻¹ even for XPS; enter eV there).</p>
 
-<h2>Alignment &amp; Resampling</h2>
+<h2>Steps on this server</h2>
+<div data-gen="steps"><p class="hint">Loading the live list…</p></div>
+
+<h2 id="step-align">Alignment &amp; Resampling</h2>
 <p>Interpolates every spectrum onto a common x grid.</p>
 <ul>
   <li><b>min_x / max_x</b>: grid bounds. Defaults are <b>400 and 2000</b>; change them for your data (and for XPS).</li>
@@ -10,10 +13,10 @@
 </ul>
 <p>Outside the measured range the edge value is held flat (not empty). A descending axis comes out ascending. <b>Needed before</b> Outlier Detection and before a spectrum matrix in Analyze, which require identical grids.</p>
 
-<h2>Baseline Correction</h2>
+<h2 id="step-baseline">Baseline Correction</h2>
 <p>Subtracts an estimated slowly varying background. Choose a <b>category</b>, then a <b>method</b>, then its parameters. Full list: <a href="#" data-help="r-baseline">Baseline methods</a>.</p>
 
-<h2>Cosmic Ray Removal (vibrational only)</h2>
+<h2 id="step-cosmic">Cosmic Ray Removal (vibrational only)</h2>
 <p>Finds narrow spikes and replaces them by interpolation.</p>
 <ul>
   <li><b>method</b>: <i>zscore</i> (threshold 5, window 5) or <i>derivative</i> (threshold 3, window 3). Switching resets the settings below.</li>
@@ -21,13 +24,13 @@
 </ul>
 <div class="warn">Run it <b>before</b> baseline subtraction: spots with zero or negative local background are never corrected. Use an <b>odd</b> window. With very fine sampling, narrow genuine bands can be mistaken for spikes: lower <i>max_width</i> or raise the threshold.</div>
 
-<h2>Cropping</h2>
+<h2 id="step-crop">Cropping</h2>
 <p><b>min_x</b>, <b>max_x</b>: keep only points in this inclusive range. A new Cropping step starts <b>empty</b>: fill both fields. Crop first, to the region you trust.</p>
 
-<h2>Derivative</h2>
+<h2 id="step-derivative">Derivative</h2>
 <p><b>order</b> (default 1): repeated numerical gradient. It amplifies noise, so smooth first.</p>
 
-<h2>Low-Signal Filter</h2>
+<h2 id="step-lowsignal">Low-Signal Filter</h2>
 <p>Removes whole spectra that are too weak (dead acquisitions).</p>
 <ul>
   <li><b>metric</b>: <i>mean</i>, <i>median</i> (default), <i>integrated</i>, <i>maximum</i> intensity, or <i>intensity percentile</i> (with <b>percentile</b>, default 10).</li>
@@ -36,21 +39,21 @@
 </ul>
 <div class="warn">The <b>action</b> menu (exclude/flag) has no effect: spectra below the threshold are always <b>excluded</b>. The metric is computed on the output of the steps above, so position matters; place the filter just after Cropping.</div>
 
-<h2>Metadata Filter</h2>
+<h2 id="step-metadata">Metadata Filter</h2>
 <p>Keeps only spectra whose labels match, <i>on this branch</i>: others become empty and later steps ignore them. It does not delete them from the dataset. Use <b>Input = Initial</b> on a later filter to start again from everything (for example one branch per XPS region).</p>
 <ul>
   <li><span class="ui">Add filter</span>: choose a label (<b>Filter by</b>), then tick values (categorical) or choose an operator (=, !=, &gt;, &gt;=, &lt;, &lt;=) and a number.</li>
   <li>Several values in one row = OR; several rows = AND. No filters = everything passes.</li>
 </ul>
 
-<h2>Normalization</h2>
+<h2 id="step-normalize">Normalization</h2>
 <p><b>method</b>: <i>max</i> (default), <i>min</i>, <i>mean</i>, <i>median</i>, <i>vector (L2)</i>, <i>spectrum point</i> (divide by the intensity at <b>point_x</b>, default 1000), <i>baseline point</i> (divide by the baseline value at <b>point_x</b>, needs an earlier enabled Baseline step chosen under “baseline step”).</p>
 <ul>
   <li>Use <i>max</i> for overlays, <i>vector (L2)</i> for PCA and clustering, <i>spectrum point</i> on an internal-standard band for quantification.</li>
   <li>Normalize <b>after</b> baseline and spike removal. A zero denominator is silently replaced by 1; min/mean/median can be near zero on baseline-subtracted data.</li>
 </ul>
 
-<h2>Outlier Detection</h2>
+<h2 id="step-outlier">Outlier Detection</h2>
 <p>Removes whole spectra that look unlike the rest. Needs identical x grids: add Alignment &amp; Resampling above it.</p>
 <ul>
   <li><b>correlation to median</b> (default): removed if Pearson r to the median spectrum is below the threshold (start at 0.9–0.98). Lower r = more anomalous.</li>
@@ -58,10 +61,10 @@
   <li>As with the Low-Signal Filter, the <b>action</b> menu is ignored: outliers are always excluded. Normalize first, and inspect the hovered overlays before tightening.</li>
 </ul>
 
-<h2>Peak Fitting, Peak Integration, Peak Identification, Metric Calculation</h2>
+<h2 id="step-features">Peak Fitting, Peak Integration, Peak Identification, Metric Calculation</h2>
 <p>See <a href="#" data-help="r-fitting">Peak fitting</a> and <a href="#" data-help="r-features">Features: integration, peaks, metrics</a>.</p>
 
-<h2>Reference Transformation</h2>
+<h2 id="step-reference">Reference Transformation</h2>
 <p>Subtracts or divides every spectrum by a reference spectrum (blank, solvent, substrate).</p>
 <ul>
   <li><b>reference file</b>: a spectrum of the active dataset.</li>
@@ -70,10 +73,10 @@
 </ul>
 <p>The reference spectrum itself is excluded from the analysis and exports.</p>
 
-<h2>Smoothing</h2>
+<h2 id="step-smoothing">Smoothing</h2>
 <p>Savitzky–Golay: <b>window_length</b> (odd, default 11) and <b>polyorder</b> (default 3, must be smaller than the window). A window longer than the spectrum, or polyorder not below the window, silently leaves the spectrum unchanged. Choose a window of about a third of the narrowest peak's width in points; over-smoothing broadens peaks and biases fitted widths.</p>
 
-<h2>X-axis Calibration</h2>
+<h2 id="step-xcal">X-axis Calibration</h2>
 <p>Shifts the x axis (x_new = x + shift).</p>
 <ul>
   <li><b>fixed offset</b>: add <b>offset</b> to every x value.</li>

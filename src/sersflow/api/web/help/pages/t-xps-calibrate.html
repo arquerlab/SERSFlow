@@ -1,0 +1,63 @@
+<h1>Tutorial 2 · XPS: load and calibrate</h1>
+<p class="lead">Goal: bring XPS spectra into SpecFlow and correct the charging shift of the binding-energy axis so the C 1s reference peak sits at 284.8 eV. Part 2 (<a href="#" data-help="t-xps-fit">fit and compare</a>) continues from here.</p>
+<div class="meta"><span>⏱ about 25 minutes</span><span>Level: intermediate</span><span>Data: your VAMAS/NeXus file, or the sample set below</span></div>
+
+<h2>Before you start</h2>
+<div class="path-choice">
+  <div><b>Sample data (recommended to learn)</b><p>Synthetic C 1s and O 1s spectra of a NiFeOx film at eight potentials, saved as text files. The sample sits about <b>0.65 eV</b> too high because of charging.</p>
+  <a class="download" href="/static/help/sample/specflow_sample_xps.zip" download>⬇ Download sample XPS files (zip)</a></div>
+  <div><b>Your own data</b><p>A <code>.vms</code> (VAMAS/CasaXPS) or <code>.nxs</code> (NeXus) file with several regions. Boxes marked “VAMAS / NeXus” show what differs.</p></div>
+</div>
+<div class="note">Text files carry only one spectrum each and no region name; the file name supplies the sample and potential (<code>NiFeOx_pH13_0d4VRHE_C1s.txt</code>). Their first header cell must be “Binding energy” (or “BE”) so that SpecFlow knows it is XPS.</div>
+
+<h2>1. Upload and inspect</h2>
+<ol class="steps">
+  <li><span class="ui">Uploads</span> → upload the files (all sixteen text files, or your VAMAS/NeXus file).</li>
+  <li>Check the labels: <code>sample</code> NiFeOx, <code>ph</code> 13, and <code>potential_V</code> from 0 to 1.4 with <code>potential_ref</code> VRHE.</li>
+  <li><span class="ui">Raw visualization</span> → select a file. The x axis is binding energy.</li>
+</ol>
+<div class="check">A C 1s file shows one strong peak near 285.4 eV (284.8 + 0.65 charging) with small shoulders at higher binding energy.</div>
+<details>
+  <summary>VAMAS / NeXus: each file holds many regions</summary>
+  <p>Expand the file row to see blocks such as “C 1s — OCP”. In Raw visualization the first region's <i>averaged</i> spectra are drawn; change the block filter to look at others. Correct block labels by ticking the block rows (not the file) in Uploads.</p>
+</details>
+
+<h2>2. Create the dataset</h2>
+<ol class="steps">
+  <li><span class="ui">Prepare</span> → in <b>Create new dataset</b>, tick the eight <b>C 1s</b> files only (their names end in <code>_C1s</code>). Name it <code>xps_C1s</code> and press <span class="ui">Create dataset</span>.</li>
+  <li>The pipeline type becomes <b>XPS</b> automatically (a dataset cannot mix XPS and vibrational files).</li>
+  <li>Press <span class="ui">Create subset</span> and set View to <b>Raw (subset)</b> to see the uncorrected peaks.</li>
+</ol>
+<div class="check">All peaks sit around 285.4 eV rather than 284.8 eV.</div>
+<details>
+  <summary>VAMAS / NeXus: select a region</summary>
+  <p>Use the <span class="ui">XPS region</span> menu, the <span class="ui">Regions</span> dropdown or tick block rows; a whole-file tick keeps averaged spectra only. Then add <span class="ui">+ Metadata Filter</span> with <b>Filter by</b> <code>xps_region</code> = C 1s so later steps work on one region. See <a href="#" data-help="r-datasets">datasets</a>.</p>
+</details>
+
+<h2>3. Fit a reference peak</h2>
+<p>The calibration step measures the position of a reference band by <i>fitting</i> it, so the pipeline needs a Peak Fitting step first.</p>
+<ol class="steps">
+  <li>Add <span class="ui">+ Peak Fitting</span>. Set <b>Region / band</b> to <i>C1s</i>.</li>
+  <li>Use a simple model: one <b>Gaussian-Lorentzian (GL)</b> peak, <b>Peak name</b> <code>CC</code>, centre <b>284.8</b>, FWHM about 1.2 with bounds 0.3–3, <b>m</b> 30, amplitude <i>Auto</i>, and <b>centre bounds 282–288</b> so the fit can find the shifted peak. (Or choose the “C 1s adventitious” recipe and keep only its main peak.)</li>
+  <li>Set the <b>Fit window</b> from 282 to 290 eV so the shoulders do not distort the reference.</li>
+  <li>View → <b>After: fitting</b> and press <span class="ui">Run preview plot (subset)</span>.</li>
+</ol>
+<div class="check">The fitted GL peak (blue/orange) follows the main peak at about 285.45 eV; the residual is small near the peak.</div>
+
+<h2>4. Calibrate the axis</h2>
+<ol class="steps">
+  <li>Add <span class="ui">+ X-axis Calibration</span> <b>after</b> the fit.</li>
+  <li><b>Input XY for this step</b>: choose <i>Initial</i> (or the step before the fit). A fitting step replaces the spectrum with the fitted curve; with this setting the shift is applied to your <i>data</i>, not to the model.</li>
+  <li>Set <b>method</b> to <i>single reference band</i>, <b>fitting step</b> to your fit, <b>position key</b> to the <code>…_CC_pos</code> entry, and <b>target_x</b> to <b>284.8</b>. Leave the reference filters empty: every spectrum is a reference, their fitted positions are averaged and one shift is applied to all.</li>
+  <li>View → <b>After: x_axis_calibration</b> and <span class="ui">Run preview plot (subset)</span>.</li>
+</ol>
+<div class="check">All peaks now sit at about <b>284.8 eV</b> (within a few hundredths of an eV). The shift applied was about <b>−0.65 eV</b>.</div>
+<div class="warn">If nothing matches the reference filters or the reference fit fails, the shift silently becomes <b>0</b> (only a warning is logged). Always look at the result with the “After:” view.</div>
+<details>
+  <summary>VAMAS / NeXus: calibrate each group separately</summary>
+  <p>When different measurements charge differently, use <b>grouped reference band</b>: set <b>group by</b> to the label that identifies a measurement (sample, potential…), <b>reference mode</b> <i>core level</i> and <b>reference region</b> <i>C1s</i>. In each group the first spectrum of that region is fitted and its offset is applied to every spectrum of the group. Spectra without a region label cannot be grouped this way, which is why the sample text files use <i>single reference band</i>. Valence-band mode shifts each core region by its Fermi-edge partner (target 0 eV). Details: <a href="#" data-help="r-steps#step-xcal">X-axis Calibration</a>.</p>
+</details>
+
+<h2>5. Save</h2>
+<p>Keep the reference fit and the calibration for later: type a name such as <code>xps_C1s_cal</code> and press <span class="ui">Save to library</span> and <span class="ui">Save pipeline</span>. Note the <b>shift</b> you found (about −0.65 eV): you will apply the same offset to the O 1s data in Part 2, because both regions were measured on the same charging sample.</p>
+<p>Continue with <a href="#" data-help="t-xps-fit">Tutorial 3 · XPS: fit and compare</a>. Background on XPS in SpecFlow: <a href="#" data-help="r-xps">XPS specifics</a>.</p>

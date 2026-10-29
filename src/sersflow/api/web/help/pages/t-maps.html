@@ -1,47 +1,54 @@
-<h1>Tutorial 3 · Maps and time series</h1>
-<p class="lead">Goal: handle files that contain many spectra in space (maps) or in time (series), see them as heatmaps and extract a feature for every point. About 20 minutes.</p>
+<h1>Tutorial 4 · Maps and time series</h1>
+<p class="lead">Goal: handle files that contain many spectra in space (maps) or in time (series), see them as heatmaps and extract a feature for every point.</p>
+<div class="meta"><span>⏱ about 25 minutes</span><span>Level: beginner (after Tutorial 1)</span><span>Data: your WDF/text files, or the sample set below</span></div>
 
-<h2>What counts as a map or a series</h2>
+<h2>Before you start</h2>
+<p><a class="download" href="/static/help/sample/specflow_sample_series_and_map.zip" download>⬇ Download sample series + map (zip)</a> It contains two synthetic text files: a <b>time series</b> of 20 spectra (the 1580 cm⁻¹ band grows, the 1080 cm⁻¹ band decays) and a 4 × 4 <b>map</b> with a hot spot near position (15, 10) µm.</p>
 <table>
   <tr><th>Kind</th><th>File</th><th>What each spectrum has</th></tr>
   <tr><td>Time series</td><td>3-column <code>.txt</code> (time, x, intensity) or a WDF series</td><td><code>axis_time_s</code></td></tr>
   <tr><td>Map</td><td>4-column <code>.txt</code> (position x, position y, x, intensity) or a WDF map</td><td><code>axis_map_x</code>, <code>axis_map_y</code></td></tr>
 </table>
 <p>One file is enough: when you create a dataset from it, it expands into one spectrum per time point or map position.</p>
+<div class="note">For 3- and 4-column text files SpecFlow still reads the technique from the <b>first header cell</b>, so it must contain a word such as <i>Raman</i> or <i>wavenumber</i> (the sample uses “Raman time (s)” and “Raman X (um)”). WDF files do not need this.</div>
 
 <h2>1. Look at the raw data</h2>
 <ol class="steps">
-  <li><span class="ui">Uploads</span> → upload the file.</li>
-  <li><span class="ui">Raw visualization</span> → select it. For a series, use the <b>Time/Depth points</b> slider; for a map, click cells in <b>Map points</b>. At most 30 traces are drawn.</li>
-  <li>For a series, press <span class="ui">Series heatmap</span> (exactly one file selected): time against wavenumber, colour = intensity. You will see when bands appear, shift or disappear.</li>
+  <li><span class="ui">Uploads</span> → upload both files.</li>
+  <li><span class="ui">Raw visualization</span> → select the <b>timeseries</b> file. Use the <b>Time/Depth points</b> slider; click the bar to add points. For the map file, click cells in <b>Map points</b> (at most 30 traces are drawn).</li>
+  <li>With exactly the time-series file selected, press <span class="ui">Series heatmap</span>.</li>
 </ol>
+<div class="check">Two horizontal bands (near 1080 and 1580 cm⁻¹); the lower one fades and the upper one brightens as time increases.</div>
+<figure><img src="/static/help/img/raw_heatmap.png" alt="Series heatmap" loading="lazy"><figcaption>Series heatmap in Raw visualization: time against wavenumber, colour = intensity.</figcaption></figure>
 
 <h2>2. Build a dataset and pipeline</h2>
-<p>Follow steps 3–4 of <a href="#" data-help="t-vibrational">Tutorial 1</a>. For maps and series, especially:</p>
+<p>Follow steps 3–4 of <a href="#" data-help="t-vibrational">Tutorial 1</a> for each file (a dataset <code>timeseries_run43</code> from the series file, and <code>map_run43</code> from the map file). A short pipeline is enough: <span class="ui">+ Cropping</span> (850–1750), <span class="ui">+ Baseline Correction</span> (asls, 1e6, 0.01), <span class="ui">+ Peak Integration</span> with <b>band1</b> 1050–1110 and <b>band2</b> 1550–1620. Save it, for example as <code>maps_v1</code>.</p>
 <ul>
-  <li>Use <b>Cosmic Ray Removal</b> and a <b>Baseline</b>: the same settings must work for hundreds of spectra, so check several subset spectra from different places and times (<span class="ui">Resample</span>).</li>
-  <li>Add a <b>Low-Signal Filter</b> after Cropping to drop dead or empty acquisitions (choose the threshold from the histogram).</li>
-  <li>End with Peak Integration or Peak Fitting for the band(s) you want to map.</li>
+  <li>Check several subset spectra from different places and times (<span class="ui">Resample</span>): the same settings must work for all.</li>
+  <li>For real maps, add <span class="ui">+ Cosmic Ray Removal</span> and a <span class="ui">+ Low-Signal Filter</span> to drop dead points.</li>
 </ul>
 
 <h2>3. Run and make heatmaps</h2>
 <ol class="steps">
-  <li><span class="ui">Analyze</span> → dataset + pipeline → <span class="ui">Run feature extraction (async)</span> → wait for <i>completed</i>.</li>
-  <li><span class="ui">Section</span> → <b>Heatmaps</b>. Choose a <span class="ui">Feature</span> (for example <code>area_band1</code>).</li>
-  <li><span class="ui">Files</span>: <i>All files</i>, <i>Single file</i> or <i>Multiple selected</i>; <span class="ui">Layout</span>: <i>Individual plots</i> or <i>Subplots</i>; press <span class="ui">Plot heatmaps</span>.</li>
-  <li>A map gives a 2-D colour map; a series gives a single row along time. Click any cell to overlay the processed spectrum from that position underneath; <span class="ui">Clear spectra</span> resets.</li>
+  <li><span class="ui">Analyze</span> → dataset <code>map_run43</code> and pipeline <code>maps_v1</code> → <span class="ui">Run feature extraction (async)</span> → wait for <i>completed</i> and select the run.</li>
+  <li><span class="ui">Section</span> → <b>Heatmaps</b>. Choose <span class="ui">Feature</span> <code>area_band2</code>.</li>
+  <li><span class="ui">Files</span>: <i>All files</i>; <span class="ui">Layout</span>: <i>Individual plots</i>; press <span class="ui">Plot heatmaps</span>.</li>
+  <li>Click any cell to overlay the processed spectrum of that position underneath; <span class="ui">Clear spectra</span> resets.</li>
 </ol>
+<div class="check">A 4 × 4 colour map with one bright region around x = 15, y = 10 µm. For the series dataset, the same section gives a single row along time.</div>
+<figure><img src="/static/help/img/heatmap.png" alt="Map heatmap with clicked spectrum" loading="lazy"><figcaption>Heatmaps section: area of the 1580 cm⁻¹ band over the map. Clicking the bright cell added its processed spectrum underneath.</figcaption></figure>
 <div class="note">If you see “No map/time rows with numeric values were found for this feature”, the feature is empty for those spectra (for example a window outside the cropped range), or the files have no map/time axes.</div>
 
 <h2>4. Time courses and correlations</h2>
 <ul>
-  <li><b>Plots → Parameter vs parameter:</b> X = <code>axis_time_s</code>, Y = a feature, style <i>Line (sorted by X, no error)</i>.</li>
+  <li><b>Plots → Parameter vs parameter:</b> X = <code>axis_time_s</code>, Y = <code>area_band1</code> and <code>area_band2</code>, style <i>Line (sorted by X, no error)</i>. Run the analysis on <code>timeseries_run43</code> first.</li>
   <li>For several files with the same conditions, use <i>Mean ± error bars (group by X)</i>.</li>
   <li><b>Correlation / VIF</b> and <b>PCA / Cluster</b> work as in Tutorial 1; colour PCA scores by <code>axis_time_s</code> to see trajectories.</li>
 </ul>
 
 <h2>5. Whole-spectrum analysis (optional)</h2>
-<p>To analyse the full spectra instead of picked bands, use <b>Spectrum matrix &amp; PCA</b>: add <b>Alignment &amp; Resampling</b> after Cropping so all spectra share one grid, start a matrix job and run <i>Run discrete PCA</i> or <i>k-means (PC embedding)</i>. The loadings are spectra: they show which wavenumbers drive each component. See <a href="#" data-help="r-analyze">Analyze tab</a>.</p>
+<p>To analyse the full spectra instead of picked bands, use <b>Spectrum matrix &amp; PCA</b>: add <span class="ui">+ Alignment &amp; Resampling</span> after Cropping so all spectra share one grid, start a matrix job and run <i>Run discrete PCA</i> or <i>k-means (PC embedding)</i>. The loadings are spectra: they show which wavenumbers drive each component. See <a href="#" data-help="r-analyze#spectrum-matrix-pca">Spectrum matrix &amp; PCA</a>.</p>
 
 <h2>Export</h2>
 <p>The observation table has <code>axis_time_s</code>, <code>axis_map_x</code>, <code>axis_map_y</code>, <code>grid_nx</code>, <code>grid_ny</code> and <code>file_kind</code>, so you can re-plot maps in any external tool.</p>
+<p>Next: <a href="#" data-help="t-reuse">Tutorial 5 · Reuse, share and export</a>.</p>

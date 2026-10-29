@@ -78,7 +78,7 @@ See [docs/MCP_SETUP.md](docs/MCP_SETUP.md) for Cursor `mcp.json`, env/TOML confi
 
 ## In-app help
 
-The **Help** tab in the web UI contains tutorials and a reference manual (including MCP setup). The pages are static HTML in `src/sersflow/api/web/help/pages/`; the page list lives in `src/sersflow/api/web/help/help.js`. Edit a page and reload the browser: no build step.
+The **Help** tab in the web UI contains tutorials and a reference manual (including MCP setup). The pages are static HTML in `src/sersflow/api/web/help/pages/`; the page list lives in `src/sersflow/api/web/help/help.js`. Edit a page and reload the browser: no build step. See `docs/CONTRIBUTING.md` (Help tab) for tests, screenshots and sample data.
 
 ## Debugging checklist (tabs + preprocess embed)
 

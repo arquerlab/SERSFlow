@@ -1,0 +1,66 @@
+<h1>Cheat sheet</h1>
+<p class="lead">One page to keep open. Print it with your browser's Print (Ctrl+P): only the current page is printed.</p>
+
+<h2>The workflow</h2>
+<ol>
+  <li><b>Uploads</b> → upload files, check labels.</li>
+  <li><b>Raw visualization</b> → look at the data.</li>
+  <li><b>Prepare</b> → <i>Create dataset</i> → <i>Create subset</i> → build pipeline → <i>Save to library</i> + <i>Save pipeline</i>.</li>
+  <li><b>Analyze</b> → pick dataset + pipeline → <i>Run feature extraction</i> → wait for <i>completed</i> → statistics and exports.</li>
+</ol>
+
+<h2>Default step order</h2>
+<table>
+  <tr><th>SERS / Raman</th><th>XPS</th></tr>
+  <tr><td>Cropping → Cosmic Ray Removal → Smoothing → Baseline Correction → Normalization → Peak Integration / Peak Fitting → Metric Calculation</td><td>Metadata Filter (region) → Peak Fitting (reference) → X-axis Calibration → Peak Fitting (analysis, active Shirley) → Metric Calculation</td></tr>
+</table>
+<p>A fitting step <b>replaces</b> the spectrum with the model: put anything that needs the data (integration, normalization) before it.</p>
+
+<h2>Good first values</h2>
+<table>
+  <tr><th>Step</th><th>Start with</th></tr>
+  <tr><td>Cropping</td><td>Fill both limits (new steps start empty)</td></tr>
+  <tr><td>Cosmic Ray Removal</td><td><i>zscore</i>, threshold 5, window 5 (odd); run before the baseline</td></tr>
+  <tr><td>Smoothing</td><td>window 11, polyorder 3 (about a third of the narrowest peak)</td></tr>
+  <tr><td>Baseline</td><td>asls, <code>lam</code> 1e6, <code>p</code> 0.01</td></tr>
+  <tr><td>Normalization</td><td><i>max</i> to look, <i>vector (L2)</i> for PCA</td></tr>
+  <tr><td>Outlier Detection</td><td>correlation to median, threshold 0.9–0.98 (needs Alignment &amp; Resampling above)</td></tr>
+  <tr><td>X-axis Calibration (XPS)</td><td>C 1s at 284.8 eV, Fermi edge at 0 eV</td></tr>
+</table>
+
+<h2>Buttons you will press most</h2>
+<table>
+  <tr><th>Where</th><th>Button</th><th>Does</th></tr>
+  <tr><td>Prepare</td><td><span class="ui">Create subset</span> / <span class="ui">Resample</span></td><td>New random preview spectra</td></tr>
+  <tr><td>Prepare</td><td><span class="ui">Run preview plot (subset)</span></td><td>Refresh an “After:” view after editing a parameter</td></tr>
+  <tr><td>Prepare</td><td><span class="ui">Save pipeline</span></td><td>Store the editor in the session (needed before Analyze)</td></tr>
+  <tr><td>Prepare</td><td><span class="ui">Save to library</span></td><td>Named, reusable copy</td></tr>
+  <tr><td>Analyze</td><td><span class="ui">Run feature extraction (async)</span></td><td>Process every spectrum</td></tr>
+  <tr><td>Analyze → Exports</td><td><span class="ui">Observation wide CSV</span></td><td>Features + labels + axes</td></tr>
+</table>
+
+<h2>Plot card views</h2>
+<p><i>Raw (subset)</i> = untouched · <i>Final</i> = whole pipeline · <i>After: &lt;step&gt;</i> = result of one step (internal names: <code>crop</code>, <code>cosmic_ray_removal</code>, <code>noise_savgol</code>, <code>baseline</code>, <code>spectral_integrations</code>, <code>fitting</code>, <code>x_axis_calibration</code>, …).</p>
+
+<h2>Result column names</h2>
+<table>
+  <tr><th>Pattern</th><th>From</th></tr>
+  <tr><td><code>I_&lt;id&gt;</code>, <code>peak_pos_cm1_&lt;id&gt;</code></td><td>Peak Identification</td></tr>
+  <tr><td><code>area_&lt;id&gt;</code></td><td>Peak Integration</td></tr>
+  <tr><td><code>fit_[region_]&lt;peak&gt;_pos|amp|fwhm|area</code>, <code>fit_[region_]gof_*</code></td><td>Peak Fitting</td></tr>
+  <tr><td><code>op_&lt;id&gt;</code></td><td>Metric Calculation</td></tr>
+  <tr><td><code>meta_*</code>, <code>axis_*</code></td><td>Labels and axes</td></tr>
+</table>
+
+<h2>Labels from file names</h2>
+<p><code>sample_785nm_1p_2s_pH7_-0d3VRHE_0d1M_KHCO3_CO2.txt</code> → laser 785 nm, power 1 %, pH 7, −0.3 VRHE, 0.1 M KHCO3, gas CO2. Decimal point = <code>d</code>, <code>.</code> or <code>_</code>.</p>
+
+<h2>Remember</h2>
+<ul>
+  <li>Hide ≠ delete; Purge is permanent.</li>
+  <li>Datasets are single-technique (vibrational or XPS).</li>
+  <li>The Pipeline “Saved” menu loads immediately and discards unsaved edits.</li>
+  <li>PCA defaults to PC2 vs PC3; k-means ignores scaling; re-running PCA overwrites the previous one.</li>
+  <li>Max 50 runs per dataset are kept; download what you need.</li>
+  <li>Press <kbd>/</kbd> in Help to search.</li>
+</ul>

@@ -1,0 +1,87 @@
+<h1>Python client</h1>
+<p class="lead">Everything the web interface does is available over HTTP, and <code>SersflowClient</code> wraps it for Python scripts and notebooks. Use it to process many datasets in a loop, make figures for a paper, or embed SpecFlow in a larger workflow.</p>
+
+<h2>Install and connect</h2>
+<pre><code>pip install -e ".[client]"          # adds httpx
+sersflow-api                          # start the server (or use the one you already run)</code></pre>
+<pre><code>from sersflow.client import SersflowClient
+
+with SersflowClient("http://127.0.0.1:8000") as client:
+    print(client.meta.health())
+    # client.login("user", "password")   # only if the server requires authentication</code></pre>
+<p>The client has one attribute per area, mirroring the API: <code>meta</code>, <code>io</code>, <code>datasets</code>, <code>sessions</code>, <code>pipelines</code> (library), <code>analysis</code>, <code>explore</code>, <code>fitting</code>, <code>plot</code>, <code>xps</code>, <code>metrics</code>, <code>raw</code>.</p>
+
+<h2>Worked example: files to correlation-ready table</h2>
+<p>This is the script behind <a href="#" data-help="t-vibrational">Tutorial 1</a>, with a shorter pipeline. It uploads a folder, creates a dataset, runs the pipeline on every spectrum, exports the observation table and runs PCA.</p>
+<pre><code>from pathlib import Path
+
+from sersflow.api.schemas.analysis import AnalysisRunCreateRequest
+from sersflow.api.schemas.datasets import DatasetCreateRequest, DatasetMetadata
+from sersflow.api.schemas.explore import PCARequest
+from sersflow.api.schemas.pipeline import Pipeline, PipelineStep
+from sersflow.api.schemas.sessions import SessionCreateRequest, SubsetStrategy
+from sersflow.client import SersflowClient
+
+DATA = Path("C:/data/run42")   # folder with your .txt spectra
+
+with SersflowClient("http://127.0.0.1:8000") as client:
+    # 1. upload a folder and create a dataset from it
+    client.io.upload_folder(DATA)
+    paths = [u.relative_path for u in client.io.list_uploads().items if u.filename.endswith(".txt")]
+    ds = client.datasets.create(
+        DatasetCreateRequest(relative_paths=paths, metadata=DatasetMetadata(name="run42"))
+    ).dataset
+
+    # 2. describe the pipeline (the same JSON the web UI saves)
+    pipeline = Pipeline(
+        technique_family="vibrational",
+        steps=[
+            PipelineStep(name="crop", params={"min_x": 450, "max_x": 1800}, step_id="crop"),
+            PipelineStep(name="baseline", params={"method": "asls", "lam": 1e6, "p": 0.01}, step_id="base"),
+            PipelineStep(
+                name="spectral_integrations",
+                params={"windows": [{"id": "band1", "min_cm1": 1050, "max_cm1": 1110, "mode": "signed"}]},
+                step_id="int",
+            ),
+        ],
+    )
+
+    # 3. run it on every spectrum and wait
+    session = client.sessions.create(SessionCreateRequest(dataset_id=ds.dataset_id, pipeline=pipeline))
+    run = client.analysis.create_run(
+        AnalysisRunCreateRequest(
+            dataset_id=ds.dataset_id,
+            session_id=session.session.session_id,
+            subset=SubsetStrategy(kind="all"),
+            async_=True,
+        )
+    )
+    client.analysis.wait_for_analysis_job(run.job_id, timeout_s=600)
+
+    # 4. export the observation table (features + labels + axes)
+    client.analysis.export_observation_to_file(run.run_id, "run42_observation.csv")
+
+    # 5. statistics on the finished run
+    pca = client.explore.pca(PCARequest(analysis_run_id=run.run_id, scaler="standard", n_components=3))
+    print(pca.explore_id)</code></pre>
+<div class="tip">The easiest way to write a pipeline is to build it in the web interface and use <span class="ui">Export current pipeline</span>: the JSON file contains exactly the <code>steps</code> structure used above. The server's list of step names and parameters is at <code>/meta/pipeline-steps</code> (and <a href="#" data-help="r-steps">Pipeline steps A–Z</a>).</div>
+
+<h2>Useful calls</h2>
+<table>
+  <tr><th>Task</th><th>Call</th></tr>
+  <tr><td>List datasets / pipelines</td><td><code>client.datasets.list()</code>, <code>client.pipelines.list()</code></td></tr>
+  <tr><td>Export / import a dataset package</td><td><code>client.datasets.export_to_file(id, path)</code>, <code>client.datasets.import_package(path)</code></td></tr>
+  <tr><td>Features only, long format, Parquet</td><td><code>export_features_to_file</code>, <code>export_observation_to_file(..., layout="long")</code>, <code>(..., format="parquet")</code></td></tr>
+  <tr><td>Manifest of a run</td><td><code>client.analysis.export_manifest(run_id)</code></td></tr>
+  <tr><td>Fit curves for figures</td><td><code>client.analysis.create_fit_curve_job(...)</code>, <code>wait_for_fit_curve_job</code>, <code>export_fit_curve_job_to_file</code></td></tr>
+  <tr><td>Spectrum matrix and FPCA</td><td><code>client.explore.create_matrix_job(...)</code>, <code>fpca_discrete</code>, <code>spectrum_cluster</code></td></tr>
+  <tr><td>Whole-column inspection</td><td><code>client.analysis.observation_columns(run_id, ...)</code></td></tr>
+</table>
+
+<h2>Practical notes</h2>
+<ul>
+  <li>Runs are asynchronous: wait for the job, as above. Only one run executes at a time on the server.</li>
+  <li>The same reproducibility advice applies: save the pipeline JSON and the run manifest next to your results.</li>
+  <li>Errors raise from <code>httpx</code> with the server's message; the interactive API reference at <code>/docs</code> shows every field.</li>
+  <li>An AI assistant can do all of this for you through <a href="#" data-help="r-mcp">MCP</a>.</li>
+</ul>

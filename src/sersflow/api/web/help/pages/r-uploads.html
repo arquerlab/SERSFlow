@@ -14,7 +14,7 @@
 <ul>
   <li>The <b>first non-empty line is always a header</b>. Tabs, commas, semicolons or spaces are detected automatically.</li>
   <li>The <b>number of columns</b> decides the type: <b>2</b> = spectrum (x, intensity); <b>3</b> = time series (time, x, intensity); <b>4</b> = map (position x, position y, x, intensity). Any other count is an error.</li>
-  <li>The <b>first header cell</b> decides the technique: names such as <i>wavenumber</i>, <i>raman shift</i>, <i>cm-1</i> mean vibrational; <i>binding energy</i> or <i>BE</i> means XPS. Anything else produces “Cannot infer technique” when you create the dataset, not at upload.</li>
+  <li>The <b>first header cell</b> decides the technique: names such as <i>wavenumber</i>, <i>raman shift</i>, <i>cm-1</i> mean vibrational; <i>binding energy</i> or <i>BE</i> means XPS. Anything else produces “Cannot infer technique” when you create the dataset, not at upload. <b>This also applies to 3- and 4-column files</b>, where the first column is time or a map position: its header must still contain such a word (for example “Raman time (s)”).</li>
   <li>In time series, rows with negative time are dropped.</li>
 </ul>
 

@@ -24,11 +24,16 @@
   <dd>One execution of a pipeline over the full dataset. It runs in the background and must reach <i>completed</i> before exports and statistics become available.</dd>
 </dl>
 
-<div class="tip">New here? Follow <a href="#" data-help="t-vibrational">Tutorial 1</a> for vibrational data or <a href="#" data-help="t-xps">Tutorial 2</a> for XPS. Each tutorial is a complete path from files to a result. Use the left menu's search box to jump to any term.</div>
+<div class="tip">New here? Follow <a href="#" data-help="t-vibrational">Tutorial 1</a> for vibrational data or <a href="#" data-help="t-xps-calibrate">Tutorials 2 and 3</a> for XPS. Each tutorial is a complete path from files to a result, and has practice data you can download. Use the left menu's search box to jump to any term.</div>
+
+<h2>Practice data</h2>
+<p>Every tutorial works with synthetic sample files, so you can follow along before using your own data:</p>
+<p><a class="download" href="/static/help/sample/specflow_sample_sers.zip" download>⬇ SERS (10 spectra)</a><a class="download" href="/static/help/sample/specflow_sample_series_and_map.zip" download>⬇ Time series + map</a><a class="download" href="/static/help/sample/specflow_sample_xps.zip" download>⬇ XPS C 1s + O 1s</a></p>
 
 <h2>How this guide is organised</h2>
 <ul>
-  <li><b>Tutorials</b> are task-based: follow the numbered steps in order.</li>
+  <li><b>Tutorials</b> are task-based: follow the numbered steps in order. Green “You should see” boxes tell you what to expect.</li>
+  <li><b>Quick help</b>: a <a href="#" data-help="r-cheatsheet">cheat sheet</a>, <a href="#" data-help="r-decisions">which method to use</a> and an <a href="#" data-help="r-faq">FAQ</a>.</li>
   <li><b>Reference manual</b> pages describe every control. Tutorials link to them with “Reference” notes.</li>
   <li>Words in <span class="ui">this style</span> are buttons, tabs or fields exactly as they appear on screen.</li>
 </ul>
@@ -36,8 +41,8 @@
 <h2>Three ways to use SpecFlow</h2>
 <ol>
   <li><b>The web interface</b> (this page): everything in these tutorials.</li>
-  <li><b>An AI assistant</b> through the MCP server: describe the analysis in plain language and the assistant drives SpecFlow for you. See <a href="#" data-help="t-mcp">Tutorial 5</a>.</li>
-  <li><b>Python scripts</b> through the HTTP client (<code>SersflowClient</code>): see <code>README.md</code> and <code>examples/</code> in the repository.</li>
+  <li><b>An AI assistant</b> through the MCP server: describe the analysis in plain language and the assistant drives SpecFlow for you. See <a href="#" data-help="t-mcp">Tutorial 6</a>.</li>
+  <li><b>Python scripts</b> through the HTTP client (<code>SersflowClient</code>): see <a href="#" data-help="r-python">Python client</a>.</li>
 </ol>
 
 <div class="note">Your data stays on the machine that runs the SpecFlow server. Uploads are stored under <code>.sersflow_uploads/</code>, durable dataset copies under <code>.sersflow_data/</code> and large outputs under <code>.sersflow_artifacts/</code>.</div>

@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import Plotly from "plotly.js-dist-min";
 import { coerceDenseHeatmapAxes, publicationLayout, styleTraces } from "../lib/plotlyTheme";
 
@@ -68,6 +68,18 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
   /** Serialize Plotly calls — a cancelled newPlot/react must finish before the next starts. */
   const drawChainRef = useRef<Promise<void>>(Promise.resolve());
   const drawingRef = useRef(false);
+  const clickRef = useRef(onPlotClick);
+  const hoverRef = useRef(onPlotHover);
+  const clickProxy = useRef((ev: any) => clickRef.current?.(ev));
+  const hoverProxy = useRef((ev: any) => hoverRef.current?.(ev));
+  const bindPlotEvents = useCallback((node: HTMLDivElement | null) => {
+    const el = node as any;
+    if (!el || typeof el.on !== "function") return; // not drawn yet; the draw effect binds afterwards
+    el.removeListener?.("plotly_click", clickProxy.current);
+    el.removeListener?.("plotly_hover", hoverProxy.current);
+    if (clickRef.current) el.on("plotly_click", clickProxy.current);
+    if (hoverRef.current) el.on("plotly_hover", hoverProxy.current);
+  }, []);
   useImperativeHandle(ref, () => divRef.current as HTMLDivElement);
 
   const combined = useMemo(() => {
@@ -218,6 +230,7 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
           drawingRef.current = false;
         }
         if (drawId !== drawIdRef.current) return;
+        bindPlotEvents(el);
         constrainPlotDom(el);
         try {
           Plotly.Plots.resize(el);
@@ -247,23 +260,13 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
     return () => ro.disconnect();
   }, []);
 
+  // Plotly adds `on()` only after newPlot, and purge() removes it again (with every listener), so
+  // handlers are (re)bound after each draw. Calling el.on in an effect at mount threw "on is not a function".
   useEffect(() => {
-    const el = divRef.current as any;
-    if (!el || !onPlotClick) return;
-    el.on("plotly_click", onPlotClick);
-    return () => {
-      el.removeListener?.("plotly_click", onPlotClick);
-    };
-  }, [onPlotClick]);
-
-  useEffect(() => {
-    const el = divRef.current as any;
-    if (!el || !onPlotHover) return;
-    el.on("plotly_hover", onPlotHover);
-    return () => {
-      el.removeListener?.("plotly_hover", onPlotHover);
-    };
-  }, [onPlotHover]);
+    clickRef.current = onPlotClick;
+    hoverRef.current = onPlotHover;
+    bindPlotEvents(divRef.current);
+  }, [onPlotClick, onPlotHover, bindPlotEvents]);
 
   const wrapClass = [className ? `${className}-wrap` : null, "plot-host-wrap"].filter(Boolean).join(" ");
   return (

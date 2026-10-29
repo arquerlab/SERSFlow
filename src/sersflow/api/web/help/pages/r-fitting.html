@@ -1,7 +1,7 @@
 <h1>Peak fitting</h1>
 <p class="lead">The Peak Fitting step describes a model (a sum of peaks and optionally a background), fits it to each spectrum and writes the fitted parameters as feature columns.</p>
 
-<h2>What the step does</h2>
+<h2 id="step-fitting">What the step does</h2>
 <ul>
   <li><b>Engines:</b> vibrational pipelines use SciPy bounded <code>curve_fit</code>; XPS pipelines use <code>lmfit</code>, which adds the Vary checkboxes, parameter links, active backgrounds and the Fermi edge.</li>
   <li><b>It replaces the spectrum with the fitted curve.</b> Any later step (Normalization, Integration…) sees the model, not the data. Points outside the fit window keep their original values.</li>
@@ -46,6 +46,10 @@
   <tr><td>XPS only: Shirley / Tougaard / Slope background (active)</td><td>see <a href="#" data-help="r-xps">XPS specifics</a></td><td>Backgrounds fitted together with the peaks</td></tr>
   <tr><td>XPS only: Fermi edge (valence)</td><td><code>amplitude</code>, <code>center</code>, <code>sigma</code>, <code>temperature_K</code>, <code>const</code></td><td>Valence band / energy calibration</td></tr>
 </table>
+
+<h2>Model parameters on this server</h2>
+<p>Generated from the server, so names and start values are always current.</p>
+<div data-gen="fit-models"><p class="hint">Loading the live list…</p></div>
 
 <h2>Links (XPS only)</h2>
 <p>In the <b>Link</b> column choose a target “&lt;peak&gt;.&lt;parameter&gt;” and a relation: <i>equal</i>, <i>scale</i> (× factor) or <i>offset</i> (+ value). The linked parameter then follows its target and is no longer free. Typical use for a doublet: FWHM <i>equal</i> to the main component, position <i>offset</i> by the spin–orbit splitting. A scale link on amplitude fixes a <i>height</i> ratio, not an area ratio.</p>

@@ -1,0 +1,73 @@
+<h1>Tutorial 3 · XPS: fit and compare</h1>
+<p class="lead">Goal: fit the O 1s region at several potentials, compute the hydroxide fraction and see how it changes. Continues <a href="#" data-help="t-xps-calibrate">Tutorial 2</a>.</p>
+<div class="meta"><span>⏱ about 35 minutes</span><span>Level: intermediate</span><span>Data: the sample XPS files, or your own region</span></div>
+
+<h2>Before you start</h2>
+<ul>
+  <li>You have the sample XPS files uploaded and know the charging shift from Part 2 (about −0.65 eV).</li>
+  <li>The sample O 1s spectra contain a <b>lattice oxygen</b> peak, a <b>hydroxide</b> peak whose share grows with potential, and a small <b>water</b> peak. As measured they sit 0.65 eV too high (near 530.45, 532.05 and 533.65 eV); after calibration they are at 529.8, 531.4 and 533.0 eV.</li>
+</ul>
+
+<h2>1. Create the O 1s dataset</h2>
+<ol class="steps">
+  <li><span class="ui">Prepare</span> → tick the eight <b>O 1s</b> files, name the dataset <code>xps_O1s</code>, <span class="ui">Create dataset</span>, then <span class="ui">Create subset</span>.</li>
+  <li>Pipeline type should show <b>XPS</b>.</li>
+</ol>
+
+<h2>2. Calibrate with the offset you measured</h2>
+<ol class="steps">
+  <li>Add <span class="ui">+ X-axis Calibration</span>, <b>method</b> <i>fixed offset</i>, <b>offset</b> −0.65.</li>
+  <li>View → <b>After: x_axis_calibration</b>: the main O 1s peak should now be near 529.8 eV.</li>
+</ol>
+<div class="note">Using a measured offset on another region is only valid if both regions charged the same way. For real samples, check against a second reference (Fermi edge or another core level).</div>
+
+<h2>3. Choose the background (one, not both)</h2>
+<p>For this tutorial use the <b>active</b> background inside the fit. Do <b>not</b> add a static Shirley baseline step as well: SpecFlow refuses to save a pipeline with both. See <a href="#" data-help="r-xps#backgrounds-static-or-active-never-both">Backgrounds: static or active</a>.</p>
+
+<h2>4. Fit O 1s</h2>
+<ol class="steps">
+  <li>Add <span class="ui">+ Peak Fitting</span>. <b>Region / band</b>: <i>O1s</i>. <b>Fit window</b>: 526 to 536 eV.</li>
+  <li>Add a <b>Shirley background (active)</b> component.</li>
+  <li>Add three <b>GL</b> components with these <b>Peak names</b> and centres (bounds ±0.7 eV; FWHM 1.3, bounds 0.5–3; m 30; amplitude <i>Auto</i>):
+    <table>
+      <tr><th>Peak name</th><th>Centre (eV)</th><th>Meaning</th></tr>
+      <tr><td><code>lattice</code></td><td>529.8</td><td>Metal–oxygen</td></tr>
+      <tr><td><code>OH</code></td><td>531.4</td><td>Hydroxide</td></tr>
+      <tr><td><code>H2O</code></td><td>533.0</td><td>Adsorbed water (small)</td></tr>
+    </table></li>
+  <li>View → <b>After: fitting</b> → <span class="ui">Run preview plot (subset)</span>. Check the residual of several spectra.</li>
+</ol>
+<div class="check">Three peaks and a smooth background follow the data; the residual looks like noise. The <code>OH</code> peak is larger at higher potential than at 0 V.</div>
+<details>
+  <summary>Own data with a recipe</summary>
+  <p>For real regions, try the recipe picker (<a href="#" data-help="r-xps#fitting-recipes">Fitting recipes</a>): search the compound, select your pass energy, choose <b>Replace</b>. Then adjust centres, bounds and links. For doublets, set the FWHM link to <i>equal</i> and the position link to <i>offset</i> by the spin–orbit splitting.</p>
+</details>
+<div class="warn">If a fit fails the spectrum passes through unchanged and its fit columns end up empty. You will check this in step 7.</div>
+
+<h2>5. Derive a metric</h2>
+<p>Add <span class="ui">+ Metric Calculation</span>: <b>id</b> <code>oh_frac</code>, <b>formula</b>:</p>
+<pre><code>{fit_O1s_OH_area}/({fit_O1s_lattice_area}+{fit_O1s_OH_area}+{fit_O1s_H2O_area})</code></pre>
+<p>The variable list may show these names slightly differently (see the caution on <a href="#" data-help="r-features#step-metric">Metric Calculation</a>). If the metric is empty after the run, compare with the real column names in the exported table.</p>
+
+<h2>6. Save and run</h2>
+<ol class="steps">
+  <li>Name the pipeline <code>xps_O1s_v1</code>: <span class="ui">Save to library</span>, <span class="ui">Save pipeline</span>.</li>
+  <li><span class="ui">Analyze</span> → dataset <code>xps_O1s</code> and that pipeline → <span class="ui">Run feature extraction (async)</span> → wait for <i>completed</i>.</li>
+</ol>
+
+<h2>7. Check the fits, then compare</h2>
+<ol class="steps">
+  <li><b>Plots</b> → <b>Fit diagnostics</b>: choose the fitting step, tick several spectra (up to 10). Look at RMSE, R² and the residuals. A failed fit would show an error here.</li>
+  <li><b>Plots</b> → <b>Parameter vs parameter</b>: X = <code>meta_potential_V</code>, Y = <code>op_oh_frac</code>, style <i>Line</i>.</li>
+  <li><b>Exports</b> → <b>Fitting curves</b> → <i>data + fit + components + residuals</i> → <span class="ui">All PNG zip</span> for figures; <span class="ui">Observation wide CSV</span> for the table.</li>
+</ol>
+<div class="check">The hydroxide fraction rises from about 0.25 at 0 V to about 0.7 at 1.4 V: the trend built into the sample data.</div>
+
+<h2>What you learned</h2>
+<ul>
+  <li>XPS needs the right order: calibrate, then fit.</li>
+  <li>Choose one background strategy.</li>
+  <li>Name your peaks: the names end up in every result column (<code>fit_O1s_OH_area</code>).</li>
+  <li>Always check fits (Fit diagnostics) before trusting numbers.</li>
+</ul>
+<p>Next: <a href="#" data-help="t-reuse">Tutorial 5 · Reuse, share and export</a>. Questions about fitting models? <a href="#" data-help="r-fitting">Peak fitting</a> and <a href="#" data-help="r-decisions">Which method should I use?</a></p>
