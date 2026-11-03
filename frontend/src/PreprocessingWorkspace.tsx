@@ -165,6 +165,7 @@ import { runExplorePlot as runExplorePlotCore } from "./preprocess/explorePlotRu
 import { LowSignalFilterEditor } from "./preprocess/LowSignalFilterEditor";
 import { OutlierDetectionEditor } from "./preprocess/OutlierDetectionEditor";
 import { MetadataFilterEditor } from "./preprocess/MetadataFilterEditor";
+import { AggregateSpectraEditor, defaultAggregateSpectraParams } from "./preprocess/AggregateSpectraEditor";
 import { TickDropdown } from "./preprocess/TickDropdown";
 import { selectionMixesTechniques } from "./preprocess/uploadXpsRegionGroups";
 import { dualXpsBackgroundConflict } from "./preprocess/xpsBackgroundGuard";
@@ -1117,6 +1118,11 @@ export default function PreprocessingWorkspace() {
         name: "metadata_filter",
         enabled: true,
         params: { filters: [], action: "keep" },
+      },
+      group_average: {
+        name: "group_average",
+        enabled: true,
+        params: defaultAggregateSpectraParams() as unknown as Record<string, unknown>,
       },
       outlier_detection: {
         name: "outlier_detection",
@@ -2597,6 +2603,16 @@ export default function PreprocessingWorkspace() {
                       onChange={(next) => setSelectedStepParams(next)}
                       ensurePipelineSaved={ensurePipelineSaved}
                       datasetSpectra={datasetQ.data?.dataset?.spectra ?? []}
+                    />
+                  );
+                }
+
+                if (selectedStep.name === "group_average") {
+                  return (
+                    <AggregateSpectraEditor
+                      datasetId={datasetId}
+                      params={selectedStep.params ?? {}}
+                      onChange={(next) => setSelectedStepParams(next)}
                     />
                   );
                 }

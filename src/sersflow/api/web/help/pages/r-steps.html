@@ -30,16 +30,16 @@
 <h2 id="step-derivative">Derivative</h2>
 <p><b>order</b> (default 1): repeated numerical gradient. It amplifies noise, so smooth first.</p>
 
-<h2 id="step-group">Group / Average</h2>
-<p>Averages spectra of the cohort into <b>group averages</b>. Steps <i>above</i> it run on every spectrum first (baseline, calibration, normalization...); steps <i>below</i> it run on the averages. Averaging after baseline correction is not the same as averaging raw spectra, so place the step where you want it.</p>
+<h2 id="step-group">Aggregate Spectra</h2>
+<p>Combines spectra of the cohort into <b>aggregated spectra</b>. Steps <i>above</i> it run on every spectrum first (baseline, calibration, normalization...); steps <i>below</i> it run on the averages. Aggregating after baseline correction is not the same as aggregating raw spectra, so place the step where you want it.</p>
 <ul>
-  <li><b>method</b>: <i>all</i> (one average), <i>by label</i> (spectra sharing the values of <b>group_by</b>, comma-separated, e.g. <code>current_density, sample</code>), or <i>by range</i> (bins of <b>range_width</b> on a numeric or timestamp <b>range_label</b>, e.g. every 300 s on <code>time_s</code>, or 20 on <code>acquired_at</code>; <b>range_origin</b> empty starts at the smallest value).</li>
-  <li><b>split_by_region</b> (default on): never mixes XPS regions; C1s and O1s always give separate averages.</li>
-  <li><b>reducer</b>: <i>mean</i> (default) or <i>median</i>. <b>min_group_size</b> drops groups with fewer members.</li>
-  <li>Each average is a registered spectrum (role <code>group_mean</code>) with a stable id: same dataset, grouping rule and group key give the same id on every rerun, whatever the upstream steps. Its labels keep the grouped values, give numeric labels as mean plus <code>_min</code>/<code>_max</code> (<code>mixed</code> for differing text), and add <code>n_averaged</code> and the member ids.</li>
+  <li><b>method</b>: <i>all</i> (one average), <i>by label</i> (spectra sharing the values of <b>group by</b>: tick one or more labels from the dataset, e.g. <code>current_density</code>, <code>sample</code>), or <i>by range</i> (bins of <b>range width</b> on a numeric or timestamp label chosen under <b>range label</b>, e.g. every 300 s on <code>time_s</code>, or 20 on <code>acquired_at</code>; <b>range origin</b> empty starts at the smallest value).</li>
+  <li><b>split by region</b> (default on): never mixes XPS regions; C1s and O1s always give separate averages.</li>
+  <li><b>reducer</b>: <i>cumulative</i> (default, the sum of the members), <i>mean</i> or <i>median</i>. <b>min group size</b> drops groups with fewer members.</li>
+  <li>Each aggregated spectrum is a registered spectrum (role <code>group_mean</code>) with a stable id: same dataset, grouping rule and group key give the same id on every rerun, whatever the upstream steps. Its labels keep the grouped values, give numeric labels as mean plus <code>_min</code>/<code>_max</code> (<code>mixed</code> for differing text), and add <code>n_averaged</code> and the member ids.</li>
   <li>Members with different x axes are interpolated onto the first member's axis (overlap only).</li>
 </ul>
-<div class="warn">Steps below the group cannot point back at steps above it (<b>Input = After step</b>, or a Normalization baseline step); the run stops with an error. Fitting or intensity steps above the group are ignored for the averages.</div>
+<div class="warn">Steps below the group cannot point back at steps above it (<b>Input = After step</b>, or a Normalization baseline step); the run stops with an error. Fitting or intensity steps above the group are ignored for the aggregated spectra.</div>
 
 <h2 id="step-lowsignal">Low-Signal Filter</h2>
 <p>Removes whole spectra that are too weak (dead acquisitions).</p>

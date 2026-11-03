@@ -17,7 +17,7 @@ from sersflow.core.pipeline.hashing import canonical_json, sha256_hex
 from sersflow.core.spectrum import XY
 
 GroupMode = Literal["all", "by_label", "by_range"]
-Reducer = Literal["mean", "median"]
+Reducer = Literal["cumulative", "mean", "median"]
 
 SPECTRUM_ROLE_GROUP_MEAN = "group_mean"
 REGION_LABEL = "xps_region"
@@ -34,7 +34,7 @@ class GroupAverageParams:
     range_width: float | None = None
     range_origin: float | None = None
     split_by_region: bool = True
-    reducer: Reducer = "mean"
+    reducer: Reducer = "cumulative"
     min_group_size: int = 1
 
     @staticmethod
@@ -47,8 +47,10 @@ class GroupAverageParams:
         if isinstance(gb, str):
             gb = gb.split(",")
         group_by = tuple(str(k).strip() for k in gb if str(k).strip())
-        reducer = str(p.get("reducer") or "mean").strip().lower()
-        if reducer not in ("mean", "median"):
+        reducer = str(p.get("reducer") or "cumulative").strip().lower()
+        if reducer == "sum":
+            reducer = "cumulative"
+        if reducer not in ("cumulative", "mean", "median"):
             raise ValueError(f"group_average: unknown reducer {reducer!r}")
         width = p.get("range_width")
         origin = p.get("range_origin")
@@ -194,8 +196,8 @@ def _group_members(
     return out
 
 
-def reduce_spectra(xys: Sequence[XY], reducer: Reducer = "mean") -> tuple[XY, list[str]]:
-    """Average spectra; differing x grids are interpolated onto the first spectrum's grid (overlap only)."""
+def reduce_spectra(xys: Sequence[XY], reducer: Reducer = "cumulative") -> tuple[XY, list[str]]:
+    """Combine spectra (sum / mean / median); differing x grids are interpolated onto the first spectrum's grid (overlap only)."""
     if not xys:
         raise ValueError("reduce_spectra: no spectra")
     warnings: list[str] = []
@@ -223,7 +225,12 @@ def reduce_spectra(xys: Sequence[XY], reducer: Reducer = "mean") -> tuple[XY, li
         warnings.append("members do not fully overlap; result cropped to the common x range")
         ref_x = ref_x[valid]
         stack = stack[:, valid]
-    y = np.median(stack, axis=0) if reducer == "median" else np.mean(stack, axis=0)
+    if reducer == "median":
+        y = np.median(stack, axis=0)
+    elif reducer == "mean":
+        y = np.mean(stack, axis=0)
+    else:  # cumulative: sum of the members
+        y = np.sum(stack, axis=0)
     return XY(x=ref_x, y=y), warnings
 
 

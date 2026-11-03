@@ -63,7 +63,7 @@ export const STEPS = [
   { name: "Cosmic Ray Removal", target: "r-steps#step-cosmic", words: "cosmic ray spike despike zscore derivative remove", desc: "Find narrow spikes and replace them (vibrational only)." },
   { name: "Cropping", target: "r-steps#step-crop", words: "crop trim range min_x max_x restrict", desc: "Keep only a chosen x range." },
   { name: "Derivative", target: "r-steps#step-derivative", words: "derivative gradient order", desc: "First or higher-order spectral derivative." },
-  { name: "Group / Average", target: "r-steps#step-group", words: "group average mean median bin range time current density sample region replicate merge combine", desc: "Average spectra per group (label value or time/number bin)." },
+  { name: "Aggregate Spectra", target: "r-steps#step-group", words: "aggregate group average sum cumulative mean median bin range time current density sample region replicate merge combine", desc: "Sum, average or median spectra per group (label value or time/number bin)." },
   { name: "Low-Signal Filter", target: "r-steps#step-lowsignal", words: "low signal filter weak dead threshold qc", desc: "Remove whole spectra that are too weak." },
   { name: "Metadata Filter", target: "r-steps#step-metadata", words: "metadata filter label region select keep mask branch", desc: "Keep only spectra whose labels match, on this branch." },
   { name: "XAS edge normalization", target: "r-steps#step-xas", words: "xas nexafs exafs xanes edge step pre-edge post-edge e0 normalize flatten", desc: "Pre-edge subtraction and unit edge-step scaling for XAS / NEXAFS." },

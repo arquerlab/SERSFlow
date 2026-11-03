@@ -46,7 +46,7 @@ def _pipe() -> Pipeline:
             PipelineStep(name="crop", params={"min_x": 100.0, "max_x": 300.0}, step_id="1"),
             PipelineStep(
                 name="group_average",
-                params={"mode": "by_label", "group_by": "current_density"},
+                params={"mode": "by_label", "group_by": "current_density", "reducer": "mean"},
                 step_id="2",
             ),
             PipelineStep(name="crop", params={"min_x": 150.0, "max_x": 300.0}, step_id="3"),

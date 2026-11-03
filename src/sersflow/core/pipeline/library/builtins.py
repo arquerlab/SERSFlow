@@ -204,12 +204,13 @@ _register(
 _register(
     StepSpec(
         id="group_average",
-        label="Group / Average",
+        label="Aggregate Spectra",
         category="qc",
         palette_group="Data Preparation",
         description=(
-            "Average spectra of the cohort: all together, per label value (sample, current density, ...), "
-            "or per numeric/time bin. Steps before it run per spectrum; steps after it run on the averages."
+            "Aggregate spectra of the cohort (cumulative sum, mean or median): all together, per label value "
+            "(sample, current density, ...), or per numeric/time bin. Steps before it run per spectrum; "
+            "steps after it run on the aggregated spectra."
         ),
         impl=None,
         ui=ui.GROUP_AVERAGE,
