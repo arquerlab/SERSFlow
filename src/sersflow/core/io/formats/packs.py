@@ -27,6 +27,7 @@ _AXIS_FIELDS: tuple[FilterFieldDef, ...] = (
 )
 
 _XPS_STRUCTURAL: tuple[FilterFieldDef, ...] = (
+    FilterFieldDef("technique", "Technique (XPS / XAS)", "categorical", "structural"),
     FilterFieldDef("xps_region", "XPS region", "categorical", "structural"),
     FilterFieldDef("spectrum_role", "Spectrum role", "categorical", "structural"),
     FilterFieldDef("xps_species", "Species", "categorical", "structural"),

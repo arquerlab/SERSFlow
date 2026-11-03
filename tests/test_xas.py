@@ -160,3 +160,101 @@ def test_xps_only_multiblock_file_stays_xps(tmp_path: Path) -> None:
     _write_sle(p)
     loaded = [("x.sle", p, load_dataset(p))]
     assert _dataset_family(loaded, _request("x.sle", xps_regions=["C1s"]), ["C1s"]) == "xps"
+
+
+def test_technique_filter_resolves_a_mixed_selection(tmp_path: Path) -> None:
+    """Everything selected from a mixed .sle is ambiguous; a technique choice makes it valid."""
+    p = tmp_path / "mixed.sle"
+    _write_sle(p)
+    ds = load_dataset(p)
+    loaded = [("mixed.sle", p, ds)]
+
+    with pytest.raises(ValueError, match="Choose a Technique"):
+        _dataset_family(loaded, _request("mixed.sle"), None)
+    assert _dataset_family(loaded, _request("mixed.sle", technique="xps"), None) == "xps"
+    assert _dataset_family(loaded, _request("mixed.sle", technique="xas"), None) == "xas"
+
+    from sersflow.api.services.datasets_service import _select_block_indices
+
+    for tech, expected in (("xps", {"XPS"}), ("xas", {"XAS"})):
+        req = _request("mixed.sle", technique=tech)
+        keep = _select_block_indices(ds, "mixed.sle", req, None, file_family="xps")
+        assert keep and {ds.meta[i]["technique"] for i in keep} == expected
+    # The technique filter composes with region filters.
+    req = _request("mixed.sle", technique="xps", xps_regions=["OKedge_TEY"])
+    assert _select_block_indices(ds, "mixed.sle", req, ["OKedge_TEY"], file_family="xps") == []
+
+
+def test_technique_is_a_raw_visualization_filter_field(tmp_path: Path) -> None:
+    from sersflow.api.routers.plot import _multi_field_catalog
+
+    p = tmp_path / "mixed.sle"
+    _write_sle(p)
+    blocks = [{"index": i, **m} for i, m in enumerate(load_dataset(p).meta)]
+    fields = {f["id"]: f for f in _multi_field_catalog(blocks, technique_family="xps")}
+    assert fields["technique"]["kind"] == "categorical"
+    assert fields["technique"]["values"] == ["XAS", "XPS"]
+    assert "acquisition_index" in fields and "replicate_index" in fields
+
+
+def test_technique_filter_separates_vibrational_from_xps_and_xas(tmp_path: Path) -> None:
+    """A Raman text file + a mixed .sle: each technique can be selected on its own."""
+    sle = tmp_path / "mixed.sle"
+    _write_sle(sle)
+    raman = tmp_path / "raman.txt"
+    raman.write_text("Raman shift\tIntensity\n" + "\n".join(f"{400 + 10 * i}\t{i}" for i in range(20)))
+    loaded = [("mixed.sle", sle, load_dataset(sle)), ("raman.txt", raman, load_dataset(raman))]
+
+    def req(**kw) -> DatasetCreateRequest:
+        return DatasetCreateRequest(
+            relative_paths=["mixed.sle", "raman.txt"], metadata=DatasetMetadata(name="t"), vms_spectrum_mode="all", **kw
+        )
+
+    with pytest.raises(ValueError, match="Choose a Technique"):
+        _dataset_family(loaded, req(), None)
+    assert _dataset_family(loaded, req(technique="vibrational"), None) == "vibrational"
+    assert _dataset_family(loaded, req(technique="xps"), None) == "xps"
+    assert _dataset_family(loaded, req(technique="xas"), None) == "xas"
+
+    # Only a vibrational file: asking for XAS finds nothing, with a clear error.
+    with pytest.raises(ValueError, match="None of the selected files contain xas"):
+        _dataset_family(loaded[1:], req(technique="xas"), None)
+
+
+def test_create_dataset_end_to_end_with_technique_choice(tmp_path: Path, monkeypatch) -> None:
+    from sersflow.api.services.datasets_service import create_dataset_from_uploads
+
+    monkeypatch.setenv("SERSFLOW_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setenv("SERSFLOW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SERSFLOW_UPLOAD_DIR", str(tmp_path / "up"))
+    batch = tmp_path / "up" / "b1"
+    batch.mkdir(parents=True)
+    _write_sle(batch / "mixed.sle")
+    (batch / "raman.txt").write_text("Raman shift\tIntensity\n" + "\n".join(f"{400 + 10 * i}\t{i}" for i in range(20)))
+    paths = ["b1/mixed.sle", "b1/raman.txt"]
+
+    def create(**kw):
+        return create_dataset_from_uploads(
+            DatasetCreateRequest(
+                relative_paths=paths, metadata=DatasetMetadata(name="t"), vms_spectrum_mode="all", **kw
+            ),
+            owner_user_id="dev",
+        )
+
+    with pytest.raises(ValueError, match="Choose a Technique"):
+        create()
+
+    rec, skipped = create(technique="xas")
+    assert rec.metadata.technique_family == "xas"
+    assert {s.relative_path for s in rec.spectra} == {"b1/mixed.sle"} and len(rec.spectra) == 2  # TEY + PEY average
+    assert [s["relative_path"] for s in skipped] == ["b1/raman.txt"]
+    assert "technique is not xas" in skipped[0]["reason"]
+
+    rec, skipped = create(technique="vibrational")
+    assert rec.metadata.technique_family == "vibrational"
+    assert [s.relative_path for s in rec.spectra] == ["b1/raman.txt"]
+    assert [s["relative_path"] for s in skipped] == ["b1/mixed.sle"]
+
+    rec, _ = create(technique="xps")
+    assert rec.metadata.technique_family == "xps"
+    assert {s.relative_path for s in rec.spectra} == {"b1/mixed.sle"} and len(rec.spectra) == 4

@@ -8,7 +8,7 @@
   <tr><td>Renishaw WDF</td><td><code>.wdf</code></td><td>Vibrational (Raman/SERS)</td><td>Single spectra, series, maps.</td></tr>
   <tr><td>VAMAS / CasaXPS</td><td><code>.vms</code></td><td>XPS</td><td>Many regions (“blocks”) per file.</td></tr>
   <tr><td>NeXus XPS (HDF5)</td><td><code>.nxs</code>, <code>.nx5</code></td><td>XPS</td><td>Many regions; regions without a binding-energy axis are skipped (the number skipped is shown in the list).</td></tr>
-  <tr><td>SPECS Prodigy</td><td><code>.sle</code></td><td>XPS and XAS</td><td>Many spectra per file, each with its scans. XPS detector channels are re-aligned with the stored calibration. NEXAFS scans become TEY and PEY regions (corrected for the incident-flux monitor). A file mixing both is fine, but one dataset holds only one technique: pick only the XPS regions or only the NEXAFS regions. Other scan modes are skipped and counted in the list.</td></tr>
+  <tr><td>SPECS Prodigy</td><td><code>.sle</code></td><td>XPS and XAS</td><td>Many spectra per file, each with its scans. XPS detector channels are re-aligned with the stored calibration. NEXAFS scans become TEY and PEY regions (corrected for the incident-flux monitor). A file mixing both is fine, but one dataset holds only one technique: when creating a dataset choose <b>Technique</b> (Vibrational, XPS or XAS) and only spectra of that technique are kept, whether the files mix techniques or one file holds several. <b>Technique</b> is also a filter in the uploads list and in raw visualization. Other scan modes are skipped and counted in the list.</td></tr>
 </table>
 
 <h3>Text file rules</h3>

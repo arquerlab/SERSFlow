@@ -199,6 +199,8 @@ export function createDatasetFromUploads(
   options?: {
     vms_spectrum_mode?: "averages" | "individuals" | "all";
     xps_regions?: string[];
+    /** Keep only one technique from a mixed selection (per block for multi-technique files). */
+    technique?: "vibrational" | "xps" | "xas";
     record_indices?: Record<string, number[]>;
   }
 ) {
@@ -216,6 +218,9 @@ export function createDatasetFromUploads(
   }
   if (Array.isArray(options?.xps_regions) && options.xps_regions.length) {
     body.xps_regions = options.xps_regions;
+  }
+  if (options?.technique === "vibrational" || options?.technique === "xps" || options?.technique === "xas") {
+    body.technique = options.technique;
   }
   if (options?.record_indices && Object.keys(options.record_indices).length) {
     body.record_indices = options.record_indices;

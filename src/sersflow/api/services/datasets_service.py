@@ -98,9 +98,13 @@ def _select_block_indices(
     rel: str,
     payload: DatasetCreateRequest,
     regions: list[str] | None,
+    *,
+    file_family: str,
 ) -> list[int]:
-    """Block indices of a multi-spectrum file that match mode / region / explicit selection."""
+    """Block indices of a multi-spectrum file that match mode / technique / region / explicit selection."""
     keep = filter_meta_indices(ds.meta, payload.vms_spectrum_mode)
+    if payload.technique:
+        keep = [i for i in keep if (block_technique_family(ds.meta[i]) or file_family) == payload.technique]
     keep = filter_indices_by_xps_regions(ds.meta, keep, regions)
     if payload.record_indices and rel in payload.record_indices:
         wanted = {int(i) for i in (payload.record_indices.get(rel) or []) if int(i) >= 0}
@@ -121,12 +125,14 @@ def _dataset_family(
     for rel, p, ds in loaded:
         fmt_family = infer_technique_family(p)
         if isinstance(ds, MultiSpectrumDataset):
-            for i in _select_block_indices(ds, rel, payload, regions):
+            for i in _select_block_indices(ds, rel, payload, regions, file_family=fmt_family):
                 fam = block_technique_family(ds.meta[i]) or fmt_family
                 by_family.setdefault(fam, []).append(rel)
-        else:
+        elif not payload.technique or fmt_family == payload.technique:
             by_family.setdefault(fmt_family, []).append(rel)
     present = [f for f in TECHNIQUE_FAMILIES if by_family.get(f)]
+    if not present and payload.technique:
+        raise ValueError(f"None of the selected files contain {payload.technique} spectra.")
     if not present:
         # All blocks filtered out: let the per-file loop report the real reason.
         return assert_homogeneous_technique_families([p for _, p, _ in loaded])
@@ -137,8 +143,8 @@ def _dataset_family(
             parts.append(f"{fam}: {', '.join(files[:5])}" + (f" (+{len(files) - 5} more)" if len(files) > 5 else ""))
         raise ValueError(
             "Cannot mix vibrational, XPS and XAS spectra in one dataset. " + "; ".join(parts)
-            + ". Select only one technique (for multi-technique files such as .sle, pick only the "
-            "XPS regions or only the XAS/NEXAFS regions)."
+            + ". Choose a Technique (XPS or XAS) when creating the dataset; multi-technique files such "
+            "as .sle then keep only the blocks of that technique."
         )
     return present[0]
 
@@ -190,6 +196,13 @@ def create_dataset_from_uploads(
 
     for rel, _p, ds in loaded:
         try:
+            if (
+                payload.technique
+                and not isinstance(ds, MultiSpectrumDataset)
+                and infer_technique_family(_p) != payload.technique
+            ):
+                skipped.append({"relative_path": rel, "reason": f"technique is not {payload.technique}"})
+                continue
             if isinstance(ds, SpectrumDataset):
                 spectra.append(
                     SpectrumRef(
@@ -201,10 +214,12 @@ def create_dataset_from_uploads(
                 continue
 
             if isinstance(ds, MultiSpectrumDataset):
-                keep = _select_block_indices(ds, rel, payload, regions)
+                keep = _select_block_indices(ds, rel, payload, regions, file_family=infer_technique_family(_p))
                 wanted = payload.record_indices.get(rel) if payload.record_indices else None
                 if not keep:
                     reason = "No multi-spectrum blocks matched vms_spectrum_mode"
+                    if payload.technique:
+                        reason += f" / technique={payload.technique}"
                     if regions:
                         reason += f" / xps_regions={regions!r}"
                     if wanted is not None:

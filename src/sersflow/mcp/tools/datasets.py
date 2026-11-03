@@ -27,8 +27,13 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         vms_spectrum_mode: Literal["averages", "individuals", "all"] = "individuals",
         xps_regions: list[str] | None = None,
         record_indices: dict[str, list[int]] | None = None,
+        technique: Literal["vibrational", "xps", "xas"] | None = None,
     ) -> str:
-        """POST /datasets — create dataset from upload relative_paths (VAMAS/XPS options supported)."""
+        """POST /datasets — create dataset from upload relative_paths (VAMAS/XPS options supported).
+
+        technique keeps only vibrational, XPS or XAS spectra from a mixed selection (per block for
+        multi-technique files such as .sle, per file otherwise).
+        """
 
         def _run():
             if not relative_paths:
@@ -47,6 +52,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 vms_spectrum_mode=vms_spectrum_mode,
                 xps_regions=xps_regions,
                 record_indices=record_indices,
+                technique=technique,
             )
             resp = ctx.get_client().datasets.create(req)
             return summarize.dataset_get(resp)

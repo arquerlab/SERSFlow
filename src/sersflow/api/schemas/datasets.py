@@ -54,6 +54,13 @@ class DatasetCreateRequest(BaseModel):
     """
     xps_regions: list[str] | None = None
     """
+    Optional technique restriction for a mixed selection: only spectra of this technique
+    are kept. Multi-block files that hold several techniques (e.g. a Prodigy ``.sle`` with XPS
+    and NEXAFS scans) are filtered per block; any other file is kept or dropped as a whole
+    by its own technique family. Applied before ``xps_regions``.
+    """
+    technique: Literal["vibrational", "xps", "xas"] | None = None
+    """
     Optional explicit multi-spectrum block indices per relative_path.
     When provided for a path, kept indices are intersected with this list
     (after mode / region filters). Paths omitted use mode/regions only.

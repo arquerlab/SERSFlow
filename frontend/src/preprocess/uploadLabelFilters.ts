@@ -12,6 +12,7 @@ export type LabelFilter = {
 export type LabelSelections = Record<string, string[]>;
 
 export const FILTER_KEYS = [
+  "technique",
   "xps_region",
   "sample",
   "gas",
@@ -51,6 +52,18 @@ export function visibleFilterKeys(
   const family = String(techniqueFamily || "").toLowerCase();
   const out: FilterKey[] = [];
   for (const key of FILTER_KEYS) {
+    if (key === "technique") {
+      // Only useful when the uploads span more than one technique.
+      const seen = new Set<string>();
+      for (const item of items) {
+        for (const row of effectiveLabelRows(item.labels)) {
+          const v = labelValueAsString(row, "technique");
+          if (v) seen.add(v);
+        }
+      }
+      if (seen.size > 1) out.push(key);
+      continue;
+    }
     if (XPS_STRUCTURAL_KEYS.has(key)) {
       if ((family === "xps" || family === "xas") && present.has(key)) out.push(key);
       continue;

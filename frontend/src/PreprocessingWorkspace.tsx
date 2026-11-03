@@ -17,6 +17,13 @@ import { acceptFromFormats, useFormatsCatalog, useMergedFormatUi } from "./prepr
 import { usePipelineStepsCatalog, stepSpecsFromCatalog } from "./preprocess/hooks/usePipelineStepsCatalog";
 import { UPLOADS_LIST_QUERY_KEY, useUploadsList } from "./preprocess/hooks/useUploadsList";
 import {
+  blockTechnique,
+  effectiveTechniques,
+  getBlockSpectra,
+  TECHNIQUE_LABELS,
+  type EffectiveTechnique,
+} from "./preprocess/uploadBlockSpectra";
+import {
   clearAllDatasets,
   createDatasetFromUploads,
   createPipelineLibraryEntry,
@@ -167,7 +174,6 @@ import { OutlierDetectionEditor } from "./preprocess/OutlierDetectionEditor";
 import { MetadataFilterEditor } from "./preprocess/MetadataFilterEditor";
 import { AggregateSpectraEditor, defaultAggregateSpectraParams } from "./preprocess/AggregateSpectraEditor";
 import { TickDropdown } from "./preprocess/TickDropdown";
-import { selectionMixesTechniques } from "./preprocess/uploadXpsRegionGroups";
 import { dualXpsBackgroundConflict } from "./preprocess/xpsBackgroundGuard";
 import { AnalyzeContextBanner } from "./preprocess/components/AnalyzeContextBanner";
 import { PipelineCard } from "./preprocess/components/PipelineCard";
@@ -198,6 +204,8 @@ export default function PreprocessingWorkspace() {
   const [selectedRecordIndices, setSelectedRecordIndices] = useState<Record<string, number[]>>({});
   const [newDatasetName, setNewDatasetName] = useState("");
   const [createXpsRegions, setCreateXpsRegions] = useState<string[]>([]);
+  /** Technique restriction for multi-technique uploads (at most one of "XPS" / "XAS"). */
+  const [createTechnique, setCreateTechnique] = useState<string[]>([]);
   const [regionSubsetPicks, setRegionSubsetPicks] = useState<string[]>([]);
   const formatsQ = useFormatsCatalog();
   const { ui: selectedFormatUi } = useMergedFormatUi(selectedUploads);
@@ -478,16 +486,42 @@ export default function PreprocessingWorkspace() {
     return null;
   }, [selectedUploads, uploadsMetaQ.data?.items, datasetQ.data?.dataset?.spectra]);
 
-  const selectionMixedTechniques = useMemo(() => {
+  /**
+   * Techniques among the selected uploads: a multi-technique file (e.g. .sle) contributes the
+   * techniques of its blocks, any other file its own family (vibrational / XPS / XAS).
+   */
+  const createTechniqueKeys = useMemo(() => {
     const items = uploadsMetaQ.data?.items ?? [];
-    return selectionMixesTechniques(selectedUploads, items);
+    const set = new Set<EffectiveTechnique>();
+    for (const p of selectedUploads) {
+      const it = items.find((x) => x.relative_path === p);
+      if (it) for (const t of effectiveTechniques(it)) set.add(t);
+    }
+    return (["vibrational", "xps", "xas"] as const).filter((t) => set.has(t));
   }, [selectedUploads, uploadsMetaQ.data?.items]);
+  const createTechniqueOptions = createTechniqueKeys.map((t) => TECHNIQUE_LABELS[t]);
+  const createTechniqueValue: EffectiveTechnique | undefined = createTechniqueKeys.find(
+    (t) => TECHNIQUE_LABELS[t] === createTechnique[0]
+  );
+  /** A mixed selection needs an explicit technique unless specific blocks were ticked. */
+  const techniqueChoiceNeeded =
+    createTechniqueKeys.length > 1 && !createTechniqueValue && !selectedHasExplicitBlocks;
 
   const createRegionOptions = useMemo(() => {
     const items = uploadsMetaQ.data?.items ?? [];
     const set = new Set<string>();
     for (const p of selectedUploads) {
       const it = items.find((x) => x.relative_path === p);
+      const blocks = Object.values(getBlockSpectra(it?.labels));
+      if (createTechniqueValue && blocks.length) {
+        // Only regions that have at least one block of the chosen technique.
+        for (const meta of blocks) {
+          if (blockTechnique(meta) !== createTechniqueValue) continue;
+          const t = typeof meta.xps_region === "string" ? meta.xps_region.trim() : "";
+          if (t) set.add(t);
+        }
+        continue;
+      }
       for (const r of it?.xps_regions ?? []) {
         const t = String(r || "").trim();
         if (t) set.add(t);
@@ -495,7 +529,15 @@ export default function PreprocessingWorkspace() {
     }
     const regions = [...set].sort();
     return [ALL_VALENCE_BANDS_REGION, ...regions];
-  }, [selectedUploads, uploadsMetaQ.data?.items]);
+  }, [selectedUploads, uploadsMetaQ.data?.items, createTechniqueValue]);
+
+  // Drop region ticks that the chosen technique no longer offers.
+  useEffect(() => {
+    setCreateXpsRegions((prev) => {
+      const next = prev.filter((r) => createRegionOptions.includes(r));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [createRegionOptions]);
 
   const xpsRegionsQ = useQuery({
     queryKey: ["dataset-xps-regions", datasetId],
@@ -509,17 +551,16 @@ export default function PreprocessingWorkspace() {
       name?: string;
       vms_spectrum_mode?: "averages" | "individuals" | "all";
       xps_regions?: string[];
+      technique?: EffectiveTechnique;
       record_indices?: Record<string, number[]>;
     }) => {
-      if (selectionMixedTechniques) {
-        throw new Error("Cannot mix vibrational and XPS files in one dataset. Deselect one technique first.");
-      }
       return createDatasetFromUploads(
         args.paths,
         args.name?.trim() ? { name: args.name.trim() } : undefined,
         {
           ...(args.vms_spectrum_mode ? { vms_spectrum_mode: args.vms_spectrum_mode } : {}),
           ...(args.xps_regions?.length ? { xps_regions: args.xps_regions } : {}),
+          ...(args.technique ? { technique: args.technique } : {}),
           ...(args.record_indices && Object.keys(args.record_indices).length
             ? { record_indices: args.record_indices }
             : {}),
@@ -1437,13 +1478,29 @@ export default function PreprocessingWorkspace() {
                 // block ticks imply "all" for those paths. Files with only averages still load them.
                 vms_spectrum_mode: selectedHasMulti ? (selectedHasExplicitBlocks ? "all" : "individuals") : undefined,
                 xps_regions: selectedHasMulti && createXpsRegions.length ? createXpsRegions : undefined,
+                technique: createTechniqueValue,
                 record_indices: selectedHasExplicitBlocks ? selectedRecordIndices : undefined,
               })
             }
-            disabled={selectedUploads.length === 0 || createFromUploadsM.isPending || selectionMixedTechniques}
+            disabled={selectedUploads.length === 0 || createFromUploadsM.isPending || techniqueChoiceNeeded}
+            title={
+              techniqueChoiceNeeded
+                ? "The selection mixes techniques: choose which Technique to keep first."
+                : undefined
+            }
           >
             {createFromUploadsM.isPending ? "Creating…" : "Create dataset"}
           </button>
+          {createTechniqueOptions.length > 1 ? (
+              <TickDropdown
+                label="Technique"
+                options={createTechniqueOptions}
+                selected={createTechnique}
+                emptySummary={`Choose ${createTechniqueOptions.join(" or ")}`}
+                title="The selection mixes techniques (including files that hold several, such as .sle). A dataset holds one technique: choose which to keep."
+                onChange={(next) => setCreateTechnique(next.length > 1 ? [next[next.length - 1]] : next)}
+              />
+          ) : null}
           {selectedHasMulti && selectedFormatUi.show_region_filter ? (
               <TickDropdown
                 label="Regions"
@@ -1491,9 +1548,9 @@ export default function PreprocessingWorkspace() {
             Some NeXus regions were skipped (non–binding-energy axes). Check upload labels for details.
           </div>
         ) : null}
-        {selectionMixedTechniques ? (
+        {techniqueChoiceNeeded ? (
           <div className="hint" style={{ color: "var(--danger, #b00020)", marginTop: "4px" }}>
-            Selection mixes XPS and vibrational files. Deselect one technique before creating a dataset.
+            Selection mixes {createTechniqueOptions.join(" and ")} spectra. Choose a Technique above to keep one.
           </div>
         ) : null}
         {selectedUploads.length === 1 ? (

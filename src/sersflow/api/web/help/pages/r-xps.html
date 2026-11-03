@@ -3,7 +3,7 @@
 
 <h2>Data</h2>
 <ul>
-  <li>Load <code>.vms</code> (VAMAS/CasaXPS) <code>.nxs</code> (NeXus) or <code>.sle</code> (SPECS Prodigy) files. A Prodigy file that also holds NEXAFS scans lists them as separate regions (e.g. <code>OKedge_TEY</code>); they make an XAS dataset, so select either the XPS regions or the NEXAFS ones. Each region is a <b>block</b>; the dataset keeps the region name for every spectrum.</li>
+  <li>Load <code>.vms</code> (VAMAS/CasaXPS) <code>.nxs</code> (NeXus) or <code>.sle</code> (SPECS Prodigy) files. A Prodigy file that also holds NEXAFS scans lists them as separate regions (e.g. <code>OKedge_TEY</code>); they make an XAS dataset, so use the <b>Technique</b> choice (XPS or XAS) when creating the dataset. Each region is a <b>block</b>; the dataset keeps the region name for every spectrum.</li>
   <li>A whole-file selection keeps the <b>averaged</b> spectra only. Tick block rows to include replicates (<a href="#" data-help="r-datasets">datasets</a>).</li>
   <li>Choose <b>XPS</b> as pipeline type (automatic when the dataset is XPS). A dataset cannot mix XPS and vibrational files.</li>
   <li>Use a <b>Metadata Filter</b> on <code>xps_region</code> to work on one region, and use <b>Input = Initial</b> for a second branch on another region.</li>

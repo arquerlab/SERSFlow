@@ -15,6 +15,53 @@ export function getBlockSpectra(labels: Record<string, unknown> | null | undefin
   return out;
 }
 
+/** Technique a block declares (``meta.technique``), mirroring the backend's token mapping. */
+export function blockTechnique(meta: Record<string, unknown> | null | undefined): "xps" | "xas" | null {
+  const t = String(meta?.technique ?? "").trim().toLowerCase();
+  if (t === "xps") return "xps";
+  if (t === "xas" || t === "nexafs") return "xas";
+  return null;
+}
+
+export type EffectiveTechnique = "vibrational" | "xps" | "xas";
+
+export const TECHNIQUE_LABELS: Record<EffectiveTechnique, string> = {
+  vibrational: "Vibrational",
+  xps: "XPS",
+  xas: "XAS",
+};
+
+/**
+ * Techniques an upload contributes: those its blocks declare (multi-technique files such as .sle),
+ * otherwise the file's own technique family (vibrational / XPS / XAS).
+ */
+export function effectiveTechniques(item: {
+  labels?: Record<string, unknown> | null;
+  technique_family?: string | null;
+}): EffectiveTechnique[] {
+  const fromBlocks = new Set<EffectiveTechnique>();
+  for (const meta of Object.values(getBlockSpectra(item.labels))) {
+    const t = blockTechnique(meta);
+    if (t) fromBlocks.add(t);
+  }
+  if (fromBlocks.size) return (["vibrational", "xps", "xas"] as const).filter((t) => fromBlocks.has(t));
+  const fam = item.technique_family;
+  return fam === "vibrational" || fam === "xps" || fam === "xas" ? [fam] : [];
+}
+
+/**
+ * Copy of an upload whose path-level labels carry ``technique`` when its blocks do not, so the
+ * technique filter also separates vibrational files from XPS / XAS ones.
+ */
+export function withEffectiveTechnique<
+  T extends { labels?: Record<string, unknown> | null; technique_family?: string | null },
+>(item: T): T {
+  const techs = effectiveTechniques(item);
+  const hasBlockTechnique = Object.values(getBlockSpectra(item.labels)).some((m) => blockTechnique(m));
+  if (hasBlockTechnique || techs.length !== 1) return item;
+  return { ...item, labels: { ...(item.labels || {}), technique: TECHNIQUE_LABELS[techs[0]] } };
+}
+
 export function pathLabelsWithoutInternal(
   labels: Record<string, unknown> | null | undefined
 ): Record<string, unknown> {

@@ -9,6 +9,7 @@ import {
   majorityTechniqueFamily,
   selectionMixesTechniques,
 } from "../preprocess/uploadXpsRegionGroups";
+import { withEffectiveTechnique } from "../preprocess/uploadBlockSpectra";
 import {
   FILTER_KEYS,
   distinctLabelValues,
@@ -143,7 +144,7 @@ export const UploadDatasetPicker = forwardRef<
       const byPath = new Map(fetched.map((x) => [x.relative_path, x]));
       const pruned = pruneSelectionKeys(selectedRef.current, existing, byPath);
       selectedRef.current = pruned;
-      setItems(fetched);
+      setItems(fetched.map(withEffectiveTechnique));
       setSelected(pruned);
       setTotalCount(total);
       const paths = parentPathsFromSelectionKeys(pruned);
@@ -165,7 +166,7 @@ export const UploadDatasetPicker = forwardRef<
     const byPath = new Map(fetched.map((x) => [x.relative_path, x]));
     const pruned = pruneSelectionKeys(selectedRef.current, existing, byPath);
     selectedRef.current = pruned;
-    setItems(fetched);
+    setItems(fetched.map(withEffectiveTechnique));
     setSelected(pruned);
     setTotalCount(total);
     const paths = parentPathsFromSelectionKeys(pruned);
