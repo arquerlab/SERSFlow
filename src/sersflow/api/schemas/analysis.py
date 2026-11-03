@@ -49,6 +49,7 @@ class AnalysisRunCreateResponse(BaseModel):
     job_id: str | None = None
     status: str
     message: str | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AnalysisRunSummary(BaseModel):
@@ -128,14 +129,53 @@ class ObservationSchemaResponse(BaseModel):
 
 class FittingPreviewRequest(BaseModel):
     spectrum_ids: list[str] = Field(min_length=1, max_length=50)
-    fitting_step_num: int
+    fitting_step_num: int | None = Field(
+        default=None,
+        description="1-based step number from /fitting-steps (NOT the s{N}_ column prefix).",
+    )
+    fitting_step_index: int | None = Field(
+        default=None,
+        description="0-based pipeline step index = the N in observation columns s{N}_... "
+        "(alternative to fitting_step_num; give exactly one).",
+    )
     return_curve: bool = True
 
 
 class FitCurveJobCreateRequest(BaseModel):
-    fitting_step_num: int
+    fitting_step_num: int | None = Field(
+        default=None,
+        description="1-based step number from /fitting-steps (NOT the s{N}_ column prefix).",
+    )
+    fitting_step_index: int | None = Field(
+        default=None,
+        description="0-based pipeline step index = the N in observation columns s{N}_... "
+        "(alternative to fitting_step_num; give exactly one).",
+    )
     content: Literal["data_fit_resid", "data_fit_components_resid"] = "data_fit_components_resid"
     format: Literal["csv", "png", "svg"] = "csv"
+
+
+class SweepAxis(BaseModel):
+    component_id: str = Field(min_length=1)
+    key: str = Field(min_length=1, description="Parameter key of the component, e.g. fwhm, pos, amp, m.")
+    values: list[float] = Field(min_length=1, max_length=200)
+
+
+class SweepJobCreateRequest(BaseModel):
+    """
+    Fix parameters of one fitting step at every point of a grid and refit the run's spectra.
+
+    The grid is the Cartesian product of the axes. A swept parameter is fixed (vary=False) at each value;
+    parameters linked to it follow. Results: poll/download through the fit-curve job endpoints
+    (``sweep_summary.csv`` + ``sweep_points.csv`` in the zip).
+    """
+
+    fitting_step_num: int | None = Field(default=None, description="1-based, from /fitting-steps.")
+    fitting_step_index: int | None = Field(default=None, description="0-based = N in s{N}_ columns.")
+    grid: list[SweepAxis] = Field(min_length=1, max_length=4)
+    spectrum_ids: list[str] | None = Field(
+        default=None, description="Subset of the run's spectra; default = every spectrum the step applies to."
+    )
 
 
 class StepOutputsJobCreateRequest(BaseModel):

@@ -172,9 +172,11 @@ export type FittingParamLink = {
   source_key: string;
   target_component_id: string;
   target_key: string;
-  mode: "equal" | "scale" | "offset";
+  /** area_ratio (amp links only): dependent AREA = ratio x driver AREA, whatever fwhm / shape each peak has. */
+  mode: "equal" | "scale" | "offset" | "area_ratio";
   scale?: number;
   offset?: number;
+  ratio?: number;
 };
 
 export function isPeakComponentType(ct: string): ct is FittingPeakType {
@@ -311,7 +313,7 @@ export type FittingEditorParams = {
   components: FittingComponentEditor[];
   /** XPS core-level / region label for this fitting step (naming + metadata). */
   xps_region?: string;
-  /** XPS/lmfit parameter links (equal, scale, or offset). */
+  /** XPS/lmfit parameter links (equal, scale, offset, or area_ratio for amp). */
   param_links?: FittingParamLink[];
   /** Provenance: first applied XPS fitting recipe id (backward compat). */
   recipe_id?: string;
@@ -709,7 +711,13 @@ function normalizeParamLinks(raw: unknown): FittingParamLink[] {
     const r = row as Record<string, unknown>;
     const modeRaw = String(r.mode ?? "equal").trim().toLowerCase();
     const mode: FittingParamLink["mode"] =
-      modeRaw === "scale" ? "scale" : modeRaw === "offset" ? "offset" : "equal";
+      modeRaw === "scale"
+        ? "scale"
+        : modeRaw === "offset"
+          ? "offset"
+          : modeRaw === "area_ratio"
+            ? "area_ratio"
+            : "equal";
     const link: FittingParamLink = {
       source_component_id: String(r.source_component_id ?? ""),
       source_key: String(r.source_key ?? ""),
@@ -722,6 +730,9 @@ function normalizeParamLinks(raw: unknown): FittingParamLink[] {
     }
     if (mode === "offset" && typeof r.offset === "number" && Number.isFinite(r.offset)) {
       link.offset = r.offset;
+    }
+    if (mode === "area_ratio" && typeof r.ratio === "number" && Number.isFinite(r.ratio)) {
+      link.ratio = r.ratio;
     }
     if (link.source_component_id && link.source_key && link.target_component_id && link.target_key) {
       out.push(link);

@@ -100,6 +100,29 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
         return await tool_call(ctx, _run)
 
+    @mcp.tool(name="get_datasets_casa_fits")
+    async def get_datasets_casa_fits(dataset_id: str, region: str | None = None, compact: bool = True) -> str:
+        """
+        GET /datasets/{dataset_id}/casa-fits — CasaXPS fit components stored in the dataset's VAMAS files.
+
+        Per spectrum: experiment_id, current density, xps_region and the components (name, lineshape, m,
+        area, fwhm, KE and be_eV = hv - KE, constraint info). `region` filters (e.g. "Co2p").
+        compact=true drops the per-component constraint dicts (keeps linked_to indices).
+        """
+
+        def _run() -> dict[str, Any]:
+            data = ctx.get_client().datasets.casa_fits(dataset_id, region=region)
+            if compact:
+                for it in data.get("items", []):
+                    for c in it.get("components", []):
+                        for k in ("area_constraint", "fwhm_constraint", "position_constraint"):
+                            q = c.pop(k, None)
+                            if q and q.get("linked_to") is not None:
+                                c[k.replace("_constraint", "_linked_to")] = q["linked_to"]
+            return {"ok": True, **data}
+
+        return await tool_call(ctx, _run)
+
     @mcp.tool(name="get_datasets_filter_fields")
     async def get_datasets_filter_fields(dataset_id: str) -> str:
         """GET /datasets/{dataset_id}/filter-fields."""

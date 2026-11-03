@@ -220,7 +220,7 @@ def _amp_links(out: dict) -> dict[str, dict]:
     return {
         lk["source_component_id"]: lk
         for lk in out["param_links"]
-        if lk["source_key"] == "amp" and lk["mode"] == "scale"
+        if lk["source_key"] == "amp" and lk["mode"] in ("scale", "area_ratio")
     }
 
 
@@ -248,8 +248,9 @@ def test_satellites_locked_to_main_peak_by_default() -> None:
         i_ref = _flat_index(out, "peak_1", "amp")
         assert out["vary"][i_sat] is False  # driven by the link
         assert out["vary"][i_ref] is True
-        # link scale equals the seeded amplitude ratio (areas 1.6 and 26.1 vs 46.6)
-        assert lk["scale"] == pytest.approx(out["p0"][i_sat] / out["p0"][i_ref], rel=1e-9)
+        # link keeps the literature AREA ratio (areas 1.6 and 26.1 vs 46.6), whatever fwhm / m the fit uses
+        assert lk["mode"] == "area_ratio"
+        assert lk["ratio"] == pytest.approx({"peak_3": 1.6, "peak_4": 26.1}[sat] / 46.6, rel=1e-9)
     # non-satellite multiplet peak stays free
     assert out["vary"][_flat_index(out, "peak_2", "amp")] is True
     assert any("satellite" in w for w in out["warnings"])
@@ -307,6 +308,13 @@ def test_locked_satellite_ratio_survives_a_fit() -> None:
             initial_guess_mode="default",
         )
     )
-    i_ref = _flat_index(out, "peak_1", "amp")
-    i_sat = _flat_index(out, "peak_4", "amp")
-    assert res.p_opt[i_sat] / res.p_opt[i_ref] == pytest.approx(out["p0"][i_sat] / out["p0"][i_ref], rel=1e-6)
+    from sersflow.core.preprocess.peak_area import gl_area_per_height
+
+    def area(cid: str) -> float:
+        return float(
+            res.p_opt[_flat_index(out, cid, "amp")]
+            * gl_area_per_height(res.p_opt[_flat_index(out, cid, "fwhm")], res.p_opt[_flat_index(out, cid, "m")])
+        )
+
+    assert area("peak_4") / area("peak_1") == pytest.approx(26.1 / 46.6, rel=1e-6)
+    assert area("peak_3") / area("peak_1") == pytest.approx(1.6 / 46.6, rel=1e-6)

@@ -34,6 +34,7 @@ _XPS_STRUCTURAL: tuple[FilterFieldDef, ...] = (
     FilterFieldDef("block_name", "Block name", "categorical", "structural"),
     FilterFieldDef("excitation_energy_eV", "Excitation energy (eV)", "numeric", "structural"),
     FilterFieldDef("replicate_index", "Replicate index", "numeric", "structural"),
+    FilterFieldDef("acquisition_index", "Acquisition # (repeat of region)", "numeric", "structural"),
 )
 
 

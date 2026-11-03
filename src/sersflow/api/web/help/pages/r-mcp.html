@@ -34,6 +34,7 @@
   <tr><td><code>api_health_timeout_s</code></td><td>60</td><td>How long to wait for a started API to answer.</td></tr>
   <tr><td><code>upload_confirm_bytes</code></td><td>104857600 (100 MiB)</td><td>Uploads, dataset imports and plot files above this need <code>confirm=true</code>.</td></tr>
   <tr><td><code>fitting_confirm_max_components</code></td><td>20</td><td>A pipeline whose fitting step has more components than this needs <code>confirm=true</code>.</td></tr>
+  <tr><td><code>sweep_confirm_max_points</code></td><td>60</td><td>A parameter-sweep grid with more points than this needs <code>confirm=true</code> (each point refits every selected spectrum).</td></tr>
   <tr><td><code>tabular_max_rows</code> / <code>tabular_max_cols</code></td><td>50 / 30</td><td>Default size of what <code>read_tabular_file</code> returns to the model.</td></tr>
   <tr><td><code>analysis_async_default</code></td><td>true</td><td>Whether analysis runs and matrix jobs start in the background by default.</td></tr>
 </table>

@@ -573,3 +573,57 @@ def test_plot_export_requires_confirm_when_large(tmp_path: Path) -> None:
     assert ok.get("ok") is True
     assert Path(ok["path"]).is_file()
 
+
+def test_post_analysis_runs_rejects_session_plus_inline_pipeline(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(404, json={"detail": request.url.path})
+
+    ctx = _ready_ctx(tmp_path, httpx.MockTransport(handle))
+    mcp = create_server(ctx)
+    fn = _tool_fn(mcp, "post_analysis_runs")
+    raw = asyncio.run(
+        fn(
+            dataset_id="ds_1",
+            session_id="sess_1",
+            pipeline={"steps": []},
+            subset={"kind": "all"},
+        )
+    )
+    data = json.loads(raw)
+    assert data.get("ok") is False
+    assert "not both" in json.dumps(data)
+    assert calls == []  # rejected before any HTTP call
+
+
+def test_post_analysis_sweep_jobs_gate_and_post(tmp_path: Path) -> None:
+    seen: list[tuple[str, dict]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/analysis/runs/r1/sweep-jobs":
+            seen.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(202, json={"job_id": "fcjob_1", "status": "queued"})
+        return httpx.Response(404, json={"detail": request.url.path})
+
+    ctx = _ready_ctx(tmp_path, httpx.MockTransport(handle))
+    mcp = create_server(ctx)
+    fn = _tool_fn(mcp, "post_analysis_sweep_jobs")
+
+    big = [{"component_id": "p1", "key": "fwhm", "values": [float(i) for i in range(1, 100)]}]
+    blocked = json.loads(asyncio.run(fn(run_id="r1", grid=big, fitting_step_index=0)))
+    assert blocked["needs_confirm"] is True and blocked["reason"] == "sweep_exceeds_threshold"
+    assert seen == []  # nothing sent without approval
+
+    ok = json.loads(
+        asyncio.run(
+            fn(
+                run_id="r1",
+                grid=[{"component_id": "p1", "key": "fwhm", "values": [2.0, 3.0]}],
+                fitting_step_index=0,
+            )
+        )
+    )
+    assert ok["ok"] is True and ok["job_id"] == "fcjob_1" and ok["grid_points"] == 2
+    assert seen[0][1]["fitting_step_index"] == 0

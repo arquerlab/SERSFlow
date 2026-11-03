@@ -51,6 +51,7 @@ def list_fitting_steps_for_pipeline(pipeline: Any) -> list[dict[str, Any]]:
     steps = getattr(pipeline, "steps", None) or []
     sns = assign_pipeline_step_nums(steps)
     out: list[dict[str, Any]] = []
+    n_fitting = sum(1 for s in steps if getattr(s, "enabled", True) and s.name == "fitting")
     for i, step in enumerate(steps):
         if not getattr(step, "enabled", True) or step.name != "fitting":
             continue
@@ -60,6 +61,8 @@ def list_fitting_steps_for_pipeline(pipeline: Any) -> list[dict[str, Any]]:
             {
                 "step_num": int(sns[i]),
                 "step_index": i,
+                # Prefix of this step's feature columns in the observation (empty with a single fitting step).
+                "column_prefix": f"s{i}_" if n_fitting > 1 else "",
                 "xps_region": str(region).strip() if region is not None and str(region).strip() else None,
                 "n_components": len(params.get("components") or [])
                 if isinstance(params.get("components"), list)

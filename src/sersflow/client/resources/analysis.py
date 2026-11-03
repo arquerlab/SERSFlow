@@ -16,6 +16,7 @@ from sersflow.api.schemas.analysis import (
     FitCurveJobStatusResponse,
     FittingPreviewRequest,
     ObservationSchemaResponse,
+    SweepJobCreateRequest,
 )
 from sersflow.client.http import raise_for_response, request_bytes, request_json, stream_response_to_file
 from sersflow.client.polling import (
@@ -117,6 +118,10 @@ class AnalysisResource(_Base):
         data = request_json(self._root.http, "GET", f"/analysis/runs/{run_id}/observation-columns", params=params)
         return dict(data) if isinstance(data, dict) else {}
 
+    def run_pipeline(self, run_id: str) -> dict[str, Any]:
+        data = request_json(self._root.http, "GET", f"/analysis/runs/{run_id}/pipeline")
+        return dict(data) if isinstance(data, dict) else {}
+
     def fitting_steps(self, run_id: str) -> dict[str, Any]:
         data = request_json(self._root.http, "GET", f"/analysis/runs/{run_id}/fitting-steps")
         return dict(data) if isinstance(data, dict) else {}
@@ -137,6 +142,15 @@ class AnalysisResource(_Base):
             self._root.http,
             "POST",
             f"/analysis/runs/{run_id}/fit-curve-jobs",
+            json_body=dump_json(payload),
+        )
+        return FitCurveJobCreateResponse.model_validate(data)
+
+    def create_sweep_job(self, run_id: str, payload: SweepJobCreateRequest) -> FitCurveJobCreateResponse:
+        data = request_json(
+            self._root.http,
+            "POST",
+            f"/analysis/runs/{run_id}/sweep-jobs",
             json_body=dump_json(payload),
         )
         return FitCurveJobCreateResponse.model_validate(data)

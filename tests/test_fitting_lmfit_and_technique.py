@@ -421,3 +421,71 @@ def test_xps_fit_reports_params_at_bound_and_health() -> None:
     assert d.resid_lag1_autocorr is not None and d.resid_lag1_autocorr > 0.5  # structured: peak underfit
     assert d.resid_mean_edge_lo is not None and d.resid_mean_edge_hi is not None
     assert d.bg_gt_data_frac is not None
+
+
+def _two_peak_problem(links, *, m_dep_free: bool = False):
+    from sersflow.core.preprocess.fitting import FitComponent, FitProblem
+
+    rng = np.random.default_rng(11)
+    x = np.linspace(300.0, 280.0, 400)
+    from sersflow.core.preprocess.fitting_specs import build_component_function
+
+    g, _ = build_component_function("gl")
+    # driver: area-ish 1000 (fwhm 1.5), dependent: broader (fwhm 3.0), true area ratio 0.4
+    y = 20.0 + g(x, 290.0, 300.0, 1.5, 30.0) + g(x, 286.0, 300.0 * 0.4 * 1.5 / 3.0, 3.0, 30.0)
+    y = y + rng.normal(0.0, 0.3, x.size)
+    return FitProblem(
+        x=x,
+        y=y,
+        components=[
+            FitComponent(component_type="gl", component_id="main"),
+            FitComponent(component_type="gl", component_id="sat"),
+        ],
+        p0=[290.0, 100.0, 1.2, 30.0, 286.0, 50.0, 2.5, 30.0],
+        bounds_lower=[285.0, 0.0, 0.3, 0.0, 280.0, 0.0, 0.3, 0.0],
+        bounds_upper=[295.0, None, 6.0, 100.0, 295.0, None, 8.0, 100.0],
+        vary=[True, True, True, False, True, False, True, False],
+        param_links=links,
+        technique_family="xps",
+    )
+
+
+def test_xps_param_link_area_ratio_keeps_area_ratio_with_free_widths() -> None:
+    pytest.importorskip("lmfitxps")
+    from sersflow.core.preprocess.peak_area import gl_area_per_height
+
+    prob = _two_peak_problem(
+        [
+            {
+                "source_component_id": "sat",
+                "source_key": "amp",
+                "target_component_id": "main",
+                "target_key": "amp",
+                "mode": "area_ratio",
+                "ratio": 0.4,
+            }
+        ]
+    )
+    res = fit_curve(prob)
+    p = res.p_opt
+    a_main = p[1] * gl_area_per_height(p[2], p[3])
+    a_sat = p[5] * gl_area_per_height(p[6], p[7])
+    assert a_sat / a_main == pytest.approx(0.4, rel=1e-6)  # exact because the link is an area ratio
+    assert p[6] > p[2]  # fwhm of the satellite stayed free and came out broader
+
+
+def test_xps_param_link_area_ratio_validation() -> None:
+    pytest.importorskip("lmfitxps")
+    bad_key = {
+        "source_component_id": "sat",
+        "source_key": "fwhm",
+        "target_component_id": "main",
+        "target_key": "fwhm",
+        "mode": "area_ratio",
+        "ratio": 0.4,
+    }
+    with pytest.raises(ValueError, match="amp"):
+        fit_curve(_two_peak_problem([bad_key]))
+    bad_ratio = {**bad_key, "source_key": "amp", "target_key": "amp", "ratio": -1.0}
+    with pytest.raises(ValueError, match="ratio"):
+        fit_curve(_two_peak_problem([bad_ratio]))

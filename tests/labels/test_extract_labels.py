@@ -140,3 +140,21 @@ def test_plain_v_stored_with_ref_v() -> None:
     labels = extract_labels(path, parent_levels=0)
     assert labels.get("potential_V") == pytest.approx(-0.365)
     assert labels.get("potential_ref") == "V"
+
+
+@pytest.mark.parametrize(
+    ("label", "amps"),
+    [
+        ("05mA", 0.0005),  # leading zero = decimal point dropped: 0.5 mA
+        ("5mA", 0.005),
+        ("1mA", 0.001),
+        ("10mA", 0.01),
+        ("25mA", 0.025),
+        ("100mA", 0.1),
+        ("OCP_calW4f_calCo2p_v11", 0.0),
+        ("0mA", 0.0),
+    ],
+)
+def test_current_leading_zero_and_ocp_labels(label: str, amps: float) -> None:
+    val, _is_density = extract_current(label)
+    assert val == pytest.approx(amps)

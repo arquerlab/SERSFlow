@@ -34,6 +34,7 @@ class McpConfig:
     api_health_poll_s: float = 0.5
     upload_confirm_bytes: int = 104_857_600
     fitting_confirm_max_components: int = 20
+    sweep_confirm_max_points: int = 60
     tabular_max_rows: int = 50
     tabular_max_cols: int = 30
     analysis_async_default: bool = True
@@ -79,6 +80,8 @@ class McpConfig:
             raise ValueError("upload_confirm_bytes must be >= 0")
         if self.fitting_confirm_max_components < 0:
             raise ValueError("fitting_confirm_max_components must be >= 0")
+        if self.sweep_confirm_max_points < 0:
+            raise ValueError("sweep_confirm_max_points must be >= 0")
         if self.tabular_max_rows < 1:
             raise ValueError("tabular_max_rows must be >= 1")
         if self.tabular_max_cols < 1:

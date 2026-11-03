@@ -378,6 +378,7 @@ def multi_info(relative_path: str, request: Request) -> dict[str, Any]:
                 "xps_transition": md.get("xps_transition"),
                 "block_name": md.get("block_name") or block_lab.get("block_name"),
                 "replicate_index": md.get("replicate_index"),
+                "acquisition_index": md.get("acquisition_index"),
                 "excitation_energy_eV": md.get("excitation_energy_eV"),
                 "technique": md.get("technique"),
                 "acquired_at": md.get("acquired_at"),

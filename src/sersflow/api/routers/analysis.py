@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import math
 import sqlite3
 import zipfile
@@ -24,6 +25,7 @@ from sersflow.api.schemas.analysis import (
     FittingPreviewRequest,
     ObservationSchemaResponse,
     StepOutputsJobCreateRequest,
+    SweepJobCreateRequest,
 )
 from sersflow.api.deps import current_user_id
 from sersflow.api.services.ownership import get_dataset_for_user, get_run_for_user, get_session_for_user
@@ -34,7 +36,14 @@ from sersflow.api.services.analysis_runner import (
     _effective_pipeline_for_analysis,
 )
 from sersflow.api.services.fit_curve_export_runner import execute_fit_curve_job
-from sersflow.api.services.fitting_preview import fitting_preview_for_run, list_fitting_steps_for_pipeline
+from sersflow.api.services.fitting_preview import (
+    _find_fitting_step,
+    fitting_preview_for_run,
+    list_fitting_steps_for_pipeline,
+)
+from sersflow.api.services.json_safe import sanitize_floats
+from sersflow.api.services.sweep_runner import SWEEP_CONTENT, _fixed_params, execute_sweep_job, grid_points
+from sersflow.api.services.pipeline_qc import pipeline_without_qc_steps
 from sersflow.api.services.step_outputs_export_runner import (
     STEP_OUTPUTS_CONTENT,
     execute_step_outputs_job,
@@ -242,6 +251,16 @@ def create_analysis_run(payload: AnalysisRunCreateRequest, request: Request) -> 
         if existing is not None:
             return _idempotent_response(existing)
 
+    if payload.session_id and payload.pipeline is not None:
+        # Previously the inline pipeline was silently dropped and the session pipeline ran instead.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Provide either session_id (runs the session's stored pipeline) or an inline "
+                "pipeline + subset, not both. Save the pipeline to the session first "
+                "(PUT /sessions/{id}/pipeline) if you want to run it via session_id."
+            ),
+        )
     if payload.session_id:
         sess = get_session_for_user(payload.session_id, user_id)
         if sess is None:
@@ -266,8 +285,9 @@ def create_analysis_run(payload: AnalysisRunCreateRequest, request: Request) -> 
         dataset_technique_family(ds.metadata),
         context=f"analysis run on dataset {payload.dataset_id}",
     )
-    if pipeline_json is not None:
-        pipeline_json = pipeline.model_dump_json()
+    # Always snapshot the pipeline the run actually used (session runs too): the session pipeline is
+    # edited later, and exports / fit-curve jobs / previews must keep using what produced the run.
+    pipeline_json = pipeline.model_dump_json()
 
     ph = pipeline_hash(pipeline)
     # Stored cohort is always the full dataset; session.subset only affects Prepare preview.
@@ -503,6 +523,35 @@ def get_analysis_spectrum(run_id: str, spectrum_id: str, request: Request) -> di
     }
 
 
+def _resolve_fitting_step_num(rec: Any, *, num: int | None, index: int | None) -> int:
+    """Accept either the 1-based step_num or the 0-based s{N}_ index; 400 with the valid choices."""
+    if (num is None) == (index is None):
+        raise HTTPException(
+            status_code=400,
+            detail="Provide exactly one of fitting_step_num (1-based) or fitting_step_index (the N in s{N}_ columns)",
+        )
+    pipeline, _sub, _sess = prepare_run_context(rec=rec)
+    effective, _ = _effective_pipeline_for_analysis(pipeline)
+    items = list_fitting_steps_for_pipeline(pipeline_without_qc_steps(effective))
+    if index is not None:
+        for it in items:
+            if it["step_index"] == int(index):
+                return int(it["step_num"])
+        valid = [it["step_index"] for it in items]
+        raise HTTPException(
+            status_code=400,
+            detail=f"No enabled fitting step at step_index={index}; valid indices: {valid}",
+        )
+    if any(it["step_num"] == int(num) for it in items):
+        return int(num)
+    valid = [it["step_num"] for it in items]
+    raise HTTPException(
+        status_code=400,
+        detail=f"No enabled fitting step with step_num={num}; valid step_nums: {valid} "
+        "(note: observation column prefix s{N}_ uses the 0-based step_index, see fitting-steps)",
+    )
+
+
 @router.get("/runs/{run_id}/fitting-steps", response_model=None)
 def get_analysis_fitting_steps(run_id: str, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
@@ -510,6 +559,37 @@ def get_analysis_fitting_steps(run_id: str, request: Request) -> dict[str, Any]:
     pipeline, _sub, _sess = prepare_run_context(rec=rec)
     effective, _ = _effective_pipeline_for_analysis(pipeline)
     return {"items": list_fitting_steps_for_pipeline(effective)}
+
+
+@router.get("/runs/{run_id}/pipeline", response_model=None)
+def get_analysis_run_pipeline(run_id: str, request: Request) -> dict[str, Any]:
+    """
+    The pipeline that produced the run.
+
+    ``snapshot`` is true when it was stored at run time; runs created before snapshots were stored for
+    session runs fall back to the session's CURRENT pipeline (``snapshot`` false), which may have drifted.
+    """
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
+    snapshot = False
+    data: Any = None
+    if rec.pipeline_json:
+        try:
+            data = json.loads(rec.pipeline_json)
+            if isinstance(data, dict) and data.get("pipeline"):
+                data = data["pipeline"]
+            snapshot = True
+        except json.JSONDecodeError:
+            data = None
+    if data is None:
+        pipeline, _sub, _sess = prepare_run_context(rec=rec)
+        data = pipeline.model_dump(mode="json")
+    return {
+        "run_id": run_id,
+        "pipeline_hash": rec.pipeline_hash,
+        "snapshot": snapshot,
+        "pipeline": data,
+    }
 
 
 @router.get("/runs/{run_id}/pipeline-steps", response_model=None)
@@ -550,16 +630,62 @@ def post_analysis_fitting_preview(
     run_id: str, payload: FittingPreviewRequest, request: Request
 ) -> dict[str, Any]:
     user_id = current_user_id(request)
-    _require_run(run_id, user_id)
+    rec = _require_run(run_id, user_id)
+    step_num = _resolve_fitting_step_num(
+        rec, num=payload.fitting_step_num, index=payload.fitting_step_index
+    )
     try:
-        return fitting_preview_for_run(
-            run_id=run_id,
-            spectrum_ids=list(payload.spectrum_ids),
-            fitting_step_num=int(payload.fitting_step_num),
-            return_curve=bool(payload.return_curve),
+        return sanitize_floats(
+            fitting_preview_for_run(
+                run_id=run_id,
+                spectrum_ids=list(payload.spectrum_ids),
+                fitting_step_num=step_num,
+                return_curve=bool(payload.return_curve),
+            )
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        # Never an anonymous 500: say what failed (e.g. a calibration reference fit raising).
+        logging.getLogger(__name__).exception("fitting preview failed for run %s", run_id)
+        raise HTTPException(
+            status_code=500, detail=f"fitting preview failed: {type(e).__name__}: {e}"
+        ) from e
+
+
+@router.post("/runs/{run_id}/sweep-jobs", response_model=FitCurveJobCreateResponse)
+def post_sweep_job(
+    run_id: str, payload: SweepJobCreateRequest, request: Request
+) -> FitCurveJobCreateResponse | JSONResponse:
+    """Parameter sweep over one fitting step; poll and download through the fit-curve job endpoints."""
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
+    if rec.status != "completed":
+        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    step_num = _resolve_fitting_step_num(
+        rec, num=payload.fitting_step_num, index=payload.fitting_step_index
+    )
+    axes = [a.model_dump() for a in payload.grid]
+    try:
+        grid_points(axes)
+        pipeline, _sub, _sess = prepare_run_context(rec=rec)
+        effective, _ = _effective_pipeline_for_analysis(pipeline)
+        _idx, step = _find_fitting_step(pipeline_without_qc_steps(effective), step_num)
+        _fixed_params(dict(step.params or {}), axes, tuple(a["values"][0] for a in axes))  # validates ids/keys
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    jid = create_fit_curve_job(
+        run_id=run_id,
+        fitting_step_num=step_num,
+        content=SWEEP_CONTENT,
+        format="csv",
+        params_json=json.dumps({"grid": axes, "spectrum_ids": payload.spectrum_ids}),
+    )
+    Thread(target=execute_sweep_job, args=(jid,), daemon=True).start()
+    return JSONResponse(
+        status_code=202,
+        content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump(),
+    )
 
 
 @router.post("/runs/{run_id}/fit-curve-jobs", response_model=FitCurveJobCreateResponse)
@@ -570,9 +696,12 @@ def post_fit_curve_job(
     rec = _require_run(run_id, user_id)
     if rec.status != "completed":
         raise HTTPException(status_code=400, detail="Run is not completed yet")
+    step_num = _resolve_fitting_step_num(
+        rec, num=payload.fitting_step_num, index=payload.fitting_step_index
+    )
     jid = create_fit_curve_job(
         run_id=run_id,
-        fitting_step_num=int(payload.fitting_step_num),
+        fitting_step_num=step_num,
         content=str(payload.content),
         format=str(payload.format),
     )
@@ -619,7 +748,7 @@ def download_fit_curve_job(job_id: str, request: Request) -> Response:
             data = f.read()
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Failed to read artifact: {e}") from e
-    prefix = "step_outputs" if job.content == STEP_OUTPUTS_CONTENT else "fit_curves"
+    prefix = {STEP_OUTPUTS_CONTENT: "step_outputs", SWEEP_CONTENT: "sweep"}.get(job.content, "fit_curves")
     return Response(
         content=data,
         media_type="application/zip",

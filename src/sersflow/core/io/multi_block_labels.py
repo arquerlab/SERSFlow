@@ -42,6 +42,7 @@ _LOADER_ONLY_STRUCTURAL_KEYS = frozenset(
         "nxs_spectrum_name",
         "nxs_skipped_count",
         "nxs_skipped_regions",
+        "acquisition_index",
         "sle_node",
         "sle_spectrum_name",
         "sle_scan_mode",

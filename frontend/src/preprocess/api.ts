@@ -482,9 +482,10 @@ export type FitRequest = {
     source_key: string;
     target_component_id: string;
     target_key: string;
-    mode: "equal" | "scale" | "offset";
+    mode: "equal" | "scale" | "offset" | "area_ratio";
     scale?: number;
     offset?: number;
+    ratio?: number;
   }>;
   xps_region?: string | null;
   /** Optional internal fit window lower bound (inclusive). */
@@ -521,6 +522,12 @@ export type FitDiagnostics = {
   n_vary?: number | null;
   nfev?: number | null;
   median_rel_stderr?: number | null;
+  /** Fit-health metrics (absent on runs made before they existed). */
+  n_at_bound?: number | null;
+  bg_gt_data_frac?: number | null;
+  resid_mean_edge_lo?: number | null;
+  resid_mean_edge_hi?: number | null;
+  resid_lag1_autocorr?: number | null;
 };
 
 export type FitResponse = {
@@ -570,9 +577,10 @@ export type FittingRecipeApplyResponse = {
     source_key: string;
     target_component_id: string;
     target_key: string;
-    mode: "equal" | "scale" | "offset";
+    mode: "equal" | "scale" | "offset" | "area_ratio";
     scale?: number;
     offset?: number;
+    ratio?: number;
   }>;
   initial_area_ratios?: string | null;
   warnings: string[];

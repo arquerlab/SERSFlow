@@ -55,6 +55,13 @@ class DatasetsResource(_Base):
         data = request_json(self._root.http, "GET", f"/datasets/{dataset_id}/xps-regions")
         return dict(data) if isinstance(data, dict) else {}
 
+    def casa_fits(self, dataset_id: str, *, region: str | None = None) -> dict[str, Any]:
+        params = {"region": region} if region else None
+        data = request_json(
+            self._root.http, "GET", f"/datasets/{dataset_id}/casa-fits", params=params
+        )
+        return dict(data) if isinstance(data, dict) else {}
+
     def filter_fields(self, dataset_id: str) -> dict[str, Any]:
         data = request_json(self._root.http, "GET", f"/datasets/{dataset_id}/filter-fields")
         return dict(data) if isinstance(data, dict) else {}

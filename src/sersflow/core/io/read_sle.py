@@ -343,6 +343,7 @@ def _xas_blocks(
             "xas_signal": sig,
             "xas_edge": edge,
             "xas_i0_normalized": bool(i0_used),
+            "acquisition_index": n_seen,
             "excitation_energy_eV": None,
             "pass_energy_eV": float(epass) or None,
             "step_time": dwell,
@@ -518,6 +519,7 @@ def read_sle_blocks_with_report(path: str | Path) -> tuple[list[dict[str, Any]],
                     "step_time": dwell,
                     "total_steps": n_values,
                     "number_of_iterations": len(scans),
+                    "acquisition_index": n_seen,
                     "sle_node": node,
                     "sle_spectrum_name": name,
                     "sle_scan_mode": scan_mode,
@@ -569,7 +571,12 @@ def read_file_sle(file_path: Path):
 
     blocks, report = read_sle_blocks_with_report(file_path)
     if not blocks:
-        raise ValueError(f"SLE file contains no usable spectrum blocks: {file_path}")
+        why = "; ".join(
+            f"{s['key']!r}: {s['reason']}" for s in (report.get("skipped_regions") or [])[:5]
+        )
+        raise ValueError(
+            f"SLE file contains no usable spectrum blocks: {file_path}" + (f" (skipped: {why})" if why else "")
+        )
     xs = tuple(np.asarray(b["x"], dtype=float) for b in blocks)
     ys = tuple(np.asarray(b["y"], dtype=float) for b in blocks)
     meta = tuple(dict(b["meta"]) for b in blocks)

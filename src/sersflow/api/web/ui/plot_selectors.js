@@ -558,6 +558,9 @@ export function createMultiUi({ selectorId, schedulePlotUpdate }) {
         if (raw == null || !values.includes(String(raw))) return false;
         continue;
       }
+      // Number(null) is 0: a block without this field (e.g. an average has no replicate index)
+      // must not satisfy a numeric comparison.
+      if (raw == null || raw === '') return false;
       const num = Number(raw);
       const target = Number(clause.value);
       if (!Number.isFinite(num) || !Number.isFinite(target)) return false;
@@ -605,8 +608,16 @@ export function createMultiUi({ selectorId, schedulePlotUpdate }) {
     return state.matchedIndices.slice();
   }
 
+  /** Averages carry no replicate index and are not 'individual', so filtering on either needs all blocks. */
+  function effectiveMode() {
+    const targetsReplicates = state.filters.some(
+      (c) => c && (c.field === 'replicate_index' || c.field === 'spectrum_role')
+    );
+    return targetsReplicates ? 'all' : state.mode;
+  }
+
   function recompute() {
-    const modeKeep = new Set(indicesForMode(state.blocks, state.mode));
+    const modeKeep = new Set(indicesForMode(state.blocks, effectiveMode()));
     const matched = [];
     for (const b of state.blocks) {
       if (!modeKeep.has(b.index)) continue;

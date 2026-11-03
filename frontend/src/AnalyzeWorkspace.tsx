@@ -16,6 +16,7 @@ import { DatasetPicker } from "./components/DatasetPicker";
 import { listDatasets, listPipelines, type PipelineLibraryItem, type SubsetStrategy } from "./preprocess/api";
 import { downloadBlob, downloadCsv, plotlyDivToPngBytes, plotlyDivToSvgText, rowsToCsv, zipFiles } from "./analyze/export";
 import { buildFitResidualFigure } from "./preprocess/fitResidualPlot";
+import { fitHealthSummary } from "./preprocess/fitHealth";
 import type { ClusterResult, PcaLikeResult, PcaScaler, PlotCardModel } from "./analyze/types";
 import {
   buildCumulativeEvr,
@@ -554,7 +555,13 @@ export default function AnalyzeWorkspace() {
   const [fitDiagStepNum, setFitDiagStepNum] = useState<number | null>(null);
   const [fitDiagSelectedIds, setFitDiagSelectedIds] = useState<string[]>([]);
   const [fitDiagFigures, setFitDiagFigures] = useState<
-    Array<{ spectrum_id: string; data: Record<string, unknown>[]; layout: Record<string, unknown>; badge?: string }>
+    Array<{
+      spectrum_id: string;
+      data: Record<string, unknown>[];
+      layout: Record<string, unknown>;
+      badge?: string;
+      badgeWarn?: boolean;
+    }>
   >([]);
   const [fitDiagBusy, setFitDiagBusy] = useState(false);
   const [fitDiagError, setFitDiagError] = useState<string | null>(null);
@@ -940,8 +947,8 @@ export default function AnalyzeWorkspace() {
           title: it.spectrum_id,
         });
         const d = it.diagnostics || {};
-        const badge = `RMSE=${d.rmse ?? "—"}  R²=${d.r2 ?? "—"}  BIC=${d.bic ?? "—"}`;
-        return { spectrum_id: it.spectrum_id, ...built, badge };
+        const health = fitHealthSummary(d);
+        return { spectrum_id: it.spectrum_id, ...built, badge: health.text, badgeWarn: health.warn };
       });
       setFitDiagFigures(figs);
     } catch (e) {
@@ -2225,6 +2232,7 @@ export default function AnalyzeWorkspace() {
                       <th>Status</th>
                       <th>Dataset</th>
                       <th>Pipeline</th>
+                      <th title="Hash of the pipeline that produced the run (stored snapshot)">Hash</th>
                       <th></th>
                       <th>Created</th>
                     </tr>
@@ -2240,6 +2248,9 @@ export default function AnalyzeWorkspace() {
                         <td>{r.status}</td>
                         <td>{r.dataset_name ?? "—"}</td>
                         <td>{r.pipeline_name ?? "—"}</td>
+                        <td title={r.pipeline_hash ?? ""} style={{ fontFamily: "monospace" }}>
+                          {r.pipeline_hash ? r.pipeline_hash.slice(0, 8) : "—"}
+                        </td>
                         <td style={{ width: 1, whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
@@ -2445,8 +2456,9 @@ export default function AnalyzeWorkspace() {
                         >
                           {(fittingStepsQ.data?.items ?? []).map((it) => (
                             <option key={it.step_num} value={it.step_num}>
-                              s{it.step_num}
+                              step {it.step_num}
                               {it.xps_region ? ` (${it.xps_region})` : ""}
+                              {it.column_prefix ? ` — columns ${it.column_prefix}*` : ""}
                             </option>
                           ))}
                         </select>
@@ -3156,8 +3168,9 @@ export default function AnalyzeWorkspace() {
                         >
                           {(fittingStepsQ.data?.items ?? []).map((it) => (
                             <option key={it.step_num} value={it.step_num}>
-                              s{it.step_num}
+                              step {it.step_num}
                               {it.xps_region ? ` (${it.xps_region})` : ""} — {it.n_components} comps
+                              {it.column_prefix ? `, columns ${it.column_prefix}*` : ""}
                             </option>
                           ))}
                         </select>
@@ -3932,7 +3945,11 @@ export default function AnalyzeWorkspace() {
             <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
               {fitDiagFigures.map((f) => (
                 <div key={f.spectrum_id}>
-                  {f.badge ? <div className="hint">{f.badge}</div> : null}
+                  {f.badge ? (
+                    <div className="hint" style={f.badgeWarn ? { color: "var(--warn, #b45309)" } : undefined}>
+                      {f.badge}
+                    </div>
+                  ) : null}
                   <div style={{ width: "100%", height: 520, minHeight: 520 }}>
                     <PlotlyWrapper
                       figure={{ data: f.data, layout: f.layout }}

@@ -272,12 +272,12 @@ OpenAPI / MCP version: **0.2.0**.
 | `get_health` / `get_mcp_meta` | Health + versions (expect OpenAPI 0.2.0) |
 | `get_meta_formats` / `get_meta_formats_by_id` / `get_meta_pipeline_steps` / `get_meta_pipeline_steps_by_id` / `get_pipeline_baseline_methods` | Catalogs |
 | `post_io_upload` / `get_io_uploads` / `get_io_unloaded` / `post_io_unload` / `post_io_purge_preview` / `post_io_purge` / `post_io_labels_auto` / `post_io_labels_update` | IO lifecycle |
-| `post_datasets` (+ technique / VAMAS) / list / get / spectrum-axes / xps-regions / filter-fields / export / import | Datasets |
+| `post_datasets` (+ technique / VAMAS) / list / get / spectrum-axes / xps-regions / filter-fields / export / import / `get_datasets_casa_fits` (CasaXPS fit components stored in the VAMAS files) | Datasets |
 | `post_sessions` / list / get / `put_sessions_pipeline` / `put_sessions_subset` / `post_sessions_qc_preview` / `post_sessions_run` | Sessions |
 | `get_pipelines` (+ technique filter) / get / `post_pipelines` / export / import | Library pipelines |
 | `get_fitting_models` / `post_fitting_fit` | Fitting |
 | `get_xps_chemical_states` / `get_xps_fitting_recipes_index` / `get_xps_fitting_recipes` / `apply_xps_fitting_recipe` / `post_xps_apply_recipe_to_session` / `post_xps_apply_recipe_to_pipeline_draft` | XPS libraries |
-| Analysis runs / jobs / observation schema+columns / exports / fit-curve jobs | Analysis |
+| Analysis runs / jobs / observation schema+columns / exports / fit-curve jobs / `get_analysis_runs_pipeline` (pipeline snapshot of a run) / `post_analysis_sweep_jobs` (parameter sweep over one fitting step; results via the fit-curve job tools). Run with `session_id` OR an inline pipeline, never both. Fitting step args accept `fitting_step_num` (1-based) or `fitting_step_index` (the N of `s{N}_` columns). | Analysis |
 | Explore correlation/VIF/PCA/fpca/cluster/matrix (+ list/import) | Explore |
 | Plot kinds/info/points/heatmap/map-preview/`get_plot_series_value` (paths under export_dir) | Plot |
 | `read_tabular_file` | Explicit CSV/Parquet slice |

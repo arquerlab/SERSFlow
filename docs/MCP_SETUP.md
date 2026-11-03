@@ -37,7 +37,7 @@ If credentials are omitted and the API accepts unauthenticated calls (`SERSFLOW_
 
 Copy [config/sersflow_mcp.example.toml](../config/sersflow_mcp.example.toml) to `./sersflow_mcp.toml` or point `SERSFLOW_MCP_CONFIG` at it.
 
-Defaults include `fitting_confirm_max_components = 20` (XPS recipes often exceed 6 peaks). Purge and oversized exports still require `confirm=true`.
+Defaults include `fitting_confirm_max_components = 20` (XPS recipes often exceed 6 peaks) and `sweep_confirm_max_points = 60` (larger parameter-sweep grids need `confirm=true`). Purge and oversized exports still require `confirm=true`.
 
 Do **not** put URL or passwords in TOML.
 

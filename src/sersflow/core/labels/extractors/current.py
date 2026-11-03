@@ -28,6 +28,11 @@ def extract_current(search_text: str) -> tuple[float | None, bool]:
     parts = search_text.split("_")
 
     def _to_float(value_str: str) -> float:
+        # A bare integer with a leading zero ("05mA") is a decimal written without its point: 0.5 mA,
+        # distinct from "5mA". ("0" alone stays 0; "10", "100" are unaffected.)
+        m = re.fullmatch(r"([+-]?)0(\d+)", value_str)
+        if m:
+            return float(f"{m.group(1)}0.{m.group(2)}")
         return float(value_str.replace("d", ".").replace("_", "."))
 
     def _convert_to_amps(value: float, unit: str) -> float:

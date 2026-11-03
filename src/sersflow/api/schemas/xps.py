@@ -92,9 +92,11 @@ class FittingParamLinkPublic(BaseModel):
     source_key: str
     target_component_id: str
     target_key: str
-    mode: Literal["equal", "scale", "offset"] = "equal"
+    mode: Literal["equal", "scale", "offset", "area_ratio"] = "equal"
     scale: float | None = None
     offset: float | None = None
+    ratio: float | None = None
+    """Only for mode=area_ratio: dependent AREA = ratio x driver AREA (amp links only)."""
 
 
 class FittingRecipeApplyResponse(BaseModel):

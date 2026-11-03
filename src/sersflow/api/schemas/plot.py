@@ -53,6 +53,7 @@ class MultiBlockMeta(BaseModel):
     xps_transition: str | None = None
     block_name: str | None = None
     replicate_index: int | None = None
+    acquisition_index: int | None = None
     excitation_energy_eV: float | None = None
     technique: str | None = None
     acquired_at: str | None = None

@@ -146,6 +146,26 @@ def check_fitting_components(
     )
 
 
+def check_sweep_points(
+    n_points: int,
+    *,
+    max_points: int,
+    confirm: bool | None,
+) -> dict[str, Any] | None:
+    """A sweep refits every selected spectrum at every grid point; large grids need approval."""
+    if n_points <= max_points:
+        return None
+    return require_confirm(
+        confirm,
+        reason="sweep_exceeds_threshold",
+        message=(
+            f"Sweep grid has {n_points} points > {max_points} (each point refits every selected spectrum). "
+            "Retry with confirm=true after user approval."
+        ),
+        details={"grid_points": n_points, "threshold": max_points},
+    )
+
+
 def reject_overwrite(overwrite: bool | None) -> dict[str, Any] | None:
     if overwrite:
         return {

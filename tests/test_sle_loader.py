@@ -277,3 +277,39 @@ def test_sle_region_names(name: str, region: str) -> None:
 def test_sle_timestamp_is_locale_free() -> None:
     assert _parse_timestamp("2025-Mar-21 08:47:57.822896") == "2025-03-21T08:47:57.822896"
     assert _parse_timestamp("garbage") is None
+
+
+def test_sle_repeated_region_gets_acquisition_index_and_unique_block_names(tmp_path: Path) -> None:
+    p = tmp_path / "rep.sle"
+    _write_sle(p, n_scans=2)
+    con = sqlite3.connect(p)
+    (sched,) = con.execute("SELECT Value FROM Configuration WHERE Key = 'Schedule'").fetchone()
+    # Turn the valence-band spectrum into a second acquisition of C 1s.
+    con.execute(
+        "UPDATE Configuration SET Value = ? WHERE Key = 'Schedule'",
+        (sched.replace('Name="Valence band_O"', 'Name="C 1s"'),),
+    )
+    con.commit()
+    con.close()
+    ds = read_file_sle(p)
+    c1s = [m for m in ds.meta if m["xps_region"] == "C1s"]
+    assert [m["block_name"] for m in c1s] == ["C1s_spectrum", "C1s_spectrum_1", "C1s_spectrum_2", "C1s_2_spectrum"]
+    assert [m["acquisition_index"] for m in c1s] == [1, 1, 1, 2]
+    # Replicate indices stay per-acquisition scan numbers; averages carry none.
+    assert [m["replicate_index"] for m in c1s] == [None, 1, 2, None]
+    assert len({m["block_name"] for m in ds.meta}) == len(ds.meta)
+
+
+def test_sle_no_usable_blocks_error_explains_why(tmp_path: Path) -> None:
+    p = tmp_path / "align.sle"
+    _write_sle(p)
+    con = sqlite3.connect(p)
+    (sched,) = con.execute("SELECT Value FROM Configuration WHERE Key = 'Schedule'").fetchone()
+    con.execute(
+        "UPDATE Configuration SET Value = ? WHERE Key = 'Schedule'",
+        (sched.replace("FixedAnalyzerTransmission", "FixedEnergies").replace("ConstantFinalState", "FixedEnergies"),),
+    )
+    con.commit()
+    con.close()
+    with pytest.raises(ValueError, match="unsupported_scan_mode:FixedEnergies"):
+        read_file_sle(p)

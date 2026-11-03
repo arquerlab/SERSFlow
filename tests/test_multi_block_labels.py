@@ -102,7 +102,7 @@ def test_extract_labels_from_text_ocp_and_current() -> None:
     assert ocp.get("potential_V") == 0.0
     assert ocp.get("current_density_A_cm2") == 0.0
     cur = extract_labels_from_text("Cu__05mA_cm2__C1s")
-    assert cur.get("current_density_A_cm2") == pytest.approx(0.005)
+    assert cur.get("current_density_A_cm2") == pytest.approx(0.0005)  # "05mA" = 0.5 mA
 
 
 def _write_nxs(path: Path) -> None:

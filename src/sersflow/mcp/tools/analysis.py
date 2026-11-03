@@ -55,6 +55,12 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         def _run():
             client = ctx.get_client()
             pipe_obj = Pipeline.model_validate(pipeline) if pipeline else None
+            if session_id and pipe_obj is not None:
+                # The server would run the session's stored pipeline and ignore the inline one.
+                raise ValueError(
+                    "Provide either session_id (runs the session's stored pipeline) or an inline "
+                    "pipeline + subset, not both. Use put_sessions_pipeline first, then run via session_id."
+                )
             if not session_id and pipe_obj is None:
                 raise ValueError(
                     "Provide session_id or an inline pipeline (+ subset). "
@@ -114,13 +120,16 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 client_job_key=client_job_key,
             )
             resp = client.analysis.create_run(req)
-            return {
+            out = {
                 "ok": True,
                 "run_id": resp.run_id,
                 "job_id": resp.job_id,
                 "status": resp.status,
                 "message": resp.message,
             }
+            if resp.warnings:
+                out["warnings"] = list(resp.warnings)
+            return out
 
         return await tool_call(ctx, _run)
 
@@ -292,9 +301,28 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
         return await tool_call(ctx, _run)
 
+    @mcp.tool(name="get_analysis_runs_pipeline")
+    async def get_analysis_runs_pipeline(run_id: str) -> str:
+        """
+        GET /analysis/runs/{run_id}/pipeline — the pipeline that produced the run (stored snapshot).
+
+        `snapshot` false means an older run without a stored snapshot: the session's CURRENT
+        pipeline is returned instead and may differ from what actually ran. Compare `pipeline_hash`.
+        """
+
+        def _run():
+            return {"ok": True, **ctx.get_client().analysis.run_pipeline(run_id)}
+
+        return await tool_call(ctx, _run)
+
     @mcp.tool(name="get_analysis_runs_fitting_steps")
     async def get_analysis_runs_fitting_steps(run_id: str) -> str:
-        """GET /analysis/runs/{run_id}/fitting-steps."""
+        """
+        GET /analysis/runs/{run_id}/fitting-steps.
+
+        Each item has `step_num` (1-based; what fitting_step_num expects) and `step_index` (0-based) with
+        `column_prefix` (e.g. "s2_") = the prefix of that step's observation columns.
+        """
 
         def _run():
             data = ctx.get_client().analysis.fitting_steps(run_id)
@@ -306,10 +334,16 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
     async def post_analysis_runs_fitting_preview(
         run_id: str,
         spectrum_ids: list[str],
-        fitting_step_num: int,
+        fitting_step_num: int | None = None,
         return_curve: bool = False,
+        fitting_step_index: int | None = None,
     ) -> str:
-        """POST fitting preview (compact; default return_curve=false)."""
+        """
+        POST fitting preview (compact; default return_curve=false).
+
+        Give exactly one of fitting_step_num (1-based, see get_analysis_runs_fitting_steps) or
+        fitting_step_index (0-based = the N in observation columns s{N}_...).
+        """
 
         def _run():
             from sersflow.api.schemas.analysis import FittingPreviewRequest
@@ -317,6 +351,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
             req = FittingPreviewRequest(
                 spectrum_ids=spectrum_ids,
                 fitting_step_num=fitting_step_num,
+                fitting_step_index=fitting_step_index,
                 return_curve=return_curve,
             )
             data = ctx.get_client().analysis.fitting_preview(run_id, req)
@@ -348,20 +383,80 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
         return await tool_call(ctx, _run)
 
+    @mcp.tool(name="post_analysis_sweep_jobs")
+    async def post_analysis_sweep_jobs(
+        run_id: str,
+        grid: list[dict[str, Any]],
+        fitting_step_num: int | None = None,
+        fitting_step_index: int | None = None,
+        spectrum_ids: list[str] | None = None,
+        confirm: bool = False,
+    ) -> str:
+        """
+        POST /analysis/runs/{run_id}/sweep-jobs — parameter sweep over ONE fitting step.
+
+        grid: list of axes {"component_id": "Co2_a", "key": "fwhm", "values": [2.0, 2.4, 2.8]}; the swept
+        parameter is fixed (vary=false) at every value (Cartesian product over axes; linked parameters
+        follow) and every selected spectrum is refitted from the step's stored settings. Give exactly one
+        of fitting_step_num / fitting_step_index (see get_analysis_runs_fitting_steps).
+
+        Poll/wait/download with the fit-curve job tools (get_analysis_fit_curve_jobs,
+        post_analysis_fit_curve_jobs_wait, get_analysis_fit_curve_jobs_download). The zip has
+        sweep_summary.csv (per grid point, sorted by mean rmse, with fit-health columns) and
+        sweep_points.csv (per spectrum x grid point). Large grids need confirm=true.
+        """
+
+        def _run():
+            from sersflow.api.schemas.analysis import SweepJobCreateRequest
+
+            n_points = 1
+            for axis in grid:
+                n_points *= max(1, len(axis.get("values") or []))
+            blocked = confirm_gates.check_sweep_points(
+                n_points, max_points=ctx.config.sweep_confirm_max_points, confirm=confirm
+            )
+            if blocked is not None:
+                return blocked
+            req = SweepJobCreateRequest(
+                fitting_step_num=fitting_step_num,
+                fitting_step_index=fitting_step_index,
+                grid=grid,
+                spectrum_ids=spectrum_ids,
+            )
+            resp = ctx.get_client().analysis.create_sweep_job(run_id, req)
+            return {
+                "ok": True,
+                "job_id": resp.job_id,
+                "status": resp.status,
+                "run_id": run_id,
+                "grid_points": n_points,
+            }
+
+        return await tool_call(ctx, _run)
+
     @mcp.tool(name="post_analysis_fit_curve_jobs")
     async def post_analysis_fit_curve_jobs(
         run_id: str,
-        fitting_step_num: int,
+        fitting_step_num: int | None = None,
         content: Literal["data_fit_resid", "data_fit_components_resid"] = "data_fit_components_resid",
         format: Literal["csv", "png", "svg"] = "csv",
+        fitting_step_index: int | None = None,
     ) -> str:
-        """POST /analysis/runs/{run_id}/fit-curve-jobs."""
+        """
+        POST /analysis/runs/{run_id}/fit-curve-jobs.
+
+        Give exactly one of fitting_step_num (1-based; NOT the s{N}_ prefix) or fitting_step_index
+        (0-based = the N in observation columns s{N}_...). The zip also contains fit_health.csv.
+        """
 
         def _run():
             from sersflow.api.schemas.analysis import FitCurveJobCreateRequest
 
             req = FitCurveJobCreateRequest(
-                fitting_step_num=fitting_step_num, content=content, format=format
+                fitting_step_num=fitting_step_num,
+                fitting_step_index=fitting_step_index,
+                content=content,
+                format=format,
             )
             resp = ctx.get_client().analysis.create_fit_curve_job(run_id, req)
             return {

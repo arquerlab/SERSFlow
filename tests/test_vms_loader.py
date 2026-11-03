@@ -446,7 +446,7 @@ def test_enrich_vms_uses_sample_identifier_and_acquired_at(tmp_path: Path) -> No
     )
     blocks = get_block_spectra(er.labels)
     assert blocks["0"]["sample"] == "05mA"
-    assert blocks["0"]["current_density_A_cm2"] == pytest.approx(0.005)
+    assert blocks["0"]["current_density_A_cm2"] == pytest.approx(0.0005)  # "05mA" = 0.5 mA
     assert blocks["0"]["experiment_id"] == "05mA"
     assert str(blocks["0"]["acquired_at"]).startswith("2020-")
     assert str(er.labels["acquired_utc"]).startswith("2020-")
@@ -456,7 +456,7 @@ def test_enrich_vms_uses_sample_identifier_and_acquired_at(tmp_path: Path) -> No
     assert blocks["1"]["gas"] == "CO2"
     assert blocks["1"]["electrolyte"] == "KOH"
     assert blocks["1"]["concentration_M"] == pytest.approx(0.1)
-    assert blocks["1"]["current_density_A_cm2"] == pytest.approx(0.005)
+    assert blocks["1"]["current_density_A_cm2"] == pytest.approx(0.0005)
 
     assert blocks["2"]["sample"] == "OCP_calW4f"
     assert blocks["2"]["potential_ref"] == "OCP"

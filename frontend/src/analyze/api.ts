@@ -185,8 +185,12 @@ export function fetchAnalysisSpectrum(runId: string, spectrumId: string) {
 }
 
 export type FittingStepInfo = {
+  /** 1-based number expected by fitting_step_num. */
   step_num: number;
+  /** 0-based pipeline index = the N in the observation columns ``s{N}_...``. */
   step_index: number;
+  /** Prefix of this step's observation columns (empty with a single fitting step). */
+  column_prefix?: string;
   xps_region?: string | null;
   n_components: number;
 };

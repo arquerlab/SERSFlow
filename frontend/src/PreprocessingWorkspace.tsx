@@ -2395,6 +2395,7 @@ export default function PreprocessingWorkspace() {
                                           target_key: tkey || "",
                                           mode: existingLink?.mode ?? "equal",
                                           scale: existingLink?.scale,
+                                          ratio: existingLink?.ratio,
                                         };
                                         updateSelectedFittingParams({
                                           ...fp,
@@ -2422,13 +2423,20 @@ export default function PreprocessingWorkspace() {
                                           value={existingLink.mode}
                                           onChange={(e) => {
                                             const v = e.target.value;
-                                            const mode =
-                                              v === "scale" ? "scale" : v === "offset" ? "offset" : "equal";
+                                            const mode: FittingParamLink["mode"] =
+                                              v === "scale"
+                                                ? "scale"
+                                                : v === "offset"
+                                                  ? "offset"
+                                                  : v === "area_ratio"
+                                                    ? "area_ratio"
+                                                    : "equal";
                                             const link: FittingParamLink = {
                                               ...existingLink,
                                               mode,
                                               scale: mode === "scale" ? existingLink.scale ?? 1 : undefined,
                                               offset: mode === "offset" ? existingLink.offset ?? 0 : undefined,
+                                              ratio: mode === "area_ratio" ? existingLink.ratio ?? 0.1 : undefined,
                                             };
                                             updateSelectedFittingParams({
                                               ...fp,
@@ -2440,12 +2448,36 @@ export default function PreprocessingWorkspace() {
                                               ),
                                             });
                                           }}
-                                          style={{ width: "72px" }}
+                                          style={{ width: "84px" }}
                                         >
                                           <option value="equal">equal</option>
                                           <option value="scale">scale</option>
                                           <option value="offset">offset</option>
+                                          {row.key === "amp" ? (
+                                            <option value="area_ratio" title="Dependent AREA = ratio x driver AREA">
+                                              area ratio
+                                            </option>
+                                          ) : null}
                                         </select>
+                                        {existingLink.mode === "area_ratio" ? (
+                                          <DraftNumberInput
+                                            value={existingLink.ratio ?? 0.1}
+                                            onChange={(n) => {
+                                              if (n == null || !(n > 0)) return;
+                                              const link: FittingParamLink = { ...existingLink, ratio: n };
+                                              updateSelectedFittingParams({
+                                                ...fp,
+                                                param_links: upsertParamLink(
+                                                  fp.param_links,
+                                                  link,
+                                                  comp.component_id,
+                                                  row.key
+                                                ),
+                                              });
+                                            }}
+                                            style={{ width: "64px" }}
+                                          />
+                                        ) : null}
                                         {existingLink.mode === "scale" ? (
                                           <DraftNumberInput
                                             value={existingLink.scale ?? 1}

@@ -17,6 +17,7 @@ from sersflow.api.schemas.datasets import (
 )
 from sersflow.api.schemas.metrics import DatasetMetricsRequest, DatasetMetricsResponse
 from sersflow.api.schemas.pipeline import Pipeline
+from sersflow.api.services.casa_fits import casa_fits_payload
 from sersflow.api.services.dataset_export import export_dataset_package, import_dataset_package
 from sersflow.api.services.dataset_restore import restore_dataset_uploads
 from sersflow.api.services.datasets_service import create_dataset_from_uploads
@@ -140,6 +141,20 @@ def list_dataset_xps_regions(dataset_id: str, request: Request) -> dict[str, Any
     if rec is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
     return list_xps_regions_payload(rec)
+
+
+@router.get("/{dataset_id}/casa-fits")
+def list_dataset_casa_fits(
+    dataset_id: str,
+    request: Request,
+    region: str | None = Query(None, description='Filter by xps_region, e.g. "Co2p"'),
+) -> dict[str, Any]:
+    """CasaXPS fit components stored in the dataset's VAMAS files (positions as KE and as hv-KE)."""
+    user_id = current_user_id(request)
+    rec = get_dataset(dataset_id, owner_user_id=user_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return casa_fits_payload(rec, region=region)
 
 
 @router.get("/{dataset_id}/filter-fields")
