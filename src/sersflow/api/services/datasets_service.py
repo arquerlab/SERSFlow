@@ -14,7 +14,12 @@ from sersflow.core.io.multi_block_labels import (
     set_block_spectra,
 )
 from sersflow.core.io.read_vms import filter_indices_by_xps_regions, filter_meta_indices
-from sersflow.core.io.technique import assert_homogeneous_technique_families
+from sersflow.core.io.technique import (
+    TECHNIQUE_FAMILIES,
+    assert_homogeneous_technique_families,
+    block_technique_family,
+    infer_technique_family,
+)
 from sersflow.core.ids import spectrum_id_from_ref
 from sersflow.core.models.datasets import Dataset, MapDataset, MultiSpectrumDataset, SeriesDataset, SpectrumDataset
 from sersflow.infra.datasets_store import DatasetRecord, create_dataset
@@ -88,6 +93,56 @@ def _persist_multi_spectrum_labels(
 _persist_vms_spectrum_labels = _persist_multi_spectrum_labels
 
 
+def _select_block_indices(
+    ds: MultiSpectrumDataset,
+    rel: str,
+    payload: DatasetCreateRequest,
+    regions: list[str] | None,
+) -> list[int]:
+    """Block indices of a multi-spectrum file that match mode / region / explicit selection."""
+    keep = filter_meta_indices(ds.meta, payload.vms_spectrum_mode)
+    keep = filter_indices_by_xps_regions(ds.meta, keep, regions)
+    if payload.record_indices and rel in payload.record_indices:
+        wanted = {int(i) for i in (payload.record_indices.get(rel) or []) if int(i) >= 0}
+        keep = [i for i in keep if i in wanted]
+    return keep
+
+
+def _dataset_family(
+    loaded: list[tuple[str, Path, Dataset]],
+    payload: DatasetCreateRequest,
+    regions: list[str] | None,
+) -> str:
+    """
+    Technique family of the selection. Multi-block files may declare it per block
+    (``meta["technique"]``); everything else falls back to the file format.
+    """
+    by_family: dict[str, list[str]] = {}
+    for rel, p, ds in loaded:
+        fmt_family = infer_technique_family(p)
+        if isinstance(ds, MultiSpectrumDataset):
+            for i in _select_block_indices(ds, rel, payload, regions):
+                fam = block_technique_family(ds.meta[i]) or fmt_family
+                by_family.setdefault(fam, []).append(rel)
+        else:
+            by_family.setdefault(fmt_family, []).append(rel)
+    present = [f for f in TECHNIQUE_FAMILIES if by_family.get(f)]
+    if not present:
+        # All blocks filtered out: let the per-file loop report the real reason.
+        return assert_homogeneous_technique_families([p for _, p, _ in loaded])
+    if len(present) > 1:
+        parts = []
+        for fam in present:
+            files = sorted(set(by_family[fam]))
+            parts.append(f"{fam}: {', '.join(files[:5])}" + (f" (+{len(files) - 5} more)" if len(files) > 5 else ""))
+        raise ValueError(
+            "Cannot mix vibrational, XPS and XAS spectra in one dataset. " + "; ".join(parts)
+            + ". Select only one technique (for multi-technique files such as .sle, pick only the "
+            "XPS regions or only the XAS/NEXAFS regions)."
+        )
+    return present[0]
+
+
 def create_dataset_from_uploads(
     payload: DatasetCreateRequest,
     *,
@@ -118,7 +173,7 @@ def create_dataset_from_uploads(
 
     if loaded:
         try:
-            family = assert_homogeneous_technique_families([p for _, p, _ in loaded])
+            family = _dataset_family(loaded, payload, regions)
         except ValueError as e:
             raise ValueError(str(e)) from e
         caps: set[str] = set()
@@ -146,14 +201,8 @@ def create_dataset_from_uploads(
                 continue
 
             if isinstance(ds, MultiSpectrumDataset):
-                keep = filter_meta_indices(ds.meta, mode)
-                keep = filter_indices_by_xps_regions(ds.meta, keep, regions)
-                wanted = None
-                if payload.record_indices and rel in payload.record_indices:
-                    raw_idxs = payload.record_indices.get(rel) or []
-                    wanted = {int(i) for i in raw_idxs if int(i) >= 0}
-                if wanted is not None:
-                    keep = [i for i in keep if i in wanted]
+                keep = _select_block_indices(ds, rel, payload, regions)
+                wanted = payload.record_indices.get(rel) if payload.record_indices else None
                 if not keep:
                     reason = "No multi-spectrum blocks matched vms_spectrum_mode"
                     if regions:

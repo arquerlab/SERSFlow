@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "../../lib/http";
+import { isTechniqueFamily } from "../api";
 
 export type FormatUiTreatment = {
   show_block_picker: boolean;
@@ -45,7 +46,7 @@ export function acceptFromFormats(items: FormatCatalogItem[] | undefined): strin
   for (const it of items ?? []) {
     for (const s of it.suffixes) suffixes.add(s.toLowerCase());
   }
-  if (!suffixes.size) return ".txt,.wdf,.vms,.nxs,.nx5";
+  if (!suffixes.size) return ".txt,.wdf,.vms,.nxs,.nx5,.sle";
   return Array.from(suffixes).sort().join(",");
 }
 
@@ -64,9 +65,9 @@ export function formatForPath(
 export function inferTechniqueFromFormatsCatalog(
   path: string,
   items: FormatCatalogItem[] | undefined
-): "vibrational" | "xps" {
+): "vibrational" | "xps" | "xas" {
   const fmt = formatForPath(path, items);
-  if (fmt?.technique_family === "xps" || fmt?.technique_family === "vibrational") {
+  if (isTechniqueFamily(fmt?.technique_family)) {
     return fmt.technique_family;
   }
   // sniff formats (.txt): leave vibrational as safe default for client-side counting

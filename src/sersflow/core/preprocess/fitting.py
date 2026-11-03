@@ -446,9 +446,9 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
         tech = "vibrational"
     else:
         tech = str(tech_raw).strip().lower()
-        if tech not in ("vibrational", "xps"):
+        if tech not in ("vibrational", "xps", "xas"):
             raise ValueError(
-                f"Invalid technique_family {tech_raw!r}; expected 'vibrational' or 'xps'"
+                f"Invalid technique_family {tech_raw!r}; expected 'vibrational', 'xps' or 'xas'"
             )
 
     return FitProblem(
@@ -481,14 +481,14 @@ def fit_curve(problem: FitProblem) -> FitResult:
     """
     Fit a sum of components using technique-gated engines:
     - vibrational -> SciPy curve_fit
-    - xps -> lmfit (always)
+    - xps / xas -> lmfit (always)
     """
     tech = str(problem.technique_family or "vibrational").strip().lower()
-    if tech not in ("vibrational", "xps"):
+    if tech not in ("vibrational", "xps", "xas"):
         raise ValueError(
-            f"Invalid technique_family {problem.technique_family!r}; expected 'vibrational' or 'xps'"
+            f"Invalid technique_family {problem.technique_family!r}; expected 'vibrational', 'xps' or 'xas'"
         )
-    if tech == "xps":
+    if tech in ("xps", "xas"):
         from sersflow.core.preprocess.fitting_lmfit import fit_curve_lmfit
 
         return fit_curve_lmfit(problem)
@@ -519,12 +519,12 @@ def evaluate_fit_curves(
     runs are not re-fit when rendering residuals and components.
     """
     tech = str(problem.technique_family or "vibrational").strip().lower()
-    if tech not in ("vibrational", "xps"):
+    if tech not in ("vibrational", "xps", "xas"):
         raise ValueError(
-            f"Invalid technique_family {problem.technique_family!r}; expected 'vibrational' or 'xps'"
+            f"Invalid technique_family {problem.technique_family!r}; expected 'vibrational', 'xps' or 'xas'"
         )
     p = np.asarray(p_opt, dtype=float).ravel()
-    if tech == "xps":
+    if tech in ("xps", "xas"):
         from sersflow.core.preprocess.fitting_lmfit import evaluate_curve_lmfit
 
         return evaluate_curve_lmfit(problem, p, diagnostics=diagnostics)
@@ -614,6 +614,7 @@ def _evaluate_curve_scipy(
             p_opt=p_opt,
             nfev=None,
             success=True,
+            x=xf,
         )
     return FitResult(
         p_opt=p_opt,
@@ -727,6 +728,7 @@ def _fit_curve_scipy(problem: FitProblem) -> FitResult:
         p_opt=popt,
         nfev=None,
         success=True,
+        x=xf,
     )
     return FitResult(
         p_opt=popt,

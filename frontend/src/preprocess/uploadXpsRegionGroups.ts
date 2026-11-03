@@ -122,9 +122,17 @@ export function inferTechniqueFromPath(
   formatsCatalog?: FormatCatalogItem[]
 ): "vibrational" | "xps" {
   if (formatsCatalog?.length) {
-    return inferTechniqueFromFormatsCatalog(path, formatsCatalog);
+    return pickerFamily(inferTechniqueFromFormatsCatalog(path, formatsCatalog));
   }
   return "vibrational";
+}
+
+/**
+ * The picker only distinguishes region-grouped (multi-block) files from wavenumber-grouped ones,
+ * so XAS files (multi-block NEXAFS regions) share the XPS view.
+ */
+function pickerFamily(fam: string | null | undefined): "vibrational" | "xps" {
+  return fam === "xps" || fam === "xas" ? "xps" : "vibrational";
 }
 
 /** Count XPS vs vibrational among items (path-inferred when family missing). */
@@ -136,8 +144,8 @@ export function countTechniqueFamilies(
   let vibrational = 0;
   for (const it of items) {
     const fam =
-      it.technique_family === "xps" || it.technique_family === "vibrational"
-        ? it.technique_family
+      it.technique_family === "xps" || it.technique_family === "xas" || it.technique_family === "vibrational"
+        ? pickerFamily(it.technique_family)
         : inferTechniqueFromPath(String(it.relative_path || it.filename || ""), formatsCatalog);
     if (fam === "xps") xps += 1;
     else vibrational += 1;
@@ -180,8 +188,8 @@ export function selectionMixesTechniques(
   for (const p of paths) {
     const it = map.get(p);
     const fam =
-      it?.technique_family === "xps" || it?.technique_family === "vibrational"
-        ? it.technique_family
+      it?.technique_family === "xps" || it?.technique_family === "xas" || it?.technique_family === "vibrational"
+        ? pickerFamily(it.technique_family)
         : inferTechniqueFromPath(p);
     if (fam === "xps") hasXps = true;
     else hasVib = true;

@@ -6,10 +6,14 @@ import re
 from pathlib import Path
 from typing import Literal
 
-TechniqueFamily = Literal["vibrational", "xps"]
+TechniqueFamily = Literal["vibrational", "xps", "xas"]
+TECHNIQUE_FAMILIES: tuple[TechniqueFamily, ...] = ("vibrational", "xps", "xas")
 
 _VIBRATIONAL_AXIS = re.compile(r"\b(wavenumber|wave|wn|raman)\b", re.IGNORECASE)
 _XPS_AXIS = re.compile(r"\b(binding(\s*energy)?|be)\b", re.IGNORECASE)
+_XAS_AXIS = re.compile(
+    r"\b(photon(\s*energy)?|incident(\s*energy)?|excitation(\s*energy)?|hv|h\s*nu)\b", re.IGNORECASE
+)
 
 
 def peek_txt_x_axis_label(path: Path, *, encoding: str = "utf-8") -> str | None:
@@ -41,11 +45,15 @@ def sniff_technique_from_axis_label(label: str | None) -> TechniqueFamily | None
         return None
     if _XPS_AXIS.search(label):
         return "xps"
+    if _XAS_AXIS.search(label):
+        return "xas"
     if _VIBRATIONAL_AXIS.search(label):
         return "vibrational"
     low = label.lower()
     if low in {"be", "binding energy", "binding_energy", "e_bind"}:
         return "xps"
+    if low in {"photon energy", "photon_energy", "hv", "e_photon", "excitation energy"}:
+        return "xas"
     if low in {"wn", "wave", "wavenumber", "raman shift", "raman_shift", "cm-1", "cm^-1"}:
         return "vibrational"
     return None
@@ -78,15 +86,29 @@ def infer_technique_family(
         return sniffed
     raise ValueError(
         f"Cannot infer technique for {p.name}: x-axis header {label!r} is unrecognized. "
-        "Use a header containing wavenumber/wn/wave (vibrational) or Binding energy/BE (XPS)."
+        "Use a header containing wavenumber/wn/wave (vibrational), Binding energy/BE (XPS) or Photon energy/hv (XAS)."
     )
+
+
+_BLOCK_TECHNIQUE_TOKENS: dict[str, TechniqueFamily] = {"xps": "xps", "xas": "xas", "nexafs": "xas"}
+
+
+def block_technique_family(meta: dict | None) -> TechniqueFamily | None:
+    """
+    Technique family declared by one multi-block entry (``meta["technique"]``), or None.
+
+    Lets a single multi-technique file (e.g. a Prodigy ``.sle`` with XPS and NEXAFS scans)
+    contribute to an XPS dataset or an XAS dataset depending on the blocks selected.
+    """
+    token = str((meta or {}).get("technique") or "").strip().lower()
+    return _BLOCK_TECHNIQUE_TOKENS.get(token)
 
 
 def assert_homogeneous_technique_families(
     paths: list[str | Path],
 ) -> TechniqueFamily:
     """Infer family for each path; raise ValueError if more than one family is present."""
-    by_family: dict[TechniqueFamily, list[str]] = {"vibrational": [], "xps": []}
+    by_family: dict[TechniqueFamily, list[str]] = {f: [] for f in TECHNIQUE_FAMILIES}
     for raw in paths:
         p = Path(raw)
         fam = infer_technique_family(p)
@@ -101,7 +123,7 @@ def assert_homogeneous_technique_families(
             extra = f" (+{len(by_family[fam]) - 5} more)" if len(by_family[fam]) > 5 else ""
             parts.append(f"{fam}: {sample}{extra}")
         raise ValueError(
-            "Cannot mix vibrational and XPS files in one dataset. " + "; ".join(parts)
+            "Cannot mix vibrational, XPS and XAS files in one dataset. " + "; ".join(parts)
         )
     return present[0]
 
@@ -115,15 +137,17 @@ def normalize_technique_family(
     Normalize a technique family string.
 
     If ``value`` is empty/None and ``default`` is set, return ``default``.
-    Otherwise require an explicit ``vibrational`` or ``xps``.
+    Otherwise require an explicit ``vibrational``, ``xps`` or ``xas``.
     """
     if value is None or str(value).strip() == "":
         if default is not None:
             return default
-        raise ValueError("technique_family is required (vibrational or xps)")
+        raise ValueError("technique_family is required (vibrational, xps or xas)")
     fam = str(value).strip().lower()
-    if fam not in ("vibrational", "xps"):
-        raise ValueError(f"Invalid technique_family {value!r}; expected 'vibrational' or 'xps'")
+    if fam not in TECHNIQUE_FAMILIES:
+        raise ValueError(
+            f"Invalid technique_family {value!r}; expected 'vibrational', 'xps' or 'xas'"
+        )
     return fam  # type: ignore[return-value]
 
 

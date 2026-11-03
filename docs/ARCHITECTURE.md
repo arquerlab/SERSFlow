@@ -2,16 +2,16 @@
 
 ## Overview: what SERSFlow is
 
-SERSFlow is a local-first software stack for vibrational spectroscopy (SERS / Raman / FTIR) and XPS workflows. It combines:
+SERSFlow is a local-first software stack for vibrational spectroscopy (SERS / Raman / FTIR), XPS and XAS / NEXAFS workflows. It combines:
 
-- Dataset ingest from uploaded vendor/measurement files, including single spectra, time series, spatial maps, and multi-block XPS files (VAMAS `.vms`, NeXus `.nxs`).
+- Dataset ingest from uploaded vendor/measurement files, including single spectra, time series, spatial maps, and multi-block XPS files (VAMAS `.vms`, NeXus `.nxs`, SPECS Prodigy `.sle`).
 - Durable dataset storage through upload registries, content-addressed blobs, SQLite metadata, and reproducible dataset exports.
 - A deterministic preprocessing pipeline for spectra: crop, grid alignment, smoothing, cosmic-ray removal, baseline handling (including lmfitxps Shirley/Tougaard for XPS), normalization, reference transforms, derivatives, fitting, spectral probes, integrations, and derived feature operations.
 - Batch feature extraction over the full dataset to create stable feature and observation tables.
 - An exploration/modeling layer for correlation, VIF, PCA, sparse PCA, clustering, spectrum matrices, and FPCA.
 - A web UI, Python HTTP client, and publication-oriented examples that drive the same FastAPI backend.
 
-Technique identity is first-class via `technique_family` (`vibrational` | `xps`) on datasets and pipelines: mixed-technique datasets are rejected at create time; XPS pipelines always use the lmfit engine (with optional active Shirley/Tougaard backgrounds and param links); vibrational pipelines use SciPy `curve_fit`. Packaged XPS catalogs (chemical states, fitting recipes) are served under `/xps/*`.
+Technique identity is first-class via `technique_family` (`vibrational` | `xps` | `xas`) on datasets and pipelines: mixed-technique datasets are rejected at create time (multi-technique files such as Prodigy `.sle` declare the family per block via `meta.technique`, so the selected regions decide it); XPS and XAS pipelines always use the lmfit engine (with optional active Shirley/Tougaard backgrounds and param links); vibrational pipelines use SciPy `curve_fit`. XAS adds the `xas_normalize` step (pre-edge subtraction, unit edge step) and is only offered for `xas` pipelines. Packaged XPS catalogs (chemical states, fitting recipes) are served under `/xps/*`.
 
 The project prioritizes:
 
@@ -55,7 +55,7 @@ SERSFlow is organized around one local FastAPI service that:
   - `services/`: higher-level operations used by routers, including analysis execution, dataset/observation exports, reference runtime, plotting, matrix export jobs, and explore stats/plots.
   - `web/`: legacy HTML shell and built frontend assets.
 - `src/sersflow/core/`
-  - `io/`: TXT/WDF/VMS/NXS loading, technique inference, upload registry, file-to-dataset expansion, and wavenumber-range helpers.
+  - `io/`: TXT/WDF/VMS/NXS/SLE loading, technique inference, upload registry, file-to-dataset expansion, and wavenumber-range helpers.
   - `models/`: typed dataset representations for single spectra, series, maps, and XPS multi-block (`MultiSpectrumDataset`).
   - `xps/`: packaged chemical-state and fitting-recipe catalogs plus recipe→fitting apply.
   - `pipeline/`: pipeline engine, step registry, hashing, cache keys, step numbering, and XPS dual-background guards.

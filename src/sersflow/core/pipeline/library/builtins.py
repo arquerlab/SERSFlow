@@ -114,6 +114,18 @@ _register(
 )
 _register(
     StepSpec(
+        id="xas_normalize",
+        label="XAS edge normalization",
+        category="geometry",
+        palette_group="Transformation",
+        description="Subtract the pre-edge line and scale to a unit edge step (XAS / NEXAFS).",
+        impl=_impl("xas_normalize"),
+        ui=ui.XAS_NORMALIZE,
+        requires_technique=frozenset({"xas"}),
+    )
+)
+_register(
+    StepSpec(
         id="spectrum_derivative",
         label="Derivative",
         category="features",

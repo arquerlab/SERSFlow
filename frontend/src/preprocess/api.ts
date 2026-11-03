@@ -1,4 +1,8 @@
-export type TechniqueFamily = "vibrational" | "xps";
+export type TechniqueFamily = "vibrational" | "xps" | "xas";
+
+export function isTechniqueFamily(v: unknown): v is TechniqueFamily {
+  return v === "vibrational" || v === "xps" || v === "xas";
+}
 
 export type DatasetMetadata = {
   name?: string | null;
@@ -358,7 +362,7 @@ export function listPipelines(
     offset: String(offset),
   });
   if (q != null && String(q).trim() !== "") params.set("q", String(q).trim());
-  if (technique_family === "vibrational" || technique_family === "xps") {
+  if (isTechniqueFamily(technique_family)) {
     params.set("technique_family", technique_family);
   }
   return fetchJson<PipelineListResponse>(`/pipelines?${params.toString()}`);

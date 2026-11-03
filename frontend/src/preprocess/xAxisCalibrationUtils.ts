@@ -98,7 +98,7 @@ function normalizeMethod(raw: string): XAxisCalibrationMethod {
 
 /** Default params; XPS pipelines should pass target_x=284.8 via defaultXAxisCalibrationParams. */
 export function defaultXAxisCalibrationParams(
-  techniqueFamily: "vibrational" | "xps" = "vibrational"
+  techniqueFamily: "vibrational" | "xps" | "xas" = "vibrational"
 ): XAxisCalibrationParams {
   return {
     method: "fixed_offset",
@@ -115,7 +115,7 @@ export function defaultXAxisCalibrationParams(
 
 export function normalizeXAxisCalibrationParams(
   params: Record<string, unknown> | null | undefined,
-  techniqueFamily: "vibrational" | "xps" = "vibrational"
+  techniqueFamily: "vibrational" | "xps" | "xas" = "vibrational"
 ): XAxisCalibrationParams {
   const p = params ?? {};
   const method = normalizeMethod(asStr(p.method));

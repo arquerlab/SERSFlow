@@ -33,7 +33,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
     ) -> str:
         """POST /sessions — create a working session for a dataset.
 
-        Pipeline technique_family must match the dataset (vibrational or xps).
+        Pipeline technique_family must match the dataset (vibrational, xps or xas).
         """
 
         def _run():

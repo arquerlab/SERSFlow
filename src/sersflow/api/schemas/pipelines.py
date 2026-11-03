@@ -27,8 +27,8 @@ class PipelineCreateRequest(BaseModel):
     @model_validator(mode="after")
     def resolve_technique_family(self) -> PipelineCreateRequest:
         fam = self.technique_family or self.pipeline.technique_family
-        if fam not in ("vibrational", "xps"):
-            raise ValueError("technique_family is required (vibrational or xps)")
+        if fam not in ("vibrational", "xps", "xas"):
+            raise ValueError("technique_family is required (vibrational, xps or xas)")
         self.technique_family = fam
         self.pipeline = self.pipeline.model_copy(update={"technique_family": fam})
         return self

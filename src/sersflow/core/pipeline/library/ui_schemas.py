@@ -150,6 +150,36 @@ NORMALIZE = StepUiSchema(
     ),
 )
 
+XAS_NORMALIZE = StepUiSchema(
+    method_param_key=None,
+    methods=(
+        StepMethodUi(
+            id="edge_step",
+            label="edge step",
+            defaults={
+                "e0": None,
+                "pre_min": None,
+                "pre_max": None,
+                "post_min": None,
+                "post_max": None,
+                "pre_degree": 1,
+                "post_degree": 1,
+                "flatten": False,
+            },
+            fields=(
+                _F("e0", "number", "E0 (eV)", "Edge energy; empty = steepest rise of the spectrum."),
+                _F("pre_min", "number", "pre-edge from (eV)", "Empty = start of the data."),
+                _F("pre_max", "number", "pre-edge to (eV)", "Empty = automatic, below E0."),
+                _F("post_min", "number", "post-edge from (eV)", "Empty = automatic, above E0."),
+                _F("post_max", "number", "post-edge to (eV)", "Empty = end of the data."),
+                _F("pre_degree", "int", "pre-edge degree", "Polynomial degree (0-3) of the pre-edge line."),
+                _F("post_degree", "int", "post-edge degree", "Polynomial degree (0-3) of the post-edge fit."),
+                _F("flatten", "bool", "flatten", "Also remove the post-edge slope above E0."),
+            ),
+        ),
+    ),
+)
+
 ALIGN_RESAMPLE = StepUiSchema(
     method_param_key="mode",
     methods=(

@@ -104,7 +104,7 @@ export function buildPipelineFromEditor(
   steps: EditorStep[],
   fittingCatalog: FittingComponentSpecPublic[] | undefined,
   baselineCatalog: BaselineMethodsResponse = fallbackBaselineCatalog,
-  techniqueFamily: "vibrational" | "xps" = "vibrational",
+  techniqueFamily: "vibrational" | "xps" | "xas" = "vibrational",
   stepSpecs: StepSpecsMap = {}
 ): Pipeline {
   return {

@@ -152,7 +152,7 @@ def _ensure_upload_technique_meta(root_dir: Path, row: dict[str, Any]) -> dict[s
     if not rel:
         return row
     multi = is_multi_spectrum_path(rel)
-    has_family = row.get("technique_family") in ("vibrational", "xps")
+    has_family = row.get("technique_family") in ("vibrational", "xps", "xas")
     has_regions = isinstance(row.get("xps_regions"), list)
     labels = row.get("labels") if isinstance(row.get("labels"), dict) else {}
     blocks = get_block_spectra(labels)

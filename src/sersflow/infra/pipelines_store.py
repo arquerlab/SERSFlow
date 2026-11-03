@@ -94,7 +94,7 @@ def _migrate_pipelines_owner(con: sqlite3.Connection) -> None:
 
 def _normalize_technique_family(value: object | None) -> str:
     s = str(value or "vibrational").strip().lower()
-    return s if s in ("vibrational", "xps") else "vibrational"
+    return s if s in ("vibrational", "xps", "xas") else "vibrational"
 
 
 def _record_from_row(row: sqlite3.Row) -> PipelineLibraryRecord:

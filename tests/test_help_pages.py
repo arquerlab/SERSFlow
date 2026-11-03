@@ -145,9 +145,9 @@ def test_images_and_downloads_exist():
 
 
 def server_step_labels(client) -> set[str]:
-    """Palette labels offered for either technique (the catalog depends on technique_family)."""
+    """Palette labels offered for any technique (the catalog depends on technique_family)."""
     labels: set[str] = set()
-    for fam in ("vibrational", "xps"):
+    for fam in ("vibrational", "xps", "xas"):
         r = client.get("/meta/pipeline-steps", params={"technique_family": fam})
         assert r.status_code == 200
         labels |= {s["label"] for s in r.json()["items"] if s.get("palette_group")}

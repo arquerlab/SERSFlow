@@ -1,6 +1,6 @@
 import { fetchJson, fetchText } from "./api.js";
 
-const DEFAULT_UPLOAD_ACCEPT = ".txt,.wdf,.vms,.nxs,.nx5";
+const DEFAULT_UPLOAD_ACCEPT = ".txt,.wdf,.vms,.nxs,.nx5,.sle";
 
 /** Set `#files` accept from `GET /meta/formats` (fallback hardcoded list). */
 export async function applyFormatsAcceptToFileInput(inputEl) {

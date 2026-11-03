@@ -397,11 +397,46 @@ def _assemble_lmfit_model(
     return model, peak_fns, slices, mapping, prefixes, param_keys_per_comp, cursor, has_active_bg
 
 
+_GAUSS_K_EXPR = "1.0644670194312262"  # sqrt(pi / (4 ln 2)); area per unit height per unit FWHM (Gaussian)
+_LORENTZ_K_EXPR = "1.5707963267948966"  # pi / 2 (Lorentzian)
+
+
+def _area_per_height_expr(
+    ctype: str,
+    comp_id: str,
+    name_by_comp_key: dict[tuple[str, str], str],
+) -> str:
+    """
+    lmfit expression for area / peak height of one component, in terms of its (possibly linked) fwhm
+    and shape parameter. Mirrors ``peak_area.*_area_per_height`` for the types we support.
+    """
+
+    def nm(key: str) -> str:
+        n = name_by_comp_key.get((comp_id, key))
+        if n is None:
+            raise ValueError(f"area_ratio link: component {comp_id!r} has no parameter {key!r}")
+        return n
+
+    ct = ctype.strip().lower()
+    if ct == "gaussian":
+        return f"({nm('fwhm')}*{_GAUSS_K_EXPR})"
+    if ct == "lorentzian":
+        return f"({nm('fwhm')}*{_LORENTZ_K_EXPR})"
+    if ct == "gl":
+        eta = f"(min(max({nm('m')}, 0.0), 100.0)/100.0)"
+        return f"({nm('fwhm')}*({eta}*{_LORENTZ_K_EXPR}+(1.0-{eta})*{_GAUSS_K_EXPR}))"
+    if ct == "pseudo_voigt":
+        eta = f"min(max({nm('eta')}, 0.0), 1.0)"
+        return f"({nm('fwhm')}*({eta}*{_LORENTZ_K_EXPR}+(1.0-{eta})*{_GAUSS_K_EXPR}))"
+    raise ValueError(f"area_ratio link is not supported for component type {ctype!r}")
+
+
 def _apply_param_links(
     params: Any,
     problem: FitProblem,
     name_by_comp_key: dict[tuple[str, str], str],
 ) -> None:
+    ctype_by_id = {c.component_id: c.component_type for c in problem.components}
     for link in problem.param_links or []:
         src = (str(link.get("source_component_id") or ""), str(link.get("source_key") or ""))
         tgt = (str(link.get("target_component_id") or ""), str(link.get("target_key") or ""))
@@ -424,6 +459,16 @@ def _apply_param_links(
             if not np.isfinite(offset):
                 raise ValueError(f"param link offset must be finite: {link}")
             expr = f"({tgt_name})+({offset})"
+        elif mode_l == "area_ratio":
+            # dependent AREA = ratio x driver AREA, evaluated with the current fwhm / shape of both peaks.
+            if src[1] != "amp" or tgt[1] != "amp":
+                raise ValueError(f"area_ratio link must connect amp parameters: {link}")
+            ratio = float(link.get("ratio", float("nan")))
+            if not np.isfinite(ratio) or ratio <= 0:
+                raise ValueError(f"area_ratio link needs a finite ratio > 0: {link}")
+            f_dep = _area_per_height_expr(ctype_by_id.get(src[0], ""), src[0], name_by_comp_key)
+            f_drv = _area_per_height_expr(ctype_by_id.get(tgt[0], ""), tgt[0], name_by_comp_key)
+            expr = f"({ratio})*{tgt_name}*{f_drv}/{f_dep}"
         else:
             raise ValueError(f"Unknown link mode: {mode_l}")
         params[src_name].set(expr=expr, vary=False)
@@ -433,6 +478,32 @@ def fit_curve_lmfit(problem: FitProblem) -> FitResult:
     if _shirley_needs_flip(problem):
         return _flip_result(_fit_curve_lmfit(_flip_problem(problem)))
     return _fit_curve_lmfit(problem)
+
+
+def _count_params_at_bound(params, names) -> int:
+    """
+    Number of freely varying (non-expression) parameters sitting on one of their bounds.
+
+    Tolerance: 1e-3 of the bound span when both bounds are finite, else 1e-4 of the bound magnitude.
+    A parameter on its bound usually means the model is asking for more freedom than it was given.
+    """
+    n = 0
+    for name in names:
+        p = params.get(name)
+        if p is None or not bool(getattr(p, "vary", False)) or getattr(p, "expr", None):
+            continue
+        v = float(p.value)
+        lo = float(p.min) if p.min is not None else float("-inf")
+        hi = float(p.max) if p.max is not None else float("inf")
+        span = hi - lo if np.isfinite(lo) and np.isfinite(hi) else float("inf")
+        for b in (lo, hi):
+            if not np.isfinite(b):
+                continue
+            tol = 1e-3 * span if np.isfinite(span) else 1e-4 * max(abs(b), 1e-12)
+            if abs(v - b) <= tol:
+                n += 1
+                break
+    return n
 
 
 def _fit_curve_lmfit(problem: FitProblem) -> FitResult:
@@ -555,6 +626,12 @@ def _fit_curve_lmfit(problem: FitProblem) -> FitResult:
         p = result.params.get(name)
         if p is not None and bool(getattr(p, "vary", False)) and not getattr(p, "expr", None):
             n_vary += 1
+    n_at_bound = _count_params_at_bound(result.params, flat_names)
+    bg_curve = None
+    for comp, curve in zip(problem.components, comp_curves):
+        if comp.component_type.strip().lower() in XPS_BACKGROUND_COMPONENT_TYPES:
+            bg_curve = curve
+            break
     nfev = None
     try:
         nv = getattr(result, "nfev", None)
@@ -570,6 +647,9 @@ def _fit_curve_lmfit(problem: FitProblem) -> FitResult:
         p_opt=p_opt,
         nfev=nfev,
         success=bool(getattr(result, "success", True)),
+        x=xf,
+        bg_curve=bg_curve,
+        n_at_bound=n_at_bound,
     )
     return FitResult(
         p_opt=p_opt,
@@ -677,6 +757,15 @@ def _evaluate_curve_lmfit(
             p_opt=p,
             nfev=None,
             success=True,
+            x=xf,
+            bg_curve=next(
+                (
+                    c
+                    for comp, c in zip(problem.components, comp_curves)
+                    if comp.component_type.strip().lower() in XPS_BACKGROUND_COMPONENT_TYPES
+                ),
+                None,
+            ),
         )
     return FitResult(
         p_opt=p,

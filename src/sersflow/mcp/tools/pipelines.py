@@ -22,7 +22,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         limit: int = 50,
         offset: int = 0,
         q: str | None = None,
-        technique_family: Literal["vibrational", "xps"] | None = None,
+        technique_family: Literal["vibrational", "xps", "xas"] | None = None,
     ) -> str:
         """GET /pipelines — list saved pipelines (optional technique_family filter)."""
 
@@ -59,13 +59,13 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
     async def post_pipelines(
         name: str,
         pipeline: dict[str, Any],
-        technique_family: Literal["vibrational", "xps"] | None = None,
+        technique_family: Literal["vibrational", "xps", "xas"] | None = None,
         confirm: bool = False,
         overwrite: bool = False,
     ) -> str:
         """POST /pipelines — create a new named library pipeline (overwrite forbidden).
 
-        technique_family must match the dataset you will run against (vibrational or xps).
+        technique_family must match the dataset you will run against (vibrational, xps or xas).
         """
 
         def _run():
@@ -75,7 +75,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
             if not (name or "").strip():
                 raise ValueError("name is required for a new library pipeline")
             pipe = Pipeline.model_validate(pipeline)
-            if technique_family in ("vibrational", "xps"):
+            if technique_family in ("vibrational", "xps", "xas"):
                 pipe = pipe.model_copy(update={"technique_family": technique_family})
             blocked = confirm_gates.check_fitting_components(
                 pipe,

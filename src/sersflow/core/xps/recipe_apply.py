@@ -323,6 +323,10 @@ def _apply_fermi_edge_recipe(
     return out
 
 
+# Component types whose area/height ratio area_ratio links can evaluate (see fitting_lmfit).
+_AREA_RATIO_TYPES = frozenset({"gl", "gaussian", "lorentzian", "pseudo_voigt"})
+
+
 def apply_compound_fit_to_fitting_params(
     fit: CompoundFit,
     *,
@@ -491,6 +495,7 @@ def apply_compound_fit_to_fitting_params(
         *,
         scale: float | None = None,
         offset: float | None = None,
+        ratio: float | None = None,
     ) -> None:
         link: dict[str, Any] = {
             "source_component_id": source_id,
@@ -503,6 +508,8 @@ def apply_compound_fit_to_fitting_params(
             link["scale"] = float(scale)
         if mode == "offset" and offset is not None:
             link["offset"] = float(offset)
+        if mode == "area_ratio" and ratio is not None:
+            link["ratio"] = float(ratio)
         param_links.append(link)
         driven.add((source_id, source_key))
 
@@ -608,24 +615,43 @@ def apply_compound_fit_to_fitting_params(
             None,
         )
         if sat_idx and ref_idx is not None:
+            peak_comp_types = [str(c.get("component_type") or "").strip().lower() for c in components[peak_offset:]]
+            n_height_fallback = 0
             for i in sat_idx:
-                add_link(
-                    peak_comp_ids[i],
-                    "amp",
-                    peak_comp_ids[ref_idx],
-                    "amp",
-                    "scale",
-                    scale=height_scale_for_area_ratio(
-                        area_i=float(areas[i]),
-                        area_0=float(areas[ref_idx]),
-                        factor_i=factors[i],
-                        factor_0=factors[ref_idx],
-                    ),
-                )
+                if peak_comp_types[i] in _AREA_RATIO_TYPES and peak_comp_types[ref_idx] in _AREA_RATIO_TYPES:
+                    # The link keeps the literature AREA ratio whatever fwhm / shape the fit settles on.
+                    add_link(
+                        peak_comp_ids[i],
+                        "amp",
+                        peak_comp_ids[ref_idx],
+                        "amp",
+                        "area_ratio",
+                        ratio=float(areas[i]) / float(areas[ref_idx]),
+                    )
+                else:
+                    n_height_fallback += 1
+                    add_link(
+                        peak_comp_ids[i],
+                        "amp",
+                        peak_comp_ids[ref_idx],
+                        "amp",
+                        "scale",
+                        scale=height_scale_for_area_ratio(
+                            area_i=float(areas[i]),
+                            area_0=float(areas[ref_idx]),
+                            factor_i=factors[i],
+                            factor_0=factors[ref_idx],
+                        ),
+                    )
             warnings.append(
-                "satellite area ratio(s) locked to the main peak via amp links "
+                "satellite area ratio(s) locked to the main peak via area_ratio links "
                 "(edit or remove the link to unlock; lock_satellites=false disables)"
             )
+            if n_height_fallback:
+                warnings.append(
+                    f"{n_height_fallback} satellite(s) use a fixed-height amp scale link "
+                    "(line shape not supported by area_ratio)"
+                )
         elif sat_idx:
             warnings.append("satellite peaks flagged but no area_pct reference peak; ratios not locked")
 

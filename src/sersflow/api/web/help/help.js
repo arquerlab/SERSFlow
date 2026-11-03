@@ -65,6 +65,7 @@ export const STEPS = [
   { name: "Derivative", target: "r-steps#step-derivative", words: "derivative gradient order", desc: "First or higher-order spectral derivative." },
   { name: "Low-Signal Filter", target: "r-steps#step-lowsignal", words: "low signal filter weak dead threshold qc", desc: "Remove whole spectra that are too weak." },
   { name: "Metadata Filter", target: "r-steps#step-metadata", words: "metadata filter label region select keep mask branch", desc: "Keep only spectra whose labels match, on this branch." },
+  { name: "XAS edge normalization", target: "r-steps#step-xas", words: "xas nexafs exafs xanes edge step pre-edge post-edge e0 normalize flatten", desc: "Pre-edge subtraction and unit edge-step scaling for XAS / NEXAFS." },
   { name: "Normalization", target: "r-steps#step-normalize", words: "normalize normalise normalization max vector l2 internal standard scale", desc: "Rescale spectrum intensity." },
   { name: "Outlier Detection", target: "r-steps#step-outlier", words: "outlier detection anomaly correlation median pca qc", desc: "Remove spectra that look unlike the rest." },
   { name: "Reference Transformation", target: "r-steps#step-reference", words: "reference transformation blank solvent subtract divide", desc: "Subtract or divide by a reference spectrum." },

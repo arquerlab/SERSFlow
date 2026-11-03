@@ -83,7 +83,7 @@ def _planned_fields_from_packs(*, caps: list[str], family: str) -> list[tuple[st
             if not fmt_caps.intersection(cap_set):
                 continue
         else:
-            if family == "xps":
+            if family in ("xps", "xas"):
                 if fmt.technique not in ("xps", "sniff"):
                     continue
             elif fmt.technique == "xps":
@@ -92,7 +92,7 @@ def _planned_fields_from_packs(*, caps: list[str], family: str) -> list[tuple[st
             if fdef.key in seen_keys:
                 continue
             # Without caps, skip XPS structural on vibrational datasets.
-            if not cap_set and family != "xps" and fdef.source == "structural":
+            if not cap_set and family not in ("xps", "xas") and fdef.source == "structural":
                 continue
             # Axis fields are appended separately with presence rules.
             if fdef.source == "axis":

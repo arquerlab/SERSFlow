@@ -71,7 +71,7 @@ def list_pipelines_endpoint(
     offset: int = Query(0, ge=0),
     q: str | None = Query(None, description="Optional substring filter on name"),
     technique_family: str | None = Query(
-        None, description="Optional filter: vibrational or xps (matches active dataset technique)"
+        None, description="Optional filter: vibrational, xps or xas (matches active dataset technique)"
     ),
 ) -> dict[str, Any]:
     user_id = current_user_id(request)

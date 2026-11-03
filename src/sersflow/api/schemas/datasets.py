@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
-TechniqueFamily = Literal["vibrational", "xps"]
+TechniqueFamily = Literal["vibrational", "xps", "xas"]
 
 
 class DatasetMetadata(BaseModel):

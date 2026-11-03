@@ -21,6 +21,8 @@ from sersflow.api.services.fitting_preview import (
 from sersflow.api.services.observation_export import _labels_for_spectrum
 from sersflow.core.metrics.fitting_features import p_opt_and_gof_from_features
 from sersflow.core.pipeline.engine import fitting_region_applies
+from sersflow.core.preprocess.fit_diagnostics import fit_health_metrics
+from sersflow.core.preprocess.fitting_specs import XPS_BACKGROUND_COMPONENT_TYPES
 from sersflow.core.preprocess.fitting import (
     evaluate_fit_curves,
     expand_fit_curves_to_full,
@@ -79,6 +81,50 @@ def _csv_bytes(
     return buf.getvalue().encode("utf-8")
 
 
+_HEALTH_COLUMNS = (
+    "spectrum_id",
+    "rmse",
+    "n_at_bound",
+    "bg_gt_data_frac",
+    "resid_mean_edge_lo",
+    "resid_mean_edge_hi",
+    "resid_lag1_autocorr",
+)
+
+
+def _health_row(sid, xy, y_hat_arr, stored_diag, mapping, comps_full) -> dict[str, Any]:
+    """Per-spectrum fit-health sidecar row. Edge/bg metrics are recomputed from the exported curves
+    (inside the fit window) so old runs without stored health columns still get them; the pinned
+    count can only come from the fit itself (stored diagnostics)."""
+    mask = np.isfinite(y_hat_arr)
+    bg = None
+    for idx, m in enumerate(mapping):
+        if str(m.get("component_type", "")).lower() in XPS_BACKGROUND_COMPONENT_TYPES:
+            bg = np.asarray(comps_full[idx], dtype=float)[mask]
+            break
+    health = fit_health_metrics(
+        xy.y.astype(float)[mask], y_hat_arr[mask], x=xy.x.astype(float)[mask], bg_curve=bg
+    )
+    row: dict[str, Any] = {"spectrum_id": sid, "rmse": getattr(stored_diag, "rmse", None)}
+    row["n_at_bound"] = getattr(stored_diag, "n_at_bound", None)
+    row.update(health)
+    return row
+
+
+def _health_csv_bytes(rows: list[dict[str, Any]]) -> bytes:
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(_HEALTH_COLUMNS)
+    for r in rows:
+        w.writerow(
+            [
+                "" if (r.get(c) is None or (isinstance(r.get(c), float) and not np.isfinite(r[c]))) else r.get(c)
+                for c in _HEALTH_COLUMNS
+            ]
+        )
+    return buf.getvalue().encode("utf-8")
+
+
 def execute_fit_curve_job(job_id: str) -> None:
     rec = get_fit_curve_job(job_id)
     if rec is None:
@@ -130,6 +176,7 @@ def execute_fit_curve_job(job_id: str) -> None:
         total = len(refs)
         update_fit_curve_job(job_id=job_id, progress_done=0, progress_total=total)
         done = 0
+        health_rows: list[dict[str, Any]] = []
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             for r in refs:
                 sid = str(r.spectrum_id)
@@ -195,6 +242,9 @@ def execute_fit_curve_job(job_id: str) -> None:
                         }
                     )
                 safe = _safe_name(sid)
+                health_rows.append(
+                    _health_row(sid, xy, y_hat_arr, res.diagnostics, res.mapping, comps_full)
+                )
                 if fmt == "csv":
                     payload = _csv_bytes(
                         x=x,
@@ -226,6 +276,9 @@ def execute_fit_curve_job(job_id: str) -> None:
 
                 if done % 25 == 0 or done == total:
                     update_fit_curve_job(job_id=job_id, progress_done=done, progress_total=total)
+
+            if health_rows:
+                zf.writestr("fit_health.csv", _health_csv_bytes(health_rows))
 
         update_fit_curve_job(
             job_id=job_id,

@@ -23,7 +23,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         name: str | None = None,
         tags: list[str] | None = None,
         description: str | None = None,
-        technique_family: Literal["vibrational", "xps"] | None = None,
+        technique_family: Literal["vibrational", "xps", "xas"] | None = None,
         vms_spectrum_mode: Literal["averages", "individuals", "all"] = "averages",
         xps_regions: list[str] | None = None,
         record_indices: dict[str, list[int]] | None = None,
@@ -38,7 +38,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 "description": description,
                 "tags": tags or [],
             }
-            if technique_family in ("vibrational", "xps"):
+            if technique_family in ("vibrational", "xps", "xas"):
                 meta_kw["technique_family"] = technique_family
             meta = DatasetMetadata(**meta_kw)
             req = DatasetCreateRequest(

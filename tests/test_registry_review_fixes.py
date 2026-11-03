@@ -13,6 +13,7 @@ def test_is_multi_spectrum_path_uses_registry():
     assert is_multi_spectrum_path("a.vms") is True
     assert is_multi_spectrum_path("a.nxs") is True
     assert is_multi_spectrum_path("a.nx5") is True
+    assert is_multi_spectrum_path("a.sle") is True
     assert is_multi_spectrum_path("a.txt") is False
     assert is_multi_spectrum_path("a.wdf") is False
 

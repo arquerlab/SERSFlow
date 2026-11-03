@@ -16,6 +16,7 @@ from sersflow.core.metrics.intensity_probes import parse_probes
 from sersflow.core.preprocess.fitting import expand_fit_curves_to_full, fit_curve, fit_problem_from_step_params
 from sersflow.core.preprocess.noise import apply_savitzky_golay
 from sersflow.core.preprocess.x_axis_calibration import apply_x_axis_calibration
+from sersflow.core.preprocess.xas import normalize_edge_step, params_to_kwargs as xas_params_to_kwargs
 from sersflow.core.qc.metadata_filter import evaluate_filters
 from sersflow.core.spectrum import EMPTY_XY, XY
 
@@ -142,6 +143,13 @@ def _normalize(xy: XY, params: dict[str, Any]) -> XY:
     if denom == 0.0:
         denom = 1.0
     return XY(x=xy.x, y=y / denom)
+
+
+def _xas_normalize(xy: XY, params: dict[str, Any]) -> XY:
+    if xy.y.size == 0:
+        return xy
+    res = normalize_edge_step(xy.x, xy.y, **xas_params_to_kwargs(params))
+    return XY(x=xy.x, y=res.y)
 
 
 def _noise_savgol(xy: XY, params: dict[str, Any]) -> XY:
@@ -441,6 +449,7 @@ DEFAULT_STEPS: dict[str, StepImpl] = {
     "align_resample": StepImpl(name="align_resample", impl_version="1", transform=_align_resample),
     "x_axis_calibration": StepImpl(name="x_axis_calibration", impl_version="1", transform=_x_axis_calibration),
     "normalize": StepImpl(name="normalize", impl_version="2", transform=_normalize),
+    "xas_normalize": StepImpl(name="xas_normalize", impl_version="1", transform=_xas_normalize),
     "noise_savgol": StepImpl(name="noise_savgol", impl_version="1", transform=_noise_savgol),
     "cosmic_ray_removal": StepImpl(name="cosmic_ray_removal", impl_version="1", transform=_cosmic_ray_removal),
     "baseline": StepImpl(name="baseline", impl_version="1", transform=_baseline),

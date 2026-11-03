@@ -78,7 +78,15 @@ def test_preview_fitting_keys_gaussian_component() -> None:
     assert keys[:4] == ["fit_g1_pos", "fit_g1_amp", "fit_g1_fwhm", "fit_g1_area"]
     assert "fit_gof_rmse" in keys
     assert "fit_gof_bic" in keys
-    assert keys[-1] == "fit_gof_median_rel_stderr"
+    assert "fit_gof_median_rel_stderr" in keys
+    assert keys[-1] == "fit_gof_resid_lag1_autocorr"
+    for k in (
+        "fit_gof_n_at_bound",
+        "fit_gof_bg_gt_data_frac",
+        "fit_gof_resid_mean_edge_lo",
+        "fit_gof_resid_mean_edge_hi",
+    ):
+        assert k in keys
 
 
 def test_preview_fitting_keys_lorentzian_and_voigt() -> None:

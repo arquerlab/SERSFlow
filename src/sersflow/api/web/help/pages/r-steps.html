@@ -76,6 +76,15 @@
 <h2 id="step-smoothing">Smoothing</h2>
 <p>Savitzky–Golay: <b>window_length</b> (odd, default 11) and <b>polyorder</b> (default 3, must be smaller than the window). A window longer than the spectrum, or polyorder not below the window, silently leaves the spectrum unchanged. Choose a window of about a third of the narrowest peak's width in points; over-smoothing broadens peaks and biases fitted widths.</p>
 
+<h2 id="step-xas">XAS Edge Normalization (XAS only)</h2>
+<p>Subtracts a polynomial <b>pre-edge</b> line and divides by the <b>edge step</b> (post-edge minus pre-edge, both evaluated at <b>E0</b>), so the pre-edge sits at 0 and the post-edge at 1.</p>
+<ul>
+  <li><b>E0</b>: empty = the steepest rise of the spectrum. Set it by hand on noisy signals (e.g. partial-yield counts), because the automatic pick can land on noise.</li>
+  <li><b>pre-edge / post-edge from–to</b>: empty = automatic windows (lower 60&nbsp;% of the range below E0, upper 50&nbsp;% above it). Windows are clipped to the data and must hold enough points for the chosen degrees.</li>
+  <li><b>flatten</b> also removes the post-edge slope above E0.</li>
+  <li>Only offered for XAS datasets. Normalize <b>after</b> smoothing and any x-axis calibration.</li>
+</ul>
+
 <h2 id="step-xcal">X-axis Calibration</h2>
 <p>Shifts the x axis (x_new = x + shift).</p>
 <ul>

@@ -42,6 +42,18 @@ _LOADER_ONLY_STRUCTURAL_KEYS = frozenset(
         "nxs_spectrum_name",
         "nxs_skipped_count",
         "nxs_skipped_regions",
+        "sle_node",
+        "sle_spectrum_name",
+        "sle_scan_mode",
+        "sle_channel_shifts_applied",
+        "sle_work_function_eV",
+        "sle_sample_identifier",
+        "sle_fixed_kinetic_energy_eV",
+        "sle_photon_energy_max_dev_eV",
+        "xas_signal",
+        "xas_edge",
+        "xas_i0_normalized",
+        "y_label",
     }
 )
 
@@ -103,7 +115,7 @@ def select_experimental_filter_keys(
     if any(k in present for k in ELECTROCHEM_FILTER_TRIO):
         out.extend(ELECTROCHEM_FILTER_TRIO)
 
-    if family != "xps":
+    if family not in ("xps", "xas"):
         for k in LASER_FILTER_KEYS:
             if k in present:
                 out.append(k)
@@ -111,7 +123,7 @@ def select_experimental_filter_keys(
     return out
 
 
-_MULTI_SUFFIXES = frozenset({".vms", ".nxs", ".nx5"})
+_MULTI_SUFFIXES = frozenset({".vms", ".nxs", ".nx5", ".sle"})
 
 
 def is_multi_spectrum_path(path: str | Path) -> bool:

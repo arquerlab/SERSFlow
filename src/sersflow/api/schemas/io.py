@@ -37,7 +37,7 @@ class UploadRegistryItem(BaseModel):
     wn_max: float | None = None
     spectrum_count: int | None = None
     xps_regions: list[str] | None = None
-    technique_family: Literal["vibrational", "xps"] | None = None
+    technique_family: Literal["vibrational", "xps", "xas"] | None = None
     labels: dict[str, Any] = Field(
         default_factory=dict,
         description=(

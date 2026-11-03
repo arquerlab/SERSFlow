@@ -306,6 +306,11 @@ def diagnostics_from_feature_gof(gof: dict[str, float | None]) -> FitDiagnostics
         n_vary=f("n_vary", 0.0),
         nfev=f_opt("nfev"),
         median_rel_stderr=f_opt("median_rel_stderr"),
+        n_at_bound=f_opt("n_at_bound"),
+        bg_gt_data_frac=f_opt("bg_gt_data_frac"),
+        resid_mean_edge_lo=f_opt("resid_mean_edge_lo"),
+        resid_mean_edge_hi=f_opt("resid_mean_edge_hi"),
+        resid_lag1_autocorr=f_opt("resid_lag1_autocorr"),
     )
 
 

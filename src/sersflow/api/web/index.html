@@ -55,7 +55,7 @@
           <div class="section-title">Upload files</div>
           <div id="drop" class="drop">
             <div class="row">
-              <input id="files" type="file" accept=".txt,.wdf,.vms,.nxs,.nx5" multiple />
+              <input id="files" type="file" accept=".txt,.wdf,.vms,.nxs,.nx5,.sle" multiple />
               <!-- accept refreshed from GET /meta/formats on load (uploads.js) -->
               <input id="folders" type="file" webkitdirectory directory multiple />
               <label class="inline" title="Choose whether to skip extensions or only allow them">
@@ -67,7 +67,7 @@
               </label>
               <label class="inline" title="Comma-separated file extensions (without dots)">
                 Extensions
-                <input id="excludeExts" type="text" value="txt,wdf,vms,nxs,nx5" style="width: 220px" />
+                <input id="excludeExts" type="text" value="txt,wdf,vms,nxs,nx5,sle" style="width: 220px" />
               </label>
               <button id="uploadBtn" type="button">Upload</button>
               <button id="clearSelectionBtn" type="button">Clear selection</button>

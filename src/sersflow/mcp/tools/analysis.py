@@ -49,7 +49,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
         Provide session_id OR (pipeline + subset). pipeline_id/pipeline_name are labels unless
         used for fitting confirm resolution; they do not alone load a pipeline for the run.
-        Dataset and pipeline technique_family must match (vibrational or xps).
+        Dataset and pipeline technique_family must match (vibrational, xps or xas).
         """
 
         def _run():

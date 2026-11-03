@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sersflow.api.schemas.datasets import SpectrumRef
 
 InputFrom = Literal["previous", "initial", "after_step"]
-TechniqueFamily = Literal["vibrational", "xps"]
+TechniqueFamily = Literal["vibrational", "xps", "xas"]
 
 
 class PipelineStep(BaseModel):

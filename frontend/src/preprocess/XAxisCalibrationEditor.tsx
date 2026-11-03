@@ -14,7 +14,7 @@ import {
 
 type Props = {
   datasetId: string | null;
-  techniqueFamily?: "vibrational" | "xps";
+  techniqueFamily?: "vibrational" | "xps" | "xas";
   steps: EditorStep[];
   selectedStep: EditorStep;
   params: XAxisCalibrationParams;
@@ -317,7 +317,7 @@ export function XAxisCalibrationEditor({
 
 export function xAxisParamsFromStep(
   step: EditorStep,
-  techniqueFamily: "vibrational" | "xps"
+  techniqueFamily: "vibrational" | "xps" | "xas"
 ): XAxisCalibrationParams {
   return normalizeXAxisCalibrationParams(step.params as Record<string, unknown>, techniqueFamily);
 }

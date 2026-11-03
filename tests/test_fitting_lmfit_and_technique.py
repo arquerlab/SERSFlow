@@ -393,3 +393,31 @@ def test_fitting_fit_api_respects_fit_window() -> None:
     resid = np.asarray(body["residual"], dtype=float)
     assert np.all(np.isnan(resid[x < 480.0]))
     assert np.all(np.isnan(resid[x > 520.0]))
+
+
+def test_xps_fit_reports_params_at_bound_and_health() -> None:
+    pytest.importorskip("lmfitxps")
+    rng = np.random.default_rng(5)
+    x = np.linspace(300.0, 280.0, 160)
+    y = 50.0 + 400.0 * np.exp(-((x - 290.0) ** 2) / (2 * 1.2**2)) + rng.normal(0.0, 2.0, x.size)
+    # amplitude capped far below the true peak height -> amp must end on its upper bound
+    res = fit_curve(
+        FitProblem(
+            x=x,
+            y=y,
+            components=[
+                FitComponent(component_type="shirley_bg", component_id="bg"),
+                FitComponent(component_type="gaussian", component_id="p1"),
+            ],
+            p0=[0.0005, 0.0, 290.0, 100.0, 1.2],
+            bounds_lower=[0.0, None, 285.0, 0.0, 0.1],
+            bounds_upper=[0.001, None, 295.0, 150.0, 10.0],
+            vary=[True, True, True, True, True],
+            technique_family="xps",
+        )
+    )
+    d = res.diagnostics
+    assert d.n_at_bound is not None and d.n_at_bound >= 1
+    assert d.resid_lag1_autocorr is not None and d.resid_lag1_autocorr > 0.5  # structured: peak underfit
+    assert d.resid_mean_edge_lo is not None and d.resid_mean_edge_hi is not None
+    assert d.bg_gt_data_frac is not None

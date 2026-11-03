@@ -130,7 +130,11 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
   // Format plot_mode is a format hint (map markers etc.); overlay/stack + subset size remain user prefs.
   const xAxisTitle =
     (defaultXLabel && String(defaultXLabel).trim()) ||
-    (techniqueFamily === "xps" ? "Binding energy (eV)" : RAMAN_SHIFT_AXIS_TITLE);
+    (techniqueFamily === "xps"
+      ? "Binding energy (eV)"
+      : techniqueFamily === "xas"
+      ? "Photon energy (eV)"
+      : RAMAN_SHIFT_AXIS_TITLE);
 
   explorePlotAbortRef.current?.abort();
   const ac = new AbortController();

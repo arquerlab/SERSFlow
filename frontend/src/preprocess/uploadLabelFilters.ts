@@ -52,11 +52,11 @@ export function visibleFilterKeys(
   const out: FilterKey[] = [];
   for (const key of FILTER_KEYS) {
     if (XPS_STRUCTURAL_KEYS.has(key)) {
-      if (family === "xps" && present.has(key)) out.push(key);
+      if ((family === "xps" || family === "xas") && present.has(key)) out.push(key);
       continue;
     }
     if (LASER_KEYS.has(key)) {
-      if (family === "xps") continue;
+      if (family === "xps" || family === "xas") continue;
       if (!present.has(key)) continue;
       out.push(key);
       continue;

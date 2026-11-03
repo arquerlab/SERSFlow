@@ -49,6 +49,7 @@ import {
   type SessionRunMetricsResponse,
   type SpectrumRef,
   type TechniqueFamily,
+  isTechniqueFamily,
 } from "./preprocess/api";
 import {
   additionalParams,
@@ -419,7 +420,7 @@ export default function PreprocessingWorkspace() {
 
   useEffect(() => {
     const fam = datasetQ.data?.dataset?.metadata?.technique_family;
-    if (fam === "xps" || fam === "vibrational") {
+    if (isTechniqueFamily(fam)) {
       setPipelineTechniqueFamily((prev) => (prev === fam ? prev : fam));
     }
   }, [datasetId, datasetQ.data?.dataset?.metadata?.technique_family]);
@@ -427,7 +428,7 @@ export default function PreprocessingWorkspace() {
   /** Dataset family wins over the dropdown when a dataset is loaded (session must match). */
   const effectiveTechniqueFamily: TechniqueFamily = useMemo(() => {
     const dsFam = datasetQ.data?.dataset?.metadata?.technique_family;
-    if (dsFam === "xps" || dsFam === "vibrational") return dsFam;
+    if (isTechniqueFamily(dsFam)) return dsFam;
     return pipelineTechniqueFamily;
   }, [datasetQ.data?.dataset?.metadata?.technique_family, pipelineTechniqueFamily]);
   const isXpsPipeline = effectiveTechniqueFamily === "xps";
@@ -541,7 +542,7 @@ export default function PreprocessingWorkspace() {
         setLastError(null);
       }
       const fam = data?.dataset?.metadata?.technique_family;
-      if (fam === "xps" || fam === "vibrational") setPipelineTechniqueFamily(fam);
+      if (isTechniqueFamily(fam)) setPipelineTechniqueFamily(fam);
       setNewDatasetName("");
       setDatasetId(nextDatasetId);
       // Create a session (subsets are explicit; user creates/applies subset next).
@@ -810,8 +811,8 @@ export default function PreprocessingWorkspace() {
         item.technique_family ??
         null;
       const resolvedFam: TechniqueFamily =
-        fam === "xps" || fam === "vibrational" ? fam : effectiveTechniqueFamily;
-      if (fam === "xps" || fam === "vibrational") setPipelineTechniqueFamily(fam);
+        isTechniqueFamily(fam) ? fam : effectiveTechniqueFamily;
+      if (isTechniqueFamily(fam)) setPipelineTechniqueFamily(fam);
       const nextVersion = pipelineVersion + 1;
       setPipelineVersion(nextVersion);
       // Persist immediately with the loaded family so auto-run cannot race a stale vibrational PUT.
@@ -1184,7 +1185,7 @@ export default function PreprocessingWorkspace() {
               if (v) {
                 const item = (datasetsQ.data?.items ?? []).find((d) => d.dataset_id === v);
                 const fam = item?.metadata?.technique_family;
-                if (fam === "xps" || fam === "vibrational") setPipelineTechniqueFamily(fam);
+                if (isTechniqueFamily(fam)) setPipelineTechniqueFamily(fam);
                 createSessionM.mutate(v);
               }
             }}
@@ -1672,9 +1673,9 @@ export default function PreprocessingWorkspace() {
             <select
               value={effectiveTechniqueFamily}
               onChange={(e) => {
-                const v = e.target.value === "xps" ? "xps" : "vibrational";
+                const v: TechniqueFamily = isTechniqueFamily(e.target.value) ? e.target.value : "vibrational";
                 const dsFam = datasetQ.data?.dataset?.metadata?.technique_family;
-                if ((dsFam === "xps" || dsFam === "vibrational") && dsFam !== v) {
+                if ((isTechniqueFamily(dsFam)) && dsFam !== v) {
                   setLastError(
                     `Pipeline type must match the loaded dataset (${dsFam}). Switch dataset to change technique.`
                   );
@@ -1685,14 +1686,19 @@ export default function PreprocessingWorkspace() {
                 // Force a save on next run so session pipeline technique_family updates.
                 setPipelineVersion((ver) => ver + 1);
               }}
-              title="Required for save-to-library; selects fit engine (XPS→lmfit, vibrational→curve_fit)"
+              title="Required for save-to-library; selects fit engine (XPS/XAS→lmfit, vibrational→curve_fit)"
             >
               <option value="vibrational">Vibrational (Raman / SERS / FTIR)</option>
               <option value="xps">XPS</option>
+              <option value="xas">XAS / NEXAFS</option>
             </select>
           </label>
           <span className="hint">
-            {isXpsPipeline ? "Fitting uses lmfit (constraints + XPS backgrounds)." : "Fitting uses SciPy curve_fit."}
+            {isXpsPipeline
+              ? "Fitting uses lmfit (constraints + XPS backgrounds)."
+              : effectiveTechniqueFamily === "xas"
+              ? "Fitting uses lmfit (constraints)."
+              : "Fitting uses SciPy curve_fit."}
           </span>
         </div>
         <div className="pipeline-step-picker" role="group" aria-label="Add pipeline step">

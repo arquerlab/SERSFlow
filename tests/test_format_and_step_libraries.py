@@ -11,10 +11,11 @@ from sersflow.core.pipeline.library import get_step, list_steps
 
 def test_formats_cover_builtin_suffixes():
     suffixes = set(supported_suffixes())
-    for s in (".txt", ".wdf", ".vms", ".nxs", ".nx5"):
+    for s in (".txt", ".wdf", ".vms", ".nxs", ".nx5", ".sle"):
         assert s in suffixes
     assert get_format_for_suffix(".vms").id == "vamas"
     assert get_format_for_suffix(".nxs").id == "nexus_xps"
+    assert get_format_for_suffix(".sle").id == "specs_sle"
     assert "multi_block" in get_format_for_suffix(".vms").all_capabilities()
     public = [f.to_public() for f in list_formats()]
     assert any(p["id"] == "ascii_xy" for p in public)

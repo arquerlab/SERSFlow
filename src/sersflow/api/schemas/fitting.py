@@ -76,7 +76,7 @@ class FitRequest(BaseModel):
     ds / gds / la / lf / apv / asymmetric_voigt), set initial amplitude to the
     spectrum y value at the initial center (pos).
     """
-    technique_family: Literal["vibrational", "xps"] = "vibrational"
+    technique_family: Literal["vibrational", "xps", "xas"] = "vibrational"
     vary: list[bool] | None = None
     param_links: list[dict[str, Any]] | None = None
     xps_region: str | None = None
@@ -115,6 +115,15 @@ class FitDiagnosticsPublic(BaseModel):
     n_vary: float | None = None
     nfev: float | None = None
     median_rel_stderr: float | None = None
+    n_at_bound: float | None = None
+    """Free parameters sitting on a bound (the model is asking for more freedom than it has)."""
+    bg_gt_data_frac: float | None = None
+    """Fraction of points where the fitted background is above the data."""
+    resid_mean_edge_lo: float | None = None
+    resid_mean_edge_hi: float | None = None
+    """Mean residual (data - fit) over the outermost ~5% of the window at the low-/high-x end."""
+    resid_lag1_autocorr: float | None = None
+    """Lag-1 autocorrelation of the residual (0 = noise-like, near 1 = structured)."""
 
 
 class FitResponse(BaseModel):
