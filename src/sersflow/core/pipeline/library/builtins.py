@@ -203,6 +203,20 @@ _register(
 )
 _register(
     StepSpec(
+        id="group_average",
+        label="Group / Average",
+        category="qc",
+        palette_group="Data Preparation",
+        description=(
+            "Average spectra of the cohort: all together, per label value (sample, current density, ...), "
+            "or per numeric/time bin. Steps before it run per spectrum; steps after it run on the averages."
+        ),
+        impl=None,
+        ui=ui.GROUP_AVERAGE,
+    )
+)
+_register(
+    StepSpec(
         id="outlier_detection",
         label="Outlier Detection",
         category="qc",

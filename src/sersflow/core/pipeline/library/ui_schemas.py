@@ -363,6 +363,74 @@ SPECTRAL_INTENSITIES = _custom("spectral_intensities")
 SPECTRAL_INTEGRATIONS = _custom("spectral_integrations")
 FEATURE_OPERATIONS = _custom("feature_operations")
 REFERENCE_TRANSFORM = _custom("reference_transform")
+GROUP_AVERAGE = StepUiSchema(
+    method_param_key="method",
+    methods=(
+        StepMethodUi(
+            id="all",
+            label="all (average everything)",
+            defaults={"method": "all", "split_by_region": True, "reducer": "mean", "min_group_size": 1},
+        ),
+        StepMethodUi(
+            id="by_label",
+            label="by label",
+            defaults={
+                "method": "by_label",
+                "group_by": "",
+                "split_by_region": True,
+                "reducer": "mean",
+                "min_group_size": 1,
+            },
+            fields=(
+                _F(
+                    "group_by",
+                    "text",
+                    "group_by",
+                    "Comma-separated labels; spectra sharing all values are averaged (e.g. current_density, sample).",
+                ),
+            ),
+        ),
+        StepMethodUi(
+            id="by_range",
+            label="by range (bins)",
+            defaults={
+                "method": "by_range",
+                "range_label": "",
+                "range_width": None,
+                "range_origin": None,
+                "split_by_region": True,
+                "reducer": "mean",
+                "min_group_size": 1,
+            },
+            fields=(
+                _F(
+                    "range_label",
+                    "text",
+                    "range_label",
+                    "Numeric or timestamp label to bin on (e.g. time_s, acquired_at).",
+                ),
+                _F("range_width", "number", "range_width", "Bin width in the label's unit (seconds for time)."),
+                _F(
+                    "range_origin",
+                    "number",
+                    "range_origin",
+                    "Start of the first bin. Empty = smallest value in each group.",
+                ),
+            ),
+        ),
+    ),
+    common_fields=(
+        _F(
+            "split_by_region",
+            "bool",
+            "split_by_region",
+            "Never mix XPS regions (C1s with O1s): average within each xps_region.",
+        ),
+        _F("reducer", "select", "reducer", "How members are combined.", options=("mean", "median")),
+        _F("min_group_size", "int", "min_group_size", "Drop groups with fewer members than this."),
+    ),
+)
+
 LOW_SIGNAL_FILTER = _custom("low_signal_filter")
 OUTLIER_DETECTION = _custom("outlier_detection")
 METADATA_FILTER = _custom("metadata_filter")

@@ -24,7 +24,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         tags: list[str] | None = None,
         description: str | None = None,
         technique_family: Literal["vibrational", "xps", "xas"] | None = None,
-        vms_spectrum_mode: Literal["averages", "individuals", "all"] = "averages",
+        vms_spectrum_mode: Literal["averages", "individuals", "all"] = "individuals",
         xps_regions: list[str] | None = None,
         record_indices: dict[str, list[int]] | None = None,
     ) -> str:

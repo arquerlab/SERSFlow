@@ -23,6 +23,7 @@ from sersflow.api.schemas.sessions import (
     SubsetStrategy,
 )
 from sersflow.api.schemas.sessions_qc import SessionQcPreviewRequest, SessionQcPreviewResponse
+from sersflow.api.services.json_safe import sanitize_floats
 from sersflow.api.services.ownership import get_dataset_for_user, get_session_for_user
 from sersflow.api.services.reference_runtime import filter_reference_spectra, hydrate_reference_transforms
 from sersflow.api.services.pipeline_qc import (
@@ -458,11 +459,23 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
             raise HTTPException(status_code=404, detail=f"Uploaded file not found: {e}") from e
         except (ValueError, RuntimeError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        items = [
-            {"spectrum_id": sid, "x": xy.x.astype(float).tolist(), "y": xy.y.astype(float).tolist()}
-            for sid, xy in final.items()
-            if getattr(xy, "x", None) is not None and len(xy.x) > 0
-        ]
+        derived_by_sid = {
+            str(r.spectrum_id): r for r in refs if getattr(r, "member_spectrum_ids", None) is not None and getattr(r, "spectrum_labels", None)
+        }
+        items = []
+        for sid, xy in final.items():
+            if getattr(xy, "x", None) is None or len(xy.x) == 0:
+                continue
+            item: dict[str, Any] = {"spectrum_id": sid, "x": xy.x.astype(float).tolist(), "y": xy.y.astype(float).tolist()}
+            dref = derived_by_sid.get(str(sid))
+            if dref is not None:
+                item["derived"] = {
+                    "kind": "group_mean",
+                    "n_members": len(dref.member_spectrum_ids),
+                    "member_spectrum_ids": list(dref.member_spectrum_ids),
+                    "labels": sanitize_floats(dict(dref.spectrum_labels)),
+                }
+            items.append(item)
         return {"items": items}
 
     if isinstance(payload.return_, SessionRunReturnIntermediates):
@@ -504,6 +517,7 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
                 "blob_id": r.blob_id,
                 "blob_relative_path": r.blob_relative_path,
                 "original_relative_path": r.original_relative_path,
+                "spectrum_labels": getattr(r, "spectrum_labels", None),
             }
             for r in refs
         ]

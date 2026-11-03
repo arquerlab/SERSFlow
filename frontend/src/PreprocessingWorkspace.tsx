@@ -1427,8 +1427,9 @@ export default function PreprocessingWorkspace() {
               createFromUploadsM.mutate({
                 paths: selectedUploads,
                 name: newDatasetName,
-                // Default to averaged blocks; explicit block ticks imply "all" for those paths.
-                vms_spectrum_mode: selectedHasMulti ? (selectedHasExplicitBlocks ? "all" : "averages") : undefined,
+                // Default to individual scans (averages are made by the group_average step); explicit
+                // block ticks imply "all" for those paths. Files with only averages still load them.
+                vms_spectrum_mode: selectedHasMulti ? (selectedHasExplicitBlocks ? "all" : "individuals") : undefined,
                 xps_regions: selectedHasMulti && createXpsRegions.length ? createXpsRegions : undefined,
                 record_indices: selectedHasExplicitBlocks ? selectedRecordIndices : undefined,
               })

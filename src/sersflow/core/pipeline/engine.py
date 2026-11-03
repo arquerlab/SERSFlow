@@ -108,7 +108,7 @@ def fitting_region_applies(*, step_params: dict[str, Any], spectrum_xps_region: 
 # Cohort QC filters (session-only). They do not transform XY; treat as passthrough so
 # raw /pipeline/run and metric-subset paths never fail with "Unknown pipeline step".
 # metadata_filter is an engine transform (branch-local mask), not session cohort QC.
-_QC_PASSTHROUGH_STEPS = frozenset({"low_signal_filter", "outlier_detection"})
+_QC_PASSTHROUGH_STEPS = frozenset({"low_signal_filter", "outlier_detection", "group_average"})
 
 # Reused across analysis jobs in the API process so each SDL trial does not pay
 # ProcessPool spawn + worker import cost (especially painful on Windows spawn).

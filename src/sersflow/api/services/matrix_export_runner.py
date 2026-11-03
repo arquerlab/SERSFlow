@@ -100,6 +100,7 @@ def execute_matrix_export_job(matrix_job_id: str) -> None:
                 "blob_id": r.blob_id,
                 "blob_relative_path": r.blob_relative_path,
                 "original_relative_path": r.original_relative_path,
+                "spectrum_labels": getattr(r, "spectrum_labels", None),
             }
             for r in refs
         ]

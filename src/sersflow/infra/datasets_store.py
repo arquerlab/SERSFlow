@@ -285,6 +285,26 @@ def spectrum_export_lookup(dataset_id: str) -> dict[str, dict[str, Any]]:
             "grid_ny": r["grid_ny"],
             "file_kind": r["file_kind"],
         }
+    # Derived spectra (group averages) are part of the catalog for exports and label joins.
+    from sersflow.infra.derived_spectra_store import derived_relative_path, list_derived_spectra
+
+    for d in list_derived_spectra(dataset_id=dataset_id):
+        out.setdefault(
+            d.spectrum_id,
+            {
+                "relative_path": derived_relative_path(d.spectrum_id),
+                "record_index": None,
+                "blob_id": d.blob_id,
+                "blob_relative_path": d.blob_relative_path,
+                "original_relative_path": d.blob_relative_path,
+                "axis_time_s": None,
+                "axis_map_x": None,
+                "axis_map_y": None,
+                "grid_nx": None,
+                "grid_ny": None,
+                "file_kind": d.kind,
+            },
+        )
     return out
 
 

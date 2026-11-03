@@ -41,11 +41,12 @@ class DatasetCreateRequest(BaseModel):
     metadata: DatasetMetadata = Field(default_factory=DatasetMetadata)
     """
     When creating from VAMAS (.vms) uploads that contain both averaged and individual
-    blocks: ``averages`` keeps only averages; ``individuals`` keeps only replicates;
-    ``all`` keeps every block. Ignored for non-VMS files and for VMS files that only
-    contain one role (except ``all``, which always keeps all blocks).
+    blocks: ``individuals`` (default) keeps only replicates; ``averages`` keeps only the
+    file's pre-averaged blocks; ``all`` keeps every block. Ignored for non-VMS files and for
+    VMS files that only contain one role (except ``all``, which always keeps all blocks).
+    Averages of your own are made with the ``group_average`` pipeline step (role ``group_mean``).
     """
-    vms_spectrum_mode: Literal["averages", "individuals", "all"] = "averages"
+    vms_spectrum_mode: Literal["averages", "individuals", "all"] = "individuals"
     """
     Optional XPS region tokens (e.g. C1s, O1s). When non-empty, only VAMAS blocks
     whose ``xps_region`` is in this list are kept (after ``vms_spectrum_mode``).

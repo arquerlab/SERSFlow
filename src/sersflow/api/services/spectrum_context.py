@@ -60,6 +60,9 @@ def load_spectrum_contexts(
         ri_int = int(ri) if ri is not None and str(ri).strip() != "" else None
         sid = str(getattr(s, "spectrum_id", "") or "")
         lab = labels_for_spectrum(labels_by_path.get(rel) or {}, record_index=ri_int)
+        overlay = getattr(s, "spectrum_labels", None)  # derived spectra (group averages) carry their own labels
+        if isinstance(overlay, Mapping) and overlay:
+            lab = {**lab, **overlay}
         out.append(
             SpectrumContext(
                 spectrum_id=sid,

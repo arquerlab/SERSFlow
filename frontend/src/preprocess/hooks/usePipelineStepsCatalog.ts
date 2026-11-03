@@ -71,6 +71,16 @@ export type StepSpecsMap = Record<
   }
 >;
 
+/** The API names field kinds "bool"/"text"; the param editor renders "boolean"/"string". */
+function normalizeFieldKinds(fields: FieldSpec[]): FieldSpec[] {
+  return fields.map((f) => {
+    const kind = String(f.kind);
+    if (kind === "bool") return { ...f, kind: "boolean" } as FieldSpec;
+    if (kind === "text" || kind === "json") return { ...f, kind: "string" } as FieldSpec;
+    return f;
+  });
+}
+
 /** Convert API step list into the param-editor StepSpecsMap shape. */
 export function stepSpecsFromCatalog(items: PipelineStepCatalogItem[] | undefined): StepSpecsMap {
   const out: StepSpecsMap = {};
@@ -82,9 +92,9 @@ export function stepSpecsFromCatalog(items: PipelineStepCatalogItem[] | undefine
         id: m.id,
         label: m.label,
         defaults: m.defaults ?? {},
-        fields: (m.fields ?? []) as FieldSpec[],
+        fields: normalizeFieldKinds((m.fields ?? []) as FieldSpec[]),
       })),
-      commonFields: (it.ui.common_fields ?? []) as FieldSpec[],
+      commonFields: normalizeFieldKinds((it.ui.common_fields ?? []) as FieldSpec[]),
     };
   }
   return out;

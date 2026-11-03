@@ -233,7 +233,16 @@ def spectrum_xy_for_analysis_run(*, rec: Any, spectrum_id: str) -> Any:
 
     ref = next((s for s in ds.spectra if s.spectrum_id == spectrum_id), None)
     if ref is None:
-        raise KeyError("spectrum not found in analysis dataset")
+        # Group averages (derived spectra) live in the derived catalog, not in the dataset's spectra.
+        from sersflow.api.services.group_average import derived_ref_from_record
+        from sersflow.infra.derived_spectra_store import get_derived_spectra
+
+        drec = get_derived_spectra(dataset_id=rec.dataset_id, spectrum_ids=[spectrum_id]).get(spectrum_id)
+        if drec is None:
+            raise KeyError("spectrum not found in analysis dataset")
+        ref = derived_ref_from_record(drec)
+        # The averaged curve already includes every step before the group step.
+        effective_pipeline = pipeline_without_qc_steps(effective_pipeline)
 
     effective_pipeline = hydrate_reference_transforms(
         effective_pipeline,
@@ -333,6 +342,7 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
                 "blob_id": r.blob_id,
                 "blob_relative_path": r.blob_relative_path,
                 "original_relative_path": r.original_relative_path,
+                "spectrum_labels": getattr(r, "spectrum_labels", None),
             }
             for r in refs
         ]
