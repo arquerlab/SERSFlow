@@ -43,3 +43,7 @@ sersflow_deploy.pub
 # Local MCP client config and exports
 .mcp.json
 .sersflow_mcp_exports/
+
+# Claude Code skills
+.claude/skills/
+CLAUDE.md
