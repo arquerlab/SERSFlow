@@ -231,7 +231,19 @@ def filter_meta_indices(meta: tuple[dict[str, Any], ...] | list[dict[str, Any]],
     inds = [i for i, m in indexed if str(m.get("spectrum_role") or "") == "individual"]
     if mode == "averages":
         return avgs if avgs else inds
-    return inds if inds else avgs
+    if not inds:
+        return avgs
+    # Regions acquired once only have an "<region>_spectrum" block (role "average"); keep those
+    # (valence bands, surveys, single-scan core levels) next to the individual replicates.
+    with_inds = {
+        str(classify_block_role(str(meta[i].get("block_name") or "")).get("name_prefix"))
+        for i in inds
+    }
+    lone_avgs = [
+        i for i in avgs
+        if str(classify_block_role(str(meta[i].get("block_name") or "")).get("name_prefix")) not in with_inds
+    ]
+    return sorted(inds + lone_avgs)
 
 
 _ALL_VALENCE_BANDS_REGION = "all valence bands"

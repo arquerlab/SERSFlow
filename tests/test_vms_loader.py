@@ -750,3 +750,10 @@ def test_casa_iso_hv_and_work_function_after_comments(tmp_path: Path) -> None:
     # BE = hv − KE − φ
     np.testing.assert_allclose(b.x[0], hv - ke0 - wf)
     np.testing.assert_allclose(b.x, [hv - ke0 - wf, hv - (ke0 + 0.1) - wf, hv - (ke0 + 0.2) - wf])
+
+
+def test_individuals_mode_keeps_single_scan_regions() -> None:
+    names = ["Ir4f_spectrum", "Ir4f_spectrum_1", "Ir4f_spectrum_2", "VB_Ir4f_spectrum", "survey_spectrum",
+             "Ir4f_2_spectrum", "Ir4f_2_spectrum_1"]
+    meta = [{"block_name": n, "spectrum_role": "average" if n.endswith("_spectrum") else "individual"} for n in names]
+    assert filter_meta_indices(meta, "individuals") == [1, 2, 3, 4, 6]
