@@ -159,3 +159,21 @@ def test_derived_ref_round_trips_through_pipeline_run(client) -> None:
     items = r.json()["items"]
     assert {it["spectrum_id"] for it in items} == {x["spectrum_id"] for x in refs}
     assert all(it["x"] and min(it["x"]) >= 150.0 for it in items)
+
+
+def test_view_after_the_aggregate_step_itself_shows_the_aggregates(client) -> None:
+    """The "after: Aggregate Spectra" view requests the group step's own output (it used to come back empty)."""
+    api, upload_root = client
+    rec = _dataset(upload_root)
+    sid = _session(api, rec, [0, 3, 4])
+    r = api.post(
+        f"/sessions/{sid}/run",
+        json={"scope": "subset", "return": {"kind": "intermediates", "steps": ["group_average__2"]}},
+    )
+    assert r.status_code == 200, r.text
+    items = r.json()["items"]
+    assert len(items) == 3
+    for it in items:
+        assert it["spectrum_id"].startswith("grp_")
+        xy = it["steps"]["group_average__2"]
+        assert xy["x"] and xy["y"]

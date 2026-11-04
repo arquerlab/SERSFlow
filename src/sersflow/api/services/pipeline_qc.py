@@ -58,9 +58,6 @@ def view_is_after_group(pipeline: Pipeline, group_idx: int, token: str | None) -
     ``__raw__`` -> aggregated; ``__raw__:N`` (cohort steps through N) -> aggregated when N reaches the group
     step; ``name`` / ``name__N`` -> by the position of that step.
     """
-    from sersflow.core.pipeline.engine import _parse_collect_token
-    from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
-
     t = str(token or "").strip()
     if not t:
         return True
@@ -73,12 +70,21 @@ def view_is_after_group(pipeline: Pipeline, group_idx: int, token: str | None) -
             return int(t.split(":", 1)[1]) > group_idx
         except ValueError:
             return True
-    name, num = _parse_collect_token(t)
+    idx = step_index_for_token(pipeline, t)
+    return True if idx is None else idx >= group_idx
+
+
+def step_index_for_token(pipeline: Pipeline, token: str) -> int | None:
+    """Index of the pipeline step a view token (``name`` or ``name__N``) refers to, or None."""
+    from sersflow.core.pipeline.engine import _parse_collect_token
+    from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
+
+    name, num = _parse_collect_token(str(token or "").strip())
     nums = assign_pipeline_step_nums(pipeline.steps)
     for i, s in enumerate(pipeline.steps):
         if s.name == name and (num is None or nums[i] == num):
-            return i >= group_idx
-    return True
+            return i
+    return None
 
 
 def _last_group_index(pipeline: Pipeline, before: int | None = None) -> int | None:

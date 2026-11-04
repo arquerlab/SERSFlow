@@ -31,6 +31,7 @@ from sersflow.api.services.pipeline_qc import (
     apply_pipeline_qc_filters_before_step,
     pipeline_without_qc_steps,
     first_group_step_index,
+    step_index_for_token,
     view_is_after_group,
     qc_step_xy_inputs,
 )
@@ -523,6 +524,19 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
             )
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=f"Uploaded file not found: {e}") from e
+        # The group_average step is applied to the cohort (not the XY engine): asking for its output
+        # means the aggregated spectra themselves.
+        group_tokens = [
+            t for t in payload.return_.steps
+            if group_idx is not None and step_index_for_token(rec.pipeline, str(t)) == group_idx
+        ]
+        if group_tokens:
+            aggregated_xy = run_pipeline(
+                inputs=refs, pipeline=Pipeline(steps=[]), cache=_cache, config=cfg, strict=True
+            )
+            for gsid, gxy in aggregated_xy.items():
+                for t in group_tokens:
+                    inter.setdefault(gsid, {})[str(t)] = gxy
         items = []
         for sid, steps in inter.items():
             items.append(
