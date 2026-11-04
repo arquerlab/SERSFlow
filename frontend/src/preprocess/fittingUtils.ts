@@ -473,7 +473,7 @@ const FALLBACK_PEAK_P0_BY_TYPE: Partial<Record<FittingPeakType, Record<string, n
   ds: { alpha: 0.1 },
   gds: { alpha: 0.1 },
   la: { alpha: 1.5, beta: 1.0, fwhm_g: 0 },
-  lf: { alpha: 1.5, beta: 1.0, fwhm_g: 0, w: 20 },
+  lf: { alpha: 1.5, beta: 1.0, fwhm_g: 0, w: 100 },
   voigt: { fwhm_g: 10, fwhm_l: 10 },
 };
 
@@ -1001,4 +1001,52 @@ export function upsertParamLink(
   const filtered = (links ?? []).filter((l) => !(l.source_component_id === componentId && l.source_key === paramKey));
   if (!next) return filtered;
   return [...filtered, next];
+}
+
+/**
+ * Switch a component's lineshape while keeping every field the new shape shares by name
+ * (position, FWHM, bounds, vary flags, …). Fields only the new shape has get catalog defaults.
+ * Parameter links whose source/target key no longer exists are dropped.
+ */
+export function changeFittingComponentType(
+  fp: FittingEditorParams,
+  componentIndex: number,
+  componentType: FittingComponentType,
+  catalog: FittingComponentSpecPublic[] | undefined
+): FittingEditorParams {
+  const current = fp.components[componentIndex];
+  if (!current) return fp;
+  const degree = componentType === "polynomial_background" ? 2 : 0;
+  const fresh = defaultRowsForComponent(componentType, degree, catalog);
+  const old = new Map(current.rows.map((r) => [r.key, r] as const));
+  const rows = fresh.map((row) => {
+    const prev = old.get(row.key);
+    if (!prev) return row;
+    return { ...prev, label: row.label };
+  });
+  const components = fp.components.slice();
+  components[componentIndex] = { ...current, component_type: componentType, degree, rows };
+  const id = current.component_id;
+  const keys = new Set(rows.map((r) => r.key));
+  const param_links = (fp.param_links ?? []).filter(
+    (l) =>
+      (l.source_component_id !== id || keys.has(l.source_key)) &&
+      (l.target_component_id !== id || keys.has(l.target_key))
+  );
+  return { ...fp, components, param_links };
+}
+
+/** Append a deep copy of component ``sourceIndex`` (new unique id; links are not copied). */
+export function copyFittingComponent(fp: FittingEditorParams, sourceIndex: number): FittingEditorParams {
+  const src = fp.components[sourceIndex];
+  if (!src) return fp;
+  const used = new Set(fp.components.map((c) => String(c.component_id ?? "").toLowerCase()).filter(Boolean));
+  const base = String(src.component_id ?? "").trim();
+  const component_id = base ? uniqueComponentIdAgainst(base, used) : "";
+  const copy: FittingComponentEditor = {
+    ...src,
+    component_id,
+    rows: src.rows.map((r) => ({ ...r })),
+  };
+  return { ...fp, components: [...fp.components, copy] };
 }

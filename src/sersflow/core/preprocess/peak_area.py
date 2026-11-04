@@ -132,7 +132,7 @@ def lf_area_per_height(
     fwhm_g: float = 0.0,
 ) -> float:
     """
-    Numeric Area/amp for unit-height SERSFlow LF (damped LA, see ``fitting_models.lf``).
+    Numeric Area/amp for unit-height LF (finite asymmetric Lorentzian, see ``fitting_models.lf``).
 
     The LA closed form ignores the tail damping and diverges for alpha/beta <= 0.5
     (e.g. IrO2 LF(0.3, ...)), so integrate the actual model instead.

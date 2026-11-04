@@ -77,6 +77,8 @@ import {
   XPS_REGION_PRESETS,
   countPeakComponents,
   defaultFittingEditorParams,
+  changeFittingComponentType,
+  copyFittingComponent,
   defaultRowsForComponent,
   findParamLink,
   isAutoAmplitudeParam,
@@ -201,6 +203,7 @@ export default function PreprocessingWorkspace() {
   const datasetImportInputRef = useRef<HTMLInputElement | null>(null);
   const pipelineImportInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedUploads, setSelectedUploads] = useState<string[]>([]);
+  const [copySourceIdx, setCopySourceIdx] = useState(-1);
   const [selectedRecordIndices, setSelectedRecordIndices] = useState<Record<string, number[]>>({});
   const [newDatasetName, setNewDatasetName] = useState("");
   const [createXpsRegions, setCreateXpsRegions] = useState<string[]>([]);
@@ -2230,11 +2233,9 @@ export default function PreprocessingWorkspace() {
                                 value={comp.component_type}
                                 onChange={(e) => {
                                   const component_type = parseFittingComponentType(e.target.value);
-                                  const degree = component_type === "polynomial_background" ? 2 : 0;
-                                  const rows = defaultRowsForComponent(component_type, degree, fittingCatalog);
-                                  const next = fp.components.slice();
-                                  next[ci] = { ...comp, component_type, degree, rows };
-                                  updateSelectedFittingParams({ ...fp, components: next });
+                                  updateSelectedFittingParams(
+                                    changeFittingComponentType(fp, ci, component_type, fittingCatalog)
+                                  );
                                 }}
                               >
                                 {PEAK_COMPONENT_TYPES.map((t) => (
@@ -2415,7 +2416,14 @@ export default function PreprocessingWorkspace() {
                                     </>
                                   )}
                                 </div>
-                                {isXpsPipeline ? (
+                                {isXpsPipeline && existingLink ? (
+                                  <span
+                                    className="hint"
+                                    title="Linked parameters are driven by their link and are not fitted independently"
+                                  >
+                                    linked
+                                  </span>
+                                ) : isXpsPipeline ? (
                                   <input
                                     type="checkbox"
                                     checked={row.vary !== false}
@@ -2590,22 +2598,48 @@ export default function PreprocessingWorkspace() {
                           </div>
                         </div>
                       ))}
-                      <button
-                        type="button"
-                        className="mini"
-                        onClick={() => {
-                          const rows = defaultRowsForComponent("gaussian", 0, fittingCatalog);
-                          updateSelectedFittingParams({
-                            ...fp,
-                            components: [
-                              ...fp.components,
-                              { component_id: "", component_type: "gaussian", degree: 0, rows },
-                            ],
-                          });
-                        }}
-                      >
-                        + Add model
-                      </button>
+                      <div className="row" style={{ gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          className="mini"
+                          onClick={() => {
+                            const rows = defaultRowsForComponent("gaussian", 0, fittingCatalog);
+                            updateSelectedFittingParams({
+                              ...fp,
+                              components: [
+                                ...fp.components,
+                                { component_id: "", component_type: "gaussian", degree: 0, rows },
+                              ],
+                            });
+                          }}
+                        >
+                          + Add new model
+                        </button>
+                        <button
+                          type="button"
+                          className="mini"
+                          disabled={!fp.components.length}
+                          title="Append a copy of the selected model (same shape, values, bounds and vary flags; links are not copied)"
+                          onClick={() => {
+                            const src = Math.min(Math.max(copySourceIdx < 0 ? fp.components.length - 1 : copySourceIdx, 0), fp.components.length - 1);
+                            updateSelectedFittingParams(copyFittingComponent(fp, src));
+                          }}
+                        >
+                          Copy model
+                        </button>
+                        <select
+                          value={Math.min(copySourceIdx < 0 ? fp.components.length - 1 : copySourceIdx, fp.components.length - 1)}
+                          onChange={(e) => setCopySourceIdx(Number(e.target.value))}
+                          title="Model to copy"
+                          style={{ maxWidth: "160px" }}
+                        >
+                          {fp.components.map((c, j) => (
+                            <option key={j} value={j}>
+                              {c.component_id || `model ${j + 1}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </>
                   );
 }

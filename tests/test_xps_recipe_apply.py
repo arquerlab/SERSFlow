@@ -372,7 +372,7 @@ def test_iro2_satellite_lock_uses_finite_lf_area() -> None:
     out = apply_recipe_id("ir_4f_iro2_anhydrous", pass_energy=20)
     links = _amp_links(out)
     assert set(links) == {"4f7_2_sat", "4f5_2_sat"}
-    main = {"fwhm": 0.70, "alpha": 0.3, "beta": 1.0, "w": 20.0, "fwhm_g": 0.0}
+    main = {"fwhm": 0.70, "alpha": 0.3, "beta": 1.0, "w": 65.0, "fwhm_g": 0.0}
     sat = {"fwhm": 3.64, "m": 90.0}
     expected = (7.7 / 49.5) * area_per_height("lf", main) / area_per_height("gl", sat)
     lk = links["4f7_2_sat"]

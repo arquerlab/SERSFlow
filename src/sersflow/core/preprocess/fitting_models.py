@@ -220,6 +220,9 @@ def _la0(x: np.ndarray, pos: float, fwhm: float, alpha: float, beta: float) -> n
     return out
 
 
+LF_EXPONENT_LIMIT = 3.0  # a_s: far-tail exponent of the finite Lorentzian
+
+
 def _lf0(
     x: np.ndarray,
     pos: float,
@@ -228,23 +231,27 @@ def _lf0(
     beta: float,
     w: float,
     *,
-    p_lim: float = 10.0,
+    p_lim: float = LF_EXPONENT_LIMIT,
 ) -> np.ndarray:
     """
-    Finite-tail LA variant (transparent damping, not a bit-exact CasaXPS LF).
+    Finite asymmetric Lorentzian core (CasaXPS LF without the Gaussian).
 
-    Exponents start near alpha/beta at the center and rise toward ``p_lim``
-    with characteristic length ``w``, damping distant power-law tails.
+    ``L(x)^p(x)`` with a distance-dependent exponent that rises from alpha/beta at
+    the centre to ``p_lim`` (= 3) far away, which makes the area finite::
+
+        p(x) = p_lim - (p_lim - a) / (1 + 4 ((x - pos) / w)^2),   a = alpha | beta
+
+    ``w`` is in the energy units of ``x`` (Lorentzian-shaped envelope, as in the
+    published LF definition, e.g. Avval et al. / Appendix B of arXiv:2608.09041).
     CasaXPS BE convention: α on high BE (``x >= pos``), β on low BE.
     """
     L = np.clip(_unit_lorentzian(x, pos, fwhm), 1e-300, None)
     alpha = max(float(alpha), 1e-6)
     beta = max(float(beta), 1e-6)
     w = max(float(w), 1e-12)
-    p_lim = max(float(p_lim), alpha, beta)
-    d = np.abs(x - pos)
-    t = 1.0 - np.exp(-d / w)
-    p = np.where(x >= pos, alpha + (p_lim - alpha) * t, beta + (p_lim - beta) * t)
+    p_lim = float(p_lim)
+    env = 1.0 / (1.0 + 4.0 * np.power((x - pos) / w, 2))
+    p = np.where(x >= pos, p_lim - (p_lim - alpha) * env, p_lim - (p_lim - beta) * env)
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         out = np.power(L, p)
     return np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
@@ -336,8 +343,10 @@ def lf(x, *params):
 
     Params: pos, amp, fwhm, alpha, beta, w, fwhm_g
 
-    Transparent damping (not bit-exact CasaXPS LF): exponents rise from
-    alpha/beta toward a limiting value with length scale ``w``.
+    Exponents rise from alpha/beta at the centre to 3 in the far tails with a
+    Lorentzian envelope of width ``w`` (same units as ``x``); see ``_lf0``. The
+    Gaussian width ``fwhm_g`` is in energy units; the CasaXPS integer ``m`` index
+    is not translated (its eV scale is not documented).
     """
     pos = float(params[0])
     amp = float(params[1])
@@ -348,7 +357,7 @@ def lf(x, *params):
     fwhm_g = float(params[6]) if len(params) > 6 else 0.0
     sigma = max(fwhm_g, 0.0) * _GAUSS_FWHM_TO_SIGMA
     xf = _as_1d(x)
-    pad = max(30.0 * max(fwhm, 1e-6), 8.0 * max(w, 0.0), 8.0 * sigma)
+    pad = max(30.0 * max(fwhm, 1e-6), 8.0 * sigma)
 
     def y_on_grid(xu: np.ndarray) -> np.ndarray:
         return _lf0(xu, pos, fwhm, alpha, beta, w)

@@ -226,10 +226,10 @@ def _peak_param_values(
         if isinstance(m, (int, float)) and math.isfinite(float(m)) and "fwhm_g" in values:
             values["fwhm_g"] = casaxps_la_m_to_fwhm_g(float(m), fwhm)
     if ctype == "lf":
-        # CasaXPS LF(alpha, beta, w, m): only the tail exponents carry over. SERSFlow's LF
-        # damps tails over ``w`` eV and convolves with ``fwhm_g`` eV, whereas CasaXPS w / m
-        # are dimensionless indices, so they are not translated (spec defaults remain).
-        for k in ("alpha", "beta"):
+        # CasaXPS LF(alpha, beta, w, m): alpha, beta and w carry over (w is in eV, the
+        # tail-damping width). The Gaussian index m has no documented eV scale, so it is
+        # not translated (fwhm_g keeps the spec default).
+        for k in ("alpha", "beta", "w"):
             v = ls_params.get(k)
             if isinstance(v, (int, float)) and math.isfinite(float(v)):
                 values[k] = float(v)
