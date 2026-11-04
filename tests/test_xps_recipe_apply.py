@@ -318,3 +318,81 @@ def test_locked_satellite_ratio_survives_a_fit() -> None:
 
     assert area("peak_4") / area("peak_1") == pytest.approx(26.1 / 46.6, rel=1e-6)
     assert area("peak_3") / area("peak_1") == pytest.approx(1.6 / 46.6, rel=1e-6)
+
+
+IR_RECIPE_IDS = (
+    "ir_4f_ir0",
+    "ir_4f_iro2_anhydrous",
+    "ir_4f_iro2_hydrated",
+    "ir_4f_ircl3_hydrated",
+    "ir_4f_ircl3_anhydrous",
+    "ir_4d52_ir0",
+    "ir_4d52_iro2_anhydrous",
+    "ir_4d52_iro2_hydrated",
+    "ir_4d52_ircl3_hydrated",
+    "ir_4d52_ircl3_anhydrous",
+    "o_1s_iro2_anhydrous",
+    "o_1s_iro2_hydrated",
+    "o_1s_ircl3_hydrated",
+    "o_1s_ircl3_anhydrous",
+    "cl_2p_ircl3_hydrated",
+    "cl_2p_ircl3_anhydrous",
+)
+
+
+def test_ir_recipes_from_freakley_2017_apply() -> None:
+    for rid in IR_RECIPE_IDS:
+        fit = get_compound_fit(rid)
+        assert fit is not None, rid
+        assert fit.raw["reference"]["doi"] == "10.1002/sia.6225"
+        out = apply_recipe_id(rid, pass_energy=20)
+        assert out["components"][0]["component_type"] == "shirley_bg"
+    assert {f.id for f in list_compound_fits(element="Ir")} >= {r for r in IR_RECIPE_IDS if r.startswith("ir_")}
+
+
+def test_ir_metal_4f_lf_shape_and_doublet_links() -> None:
+    out = apply_recipe_id("ir_4f_ir0", pass_energy=20)
+    # LF(0.6, 1, 150, 300): alpha/beta carried over, FWHM from Table 2
+    assert out["p0"][_flat_index(out, "4f7_2", "alpha")] == pytest.approx(0.6)
+    assert out["p0"][_flat_index(out, "4f7_2", "beta")] == pytest.approx(1.0)
+    assert out["p0"][_flat_index(out, "4f7_2", "fwhm")] == pytest.approx(0.84)
+    assert out["p0"][_flat_index(out, "4f7_2", "pos")] == pytest.approx(60.8)
+    offsets = {
+        (lk["source_component_id"], lk["target_component_id"]): lk.get("offset")
+        for lk in out["param_links"]
+        if lk["source_key"] == "pos"
+    }
+    assert offsets[("4f5_2", "4f7_2")] == pytest.approx(3.0)
+    assert offsets[("5p1_2", "5p3_2")] == pytest.approx(15.0)
+
+
+def test_iro2_satellite_lock_uses_finite_lf_area() -> None:
+    from sersflow.core.preprocess.peak_area import area_per_height
+
+    out = apply_recipe_id("ir_4f_iro2_anhydrous", pass_energy=20)
+    links = _amp_links(out)
+    assert set(links) == {"4f7_2_sat", "4f5_2_sat"}
+    main = {"fwhm": 0.70, "alpha": 0.3, "beta": 1.0, "w": 20.0, "fwhm_g": 0.0}
+    sat = {"fwhm": 3.64, "m": 90.0}
+    expected = (7.7 / 49.5) * area_per_height("lf", main) / area_per_height("gl", sat)
+    lk = links["4f7_2_sat"]
+    assert lk["mode"] == "scale"  # LF parent is not area_ratio-capable: fixed height scale
+    assert lk["scale"] == pytest.approx(expected, rel=1e-9)
+    assert 0.01 < lk["scale"] < 0.1
+
+
+def test_lf_area_per_height_is_finite_for_heavy_tails() -> None:
+    np = pytest.importorskip("numpy")
+    from sersflow.core.preprocess.fitting_models import lf
+    from sersflow.core.preprocess.peak_area import area_per_height, lf_area_per_height
+
+    # alpha <= 0.5 made the LA closed form blow up (~1e6); the damped LF integral is finite.
+    a = area_per_height("lf", {"fwhm": 0.7, "alpha": 0.3, "beta": 1.0, "w": 20.0})
+    x = np.linspace(-200.0, 200.0, 400_001)
+    ref = float(np.trapezoid(lf(x, 0.0, 1.0, 0.7, 0.3, 1.0, 20.0, 0.0), x))
+    assert a == pytest.approx(ref, rel=1e-3)
+    assert 0.5 < a < 2.0
+    # symmetric LF(1,1) with weak damping stays close to a Lorentzian-ish width, not the LA 1.5x factor
+    assert lf_area_per_height(0.94, 1.0, 1.0, 20.0) == pytest.approx(
+        float(np.trapezoid(lf(x, 0.0, 1.0, 0.94, 1.0, 1.0, 20.0, 0.0), x)), rel=1e-3
+    )

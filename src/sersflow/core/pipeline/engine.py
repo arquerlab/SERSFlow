@@ -800,6 +800,26 @@ def _measure_fitting_pos_for_ref(
     )
 
 
+def _calibration_cohort_refs(
+    input_list: Sequence[Any], calibration_cohort: Iterable[Any] | None
+) -> list[dict[str, Any]]:
+    """
+    Cohort refs for calibration deltas: the explicit cohort plus every input spectrum.
+
+    Inputs must be included because derived spectra (e.g. group_average outputs) have ids
+    that are absent from the raw reference cohort; without a delta they fall back to
+    per-spectrum measurement, which fails outside the fitting window.
+    """
+    if calibration_cohort is None:
+        return _refs_as_dicts(list(input_list))
+    merged = _refs_as_dicts(list(calibration_cohort))
+    seen = {str(r.get("spectrum_id")) for r in merged}
+    for r in _refs_as_dicts(list(input_list)):
+        if str(r.get("spectrum_id")) not in seen:
+            merged.append(r)
+    return merged
+
+
 def _prepare_calibration_cohort(
     input_refs: list[dict[str, Any]],
     steps: list[dict[str, Any]],
@@ -1083,7 +1103,7 @@ def run_pipeline(
     input_list = list(inputs)
     # Reference bands may live outside a preview subset: measure over the full cohort when given.
     cal_deltas = _prepare_calibration_cohort(
-        _refs_as_dicts(list(calibration_cohort) if calibration_cohort is not None else input_list),
+        _calibration_cohort_refs(input_list, calibration_cohort),
         _steps_as_dicts(steps_list),
         technique_family=tech,
         namespace=cfg.cache_namespace,
@@ -1156,7 +1176,7 @@ def run_pipeline_with_intermediates(
     input_list = list(inputs)
     # Reference bands may live outside a preview subset: measure over the full cohort when given.
     cal_deltas = _prepare_calibration_cohort(
-        _refs_as_dicts(list(calibration_cohort) if calibration_cohort is not None else input_list),
+        _calibration_cohort_refs(input_list, calibration_cohort),
         _steps_as_dicts(steps_list),
         technique_family=tech,
         namespace=cfg.cache_namespace,

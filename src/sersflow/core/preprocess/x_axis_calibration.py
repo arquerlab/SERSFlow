@@ -210,7 +210,10 @@ def measured_pos_from_fitting_xy(
     except ValueError as e:
         raise ValueError(f"x_axis_calibration: cannot build fit problem: {e}") from e
     if prob is None:
-        raise ValueError("x_axis_calibration: fitting step has no components")
+        raise ValueError(
+            "x_axis_calibration: fitting input has no data inside the fitting step's fit window "
+            "(fit_min_x/fit_max_x); check the fit window and that this spectrum's region matches the fitting step"
+        )
     try:
         res = fit_curve(prob)
     except (ValueError, RuntimeError) as e:

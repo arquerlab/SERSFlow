@@ -8910,6 +8910,1295 @@
         "Binding energy and FWHM values for nickel halide anions",
         "Taken with Mg K(alpha) source (footnote a)"
       ]
+    },
+    {
+      "id": "ir_4f_ir0",
+      "element": "Ir",
+      "region": "Ir_4f",
+      "compound": "Ir(0)",
+      "aliases": [
+        "Ir metal",
+        "iridium",
+        "Ir0"
+      ],
+      "source_table": "Freakley 2017 T2",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "4f7/2",
+          "be_eV": 60.8,
+          "delta_eV": null,
+          "area_pct": 57.2,
+          "fwhm_20": 0.84,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(0.6, 1, 150, 300)",
+            "params": {
+              "alpha": 0.6,
+              "beta": 1.0,
+              "w": 150,
+              "m": 300
+            }
+          }
+        },
+        {
+          "index": 2,
+          "label": "4f5/2",
+          "be_eV": 63.8,
+          "delta_eV": 3.0,
+          "delta_vs": "peak_1",
+          "area_pct": 42.8,
+          "fwhm_20": 0.86,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(0.6, 1, 150, 300)",
+            "params": {
+              "alpha": 0.6,
+              "beta": 1.0,
+              "w": 150,
+              "m": 300
+            }
+          }
+        },
+        {
+          "index": 3,
+          "label": "5p3/2",
+          "be_eV": 48.1,
+          "delta_eV": null,
+          "area_pct": 5.0,
+          "fwhm_20": 2.84,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 4,
+          "label": "5p1/2",
+          "be_eV": 63.1,
+          "delta_eV": 15.0,
+          "delta_vs": "peak_3",
+          "area_pct": 2.5,
+          "fwhm_20": 2.84,
+          "equal_fwhm_to": "peak_3",
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Sputter-cleaned Ir foil; asymmetric 4f doublet, 4f7/2 60.8 eV, splitting 3.0 eV",
+        "LF(alpha, beta, w, m) is CasaXPS notation; SERSFlow maps alpha/beta only. SERSFlow LF is not bit-exact CasaXPS: w (tail damping) and m (Gaussian convolution) are kept for reference but not translated",
+        "Ir 5p doublet included as the paper recommends (5p3/2:5p1/2 = 2:1, equal FWHM, 15.0 eV apart); acquire/fit from ~46 eV so 5p3/2 is inside the window. 5p area_pct (5.0/2.5) is a seed on the 4f scale only (paper: 5p1/2 < 5% of the 4f envelope); Table 2 gives 66.7/33.3 within the 5p doublet",
+        "Paper: Shirley over a short range (ca. 57-70 eV); extending it to higher BE overestimates the 4f area",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "ir_4f_iro2_anhydrous",
+      "element": "Ir",
+      "region": "Ir_4f",
+      "compound": "IrO2 (anhydrous, rutile)",
+      "aliases": [
+        "IrO2",
+        "iridium oxide",
+        "Ir4+",
+        "rutile IrO2"
+      ],
+      "source_table": "Freakley 2017 T2",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "4f7/2",
+          "be_eV": 61.9,
+          "delta_eV": null,
+          "area_pct": 49.5,
+          "fwhm_20": 0.7,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(0.3, 1, 65, 100)",
+            "params": {
+              "alpha": 0.3,
+              "beta": 1.0,
+              "w": 65,
+              "m": 100
+            }
+          }
+        },
+        {
+          "index": 2,
+          "label": "4f5/2",
+          "be_eV": 64.9,
+          "delta_eV": 3.0,
+          "delta_vs": "peak_1",
+          "area_pct": 37.1,
+          "fwhm_20": 0.75,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(0.3, 1, 65, 100)",
+            "params": {
+              "alpha": 0.3,
+              "beta": 1.0,
+              "w": 65,
+              "m": 100
+            }
+          }
+        },
+        {
+          "index": 3,
+          "label": "4f7/2_sat",
+          "satellite": true,
+          "be_eV": 63.2,
+          "delta_eV": 1.3,
+          "delta_vs": "peak_1",
+          "area_pct": 7.7,
+          "fwhm_20": 3.64,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(90)",
+            "params": {
+              "m": 90
+            }
+          }
+        },
+        {
+          "index": 4,
+          "label": "4f5/2_sat",
+          "satellite": true,
+          "be_eV": 66.2,
+          "delta_eV": 3.0,
+          "delta_vs": "peak_3",
+          "area_pct": 5.8,
+          "fwhm_20": 3.64,
+          "equal_fwhm_to": "peak_3",
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(90)",
+            "params": {
+              "m": 90
+            }
+          }
+        },
+        {
+          "index": 5,
+          "label": "5p3/2",
+          "be_eV": 49.7,
+          "delta_eV": null,
+          "area_pct": 5.0,
+          "fwhm_20": 3.9,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 6,
+          "label": "5p1/2",
+          "be_eV": 64.7,
+          "delta_eV": 15.0,
+          "delta_vs": "peak_5",
+          "area_pct": 2.5,
+          "fwhm_20": 3.9,
+          "equal_fwhm_to": "peak_5",
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Crystalline rutile IrO2; screened main lines (LF) plus unscreened satellites GL(90)",
+        "Satellite areas locked to the 4f7/2 main line (SERSFlow default parent); Table 2 does not say which main line each satellite belongs to beyond the 4f7/2/4f5/2 labels",
+        "LF(alpha, beta, w, m) is CasaXPS notation; SERSFlow maps alpha/beta only. SERSFlow LF is not bit-exact CasaXPS: w (tail damping) and m (Gaussian convolution) are kept for reference but not translated",
+        "Ir 5p doublet included as the paper recommends (5p3/2:5p1/2 = 2:1, equal FWHM, 15.0 eV apart); acquire/fit from ~46 eV so 5p3/2 is inside the window. 5p area_pct (5.0/2.5) is a seed on the 4f scale only (paper: 5p1/2 < 5% of the 4f envelope); Table 2 gives 66.7/33.3 within the 5p doublet",
+        "Paper: Shirley over a short range (ca. 57-70 eV); extending it to higher BE overestimates the 4f area",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "ir_4f_iro2_hydrated",
+      "element": "Ir",
+      "region": "Ir_4f",
+      "compound": "IrO2 (hydrated, amorphous)",
+      "aliases": [
+        "IrO2 hydrate",
+        "IrO2.2H2O",
+        "hydrous iridium oxide",
+        "amorphous IrOx",
+        "IrOx"
+      ],
+      "source_table": "Freakley 2017 T2",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "4f7/2",
+          "be_eV": 62.5,
+          "delta_eV": null,
+          "area_pct": 57.2,
+          "fwhm_20": 1.6,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(0.3, 1.5, 25, 150)",
+            "params": {
+              "alpha": 0.3,
+              "beta": 1.5,
+              "w": 25,
+              "m": 150
+            }
+          }
+        },
+        {
+          "index": 2,
+          "label": "4f5/2",
+          "be_eV": 65.5,
+          "delta_eV": 3.0,
+          "delta_vs": "peak_1",
+          "area_pct": 42.8,
+          "fwhm_20": 1.65,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(0.3, 1.5, 25, 150)",
+            "params": {
+              "alpha": 0.3,
+              "beta": 1.5,
+              "w": 25,
+              "m": 150
+            }
+          }
+        },
+        {
+          "index": 3,
+          "label": "5p3/2",
+          "be_eV": 50.2,
+          "delta_eV": null,
+          "area_pct": 5.0,
+          "fwhm_20": 3.88,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 4,
+          "label": "5p1/2",
+          "be_eV": 65.2,
+          "delta_eV": 15.0,
+          "delta_vs": "peak_3",
+          "area_pct": 2.5,
+          "fwhm_20": 3.88,
+          "equal_fwhm_to": "peak_3",
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "IrO2.2H2O (amorphous). One broad asymmetric line per spin-orbit component that lumps Ir(IV), minority Ir(III) and their satellites; no separate satellite peaks",
+        "LF(alpha, beta, w, m) is CasaXPS notation; SERSFlow maps alpha/beta only. SERSFlow LF is not bit-exact CasaXPS: w (tail damping) and m (Gaussian convolution) are kept for reference but not translated",
+        "Ir 5p doublet included as the paper recommends (5p3/2:5p1/2 = 2:1, equal FWHM, 15.0 eV apart); acquire/fit from ~46 eV so 5p3/2 is inside the window. 5p area_pct (5.0/2.5) is a seed on the 4f scale only (paper: 5p1/2 < 5% of the 4f envelope); Table 2 gives 66.7/33.3 within the 5p doublet",
+        "Paper: Shirley over a short range (ca. 57-70 eV); extending it to higher BE overestimates the 4f area",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "ir_4f_ircl3_hydrated",
+      "element": "Ir",
+      "region": "Ir_4f",
+      "compound": "IrCl3.nH2O (hydrated)",
+      "aliases": [
+        "IrCl3 hydrate",
+        "IrCl3.nH2O",
+        "iridium chloride",
+        "Ir3+ chloride"
+      ],
+      "source_table": "Freakley 2017 T2",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "4f7/2",
+          "be_eV": 62.6,
+          "delta_eV": null,
+          "area_pct": 56.1,
+          "fwhm_20": 0.94,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(1, 1, 55, 200)",
+            "params": {
+              "alpha": 1.0,
+              "beta": 1.0,
+              "w": 55,
+              "m": 200
+            }
+          }
+        },
+        {
+          "index": 2,
+          "label": "4f5/2",
+          "be_eV": 65.6,
+          "delta_eV": 3.0,
+          "delta_vs": "peak_1",
+          "area_pct": 42.0,
+          "fwhm_20": 1.05,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(1, 1, 55, 200)",
+            "params": {
+              "alpha": 1.0,
+              "beta": 1.0,
+              "w": 55,
+              "m": 200
+            }
+          }
+        },
+        {
+          "index": 3,
+          "label": "4f7/2_sat",
+          "satellite": true,
+          "be_eV": 71.6,
+          "delta_eV": 9.0,
+          "delta_vs": "peak_1",
+          "area_pct": 1.1,
+          "fwhm_20": 1.24,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 4,
+          "label": "4f5/2_sat",
+          "satellite": true,
+          "be_eV": 74.6,
+          "delta_eV": 3.0,
+          "delta_vs": "peak_3",
+          "area_pct": 0.8,
+          "fwhm_20": 1.24,
+          "equal_fwhm_to": "peak_3",
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 5,
+          "label": "5p3/2",
+          "be_eV": 49.7,
+          "delta_eV": null,
+          "area_pct": 5.0,
+          "fwhm_20": 2.96,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 6,
+          "label": "5p1/2",
+          "be_eV": 64.7,
+          "delta_eV": 15.0,
+          "delta_vs": "peak_5",
+          "area_pct": 2.5,
+          "fwhm_20": 2.96,
+          "equal_fwhm_to": "peak_5",
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Table 2 values used; text quotes 4f7/2 62.4 eV, 5p3/2 50.2 eV and satellites 71.4/74.4 eV for the hydrate",
+        "Small satellite doublet (only in the hydrate) ~9 eV above the main lines; the fit window must reach ~76 eV",
+        "Satellite areas locked to the 4f7/2 main line (SERSFlow default parent)",
+        "LF(alpha, beta, w, m) is CasaXPS notation; SERSFlow maps alpha/beta only. SERSFlow LF is not bit-exact CasaXPS: w (tail damping) and m (Gaussian convolution) are kept for reference but not translated",
+        "Ir 5p doublet included as the paper recommends (5p3/2:5p1/2 = 2:1, equal FWHM, 15.0 eV apart); acquire/fit from ~46 eV so 5p3/2 is inside the window. 5p area_pct (5.0/2.5) is a seed on the 4f scale only (paper: 5p1/2 < 5% of the 4f envelope); Table 2 gives 66.7/33.3 within the 5p doublet",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "ir_4f_ircl3_anhydrous",
+      "element": "Ir",
+      "region": "Ir_4f",
+      "compound": "IrCl3 (anhydrous)",
+      "aliases": [
+        "IrCl3",
+        "anhydrous IrCl3",
+        "iridium chloride",
+        "Ir3+ chloride"
+      ],
+      "source_table": "Freakley 2017 T2",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "4f7/2",
+          "be_eV": 62.4,
+          "delta_eV": null,
+          "area_pct": 57.2,
+          "fwhm_20": 0.94,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(1, 1, 55, 200)",
+            "params": {
+              "alpha": 1.0,
+              "beta": 1.0,
+              "w": 55,
+              "m": 200
+            }
+          }
+        },
+        {
+          "index": 2,
+          "label": "4f5/2",
+          "be_eV": 65.4,
+          "delta_eV": 3.0,
+          "delta_vs": "peak_1",
+          "area_pct": 42.8,
+          "fwhm_20": 1.05,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(1, 1, 55, 200)",
+            "params": {
+              "alpha": 1.0,
+              "beta": 1.0,
+              "w": 55,
+              "m": 200
+            }
+          }
+        },
+        {
+          "index": 3,
+          "label": "5p3/2",
+          "be_eV": 49.9,
+          "delta_eV": null,
+          "area_pct": 5.0,
+          "fwhm_20": 3.3,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(1.2, 0.7, 25, 280)",
+            "params": {
+              "alpha": 1.2,
+              "beta": 0.7,
+              "w": 25,
+              "m": 280
+            }
+          }
+        },
+        {
+          "index": 4,
+          "label": "5p1/2",
+          "be_eV": 64.9,
+          "delta_eV": 15.0,
+          "delta_vs": "peak_3",
+          "area_pct": 2.5,
+          "fwhm_20": 3.3,
+          "equal_fwhm_to": "peak_3",
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(1.2, 0.7, 25, 280)",
+            "params": {
+              "alpha": 1.2,
+              "beta": 0.7,
+              "w": 25,
+              "m": 280
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Ir-Cl component only (Table 2 footnote). The anhydrous chloride carries a hydroxylated IrO2-like surface layer, fitted in the paper at 4f7/2 62.7 eV with the hydrated-IrO2 line shape: add ir_4f_iro2_hydrated components if that asymmetric high-BE structure is present",
+        "5p line shape LF(1.2, 0.7, 25, 280) as printed in Table 2 (the hydrate uses GL(30))",
+        "LF(alpha, beta, w, m) is CasaXPS notation; SERSFlow maps alpha/beta only. SERSFlow LF is not bit-exact CasaXPS: w (tail damping) and m (Gaussian convolution) are kept for reference but not translated",
+        "Ir 5p doublet included as the paper recommends (5p3/2:5p1/2 = 2:1, equal FWHM, 15.0 eV apart); acquire/fit from ~46 eV so 5p3/2 is inside the window. 5p area_pct (5.0/2.5) is a seed on the 4f scale only (paper: 5p1/2 < 5% of the 4f envelope); Table 2 gives 66.7/33.3 within the 5p doublet",
+        "Paper: Shirley over a short range (ca. 57-70 eV); extending it to higher BE overestimates the 4f area",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "ir_4d52_ir0",
+      "element": "Ir",
+      "region": "Ir_4d5/2",
+      "compound": "Ir(0)",
+      "aliases": [
+        "Ir metal",
+        "iridium",
+        "Ir0"
+      ],
+      "source_table": "Freakley 2017 T2",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "4d5/2",
+          "be_eV": 296.2,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 4.2,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(70)",
+            "params": {
+              "m": 70
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Paper: fit 4d5/2 only; a Shirley under the full 4d doublet does not define the background between the peaks",
+        "Partner line (not fitted): 4d3/2 312.1 eV, FWHM 4.29 eV, 4d5/2:4d3/2 = 60.1:39.9",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "ir_4d52_iro2_anhydrous",
+      "element": "Ir",
+      "region": "Ir_4d5/2",
+      "compound": "IrO2 (anhydrous, rutile)",
+      "aliases": [
+        "IrO2",
+        "iridium oxide",
+        "Ir4+"
+      ],
+      "source_table": "Freakley 2017 T2",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "4d5/2",
+          "be_eV": 298.1,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 4.96,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(70)",
+            "params": {
+              "m": 70
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Paper: fit 4d5/2 only; a Shirley under the full 4d doublet does not define the background between the peaks",
+        "Partner line (not fitted): 4d3/2 313.9 eV, FWHM 5.24 eV, 60.2:39.8",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "ir_4d52_iro2_hydrated",
+      "element": "Ir",
+      "region": "Ir_4d5/2",
+      "compound": "IrO2 (hydrated, amorphous)",
+      "aliases": [
+        "IrO2 hydrate",
+        "IrO2.2H2O",
+        "IrOx"
+      ],
+      "source_table": "Freakley 2017 T2",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "4d5/2",
+          "be_eV": 298.6,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 4.64,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(70)",
+            "params": {
+              "m": 70
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Paper: fit 4d5/2 only; a Shirley under the full 4d doublet does not define the background between the peaks",
+        "Partner line (not fitted): 4d3/2 314.4 eV, FWHM 5.00 eV, 60.1:39.9",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "ir_4d52_ircl3_hydrated",
+      "element": "Ir",
+      "region": "Ir_4d5/2",
+      "compound": "IrCl3.nH2O (hydrated)",
+      "aliases": [
+        "IrCl3 hydrate",
+        "IrCl3.nH2O",
+        "iridium chloride"
+      ],
+      "source_table": "Freakley 2017 T2",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "4d5/2",
+          "be_eV": 298.1,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 3.92,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(1.2, 0.7, 25, 280)",
+            "params": {
+              "alpha": 1.2,
+              "beta": 0.7,
+              "w": 25,
+              "m": 280
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Paper: fit 4d5/2 only; a Shirley under the full 4d doublet does not define the background between the peaks",
+        "Partner line (not fitted): 4d3/2 313.9 eV, FWHM 4.28 eV, 60.1:39.9",
+        "LF(alpha, beta, w, m) is CasaXPS notation; SERSFlow maps alpha/beta only. SERSFlow LF is not bit-exact CasaXPS: w (tail damping) and m (Gaussian convolution) are kept for reference but not translated",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "ir_4d52_ircl3_anhydrous",
+      "element": "Ir",
+      "region": "Ir_4d5/2",
+      "compound": "IrCl3 (anhydrous)",
+      "aliases": [
+        "IrCl3",
+        "anhydrous IrCl3",
+        "iridium chloride"
+      ],
+      "source_table": "Freakley 2017 T2",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "4d5/2",
+          "be_eV": 297.8,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 3.92,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(1.2, 0.7, 25, 280)",
+            "params": {
+              "alpha": 1.2,
+              "beta": 0.7,
+              "w": 25,
+              "m": 280
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Paper: fit 4d5/2 only; a Shirley under the full 4d doublet does not define the background between the peaks",
+        "Partner line (not fitted): 4d3/2 313.6 eV, FWHM 4.28 eV, 60.1:39.9",
+        "LF(alpha, beta, w, m) is CasaXPS notation; SERSFlow maps alpha/beta only. SERSFlow LF is not bit-exact CasaXPS: w (tail damping) and m (Gaussian convolution) are kept for reference but not translated",
+        "Ir-Cl component only; the oxide surface layer adds an IrO2 (hydrated) 4d component",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "o_1s_iro2_anhydrous",
+      "element": "O",
+      "region": "O_1s",
+      "compound": "IrO2 (anhydrous, rutile)",
+      "aliases": [
+        "IrO2",
+        "iridium oxide"
+      ],
+      "source_table": "Freakley 2017 T3",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "oxide",
+          "be_eV": 530.0,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 0.64,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(0.3, 1, 65, 100)",
+            "params": {
+              "alpha": 0.3,
+              "beta": 1.0,
+              "w": 65,
+              "m": 100
+            }
+          }
+        },
+        {
+          "index": 2,
+          "label": "oxide_sat",
+          "be_eV": 531.3,
+          "delta_eV": 1.3,
+          "delta_vs": "peak_1",
+          "area_pct": null,
+          "fwhm_20": 2.16,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(90)",
+            "params": {
+              "m": 90
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Whole O 1s envelope is lattice oxide (asymmetric, same screening as Ir 4f) plus its satellite; Ir/O = 0.49",
+        "Satellite area not given in the paper, so it is not flagged/locked as a satellite (amplitude free)",
+        "LF(alpha, beta, w, m) is CasaXPS notation; SERSFlow maps alpha/beta only. SERSFlow LF is not bit-exact CasaXPS: w (tail damping) and m (Gaussian convolution) are kept for reference but not translated",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "o_1s_iro2_hydrated",
+      "element": "O",
+      "region": "O_1s",
+      "compound": "IrO2 (hydrated, amorphous)",
+      "aliases": [
+        "IrO2 hydrate",
+        "IrO2.2H2O",
+        "IrOx"
+      ],
+      "source_table": "Freakley 2017 T3",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "oxide",
+          "be_eV": 530.5,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 1.71,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(0.3, 1.5, 25, 150)",
+            "params": {
+              "alpha": 0.3,
+              "beta": 1.5,
+              "w": 25,
+              "m": 150
+            }
+          }
+        },
+        {
+          "index": 2,
+          "label": "hydroxide",
+          "be_eV": 531.6,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 1.5,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 3,
+          "label": "water",
+          "be_eV": 532.9,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 1.6,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Oxide uses the hydrated-IrO2 Ir 4f line shape; its asymmetric tail models what is often mis-assigned as water",
+        "LF(alpha, beta, w, m) is CasaXPS notation; SERSFlow maps alpha/beta only. SERSFlow LF is not bit-exact CasaXPS: w (tail damping) and m (Gaussian convolution) are kept for reference but not translated",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "o_1s_ircl3_hydrated",
+      "element": "O",
+      "region": "O_1s",
+      "compound": "IrCl3.nH2O (hydrated)",
+      "aliases": [
+        "IrCl3 hydrate",
+        "IrCl3.nH2O"
+      ],
+      "source_table": "Freakley 2017 T3",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "water",
+          "be_eV": 533.6,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 2.21,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Single water peak (text: 533.5 eV)",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "o_1s_ircl3_anhydrous",
+      "element": "O",
+      "region": "O_1s",
+      "compound": "IrCl3 (anhydrous)",
+      "aliases": [
+        "IrCl3",
+        "anhydrous IrCl3"
+      ],
+      "source_table": "Freakley 2017 T3",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "oxide",
+          "be_eV": 530.3,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 1.42,
+          "lineshape": {
+            "kind": "lf",
+            "casaxps": "LF(0.3, 1.5, 25, 150)",
+            "params": {
+              "alpha": 0.3,
+              "beta": 1.5,
+              "w": 25,
+              "m": 150
+            }
+          }
+        },
+        {
+          "index": 2,
+          "label": "hydroxide",
+          "be_eV": 532.0,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 1.7,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 3,
+          "label": "water",
+          "be_eV": 533.6,
+          "delta_eV": null,
+          "area_pct": null,
+          "fwhm_20": 1.7,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Hydroxylated IrO2-like surface layer on the anhydrous chloride; text quotes 530.4/531.8/533.4 eV, Table 3 used",
+        "LF(alpha, beta, w, m) is CasaXPS notation; SERSFlow maps alpha/beta only. SERSFlow LF is not bit-exact CasaXPS: w (tail damping) and m (Gaussian convolution) are kept for reference but not translated",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "cl_2p_ircl3_hydrated",
+      "element": "Cl",
+      "region": "Cl_2p",
+      "compound": "IrCl3.nH2O (hydrated)",
+      "aliases": [
+        "IrCl3 hydrate",
+        "IrCl3.nH2O",
+        "chloride"
+      ],
+      "source_table": "Freakley 2017 T3",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "IrCl_2p3/2",
+          "be_eV": 199.0,
+          "delta_eV": null,
+          "area_pct": 33.3,
+          "fwhm_20": 1.08,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 2,
+          "label": "IrCl_2p1/2",
+          "be_eV": 200.6,
+          "delta_eV": 1.6,
+          "delta_vs": "peak_1",
+          "area_pct": 16.7,
+          "fwhm_20": 1.08,
+          "equal_fwhm_to": "peak_1",
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 3,
+          "label": "HCl_2p3/2",
+          "be_eV": 198.0,
+          "delta_eV": null,
+          "area_pct": 33.3,
+          "fwhm_20": 1.05,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 4,
+          "label": "HCl_2p1/2",
+          "be_eV": 199.6,
+          "delta_eV": 1.6,
+          "delta_vs": "peak_3",
+          "area_pct": 16.7,
+          "fwhm_20": 1.05,
+          "equal_fwhm_to": "peak_3",
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "Ir-Cl chloride (Ir/Cl = 0.34) and hydrated HCl; text quotes 199.3 / 198.2 eV, Table 3 used",
+        "Table 3 lists 2p3/2 only; 2p1/2 partners added from the text (1.6 eV splitting for both doublets), equal FWHM, area_pct 2:1 is a seed only. Chloride vs HCl amounts are free (equal seeds)",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
+    },
+    {
+      "id": "cl_2p_ircl3_anhydrous",
+      "element": "Cl",
+      "region": "Cl_2p",
+      "compound": "IrCl3 (anhydrous)",
+      "aliases": [
+        "IrCl3",
+        "anhydrous IrCl3",
+        "chloride"
+      ],
+      "source_table": "Freakley 2017 T3",
+      "reference": {
+        "citation": "S. J. Freakley, J. Ruiz-Esquius, D. J. Morgan, Surf. Interface Anal. 49 (2017) 794-799",
+        "title": "The X-ray photoelectron spectra of Ir, IrO2 and IrCl3 revisited",
+        "doi": "10.1002/sia.6225",
+        "instrument": "Kratos Axis Ultra DLD and Thermo K-Alpha+, monochromatic Al Ka",
+        "software": "CasaXPS 2.3.17",
+        "background": "shirley",
+        "charge_ref": "Au 4f7/2 83.95 eV (metal); C 1s 284.8 eV when charge neutralisation was needed"
+      },
+      "pass_energies": [
+        20
+      ],
+      "peaks": [
+        {
+          "index": 1,
+          "label": "IrCl_2p3/2",
+          "be_eV": 199.2,
+          "delta_eV": null,
+          "area_pct": 33.3,
+          "fwhm_20": 1.25,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 2,
+          "label": "IrCl_2p1/2",
+          "be_eV": 200.8,
+          "delta_eV": 1.6,
+          "delta_vs": "peak_1",
+          "area_pct": 16.7,
+          "fwhm_20": 1.25,
+          "equal_fwhm_to": "peak_1",
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 3,
+          "label": "HCl_2p3/2",
+          "be_eV": 197.7,
+          "delta_eV": null,
+          "area_pct": 33.3,
+          "fwhm_20": 1.25,
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        },
+        {
+          "index": 4,
+          "label": "HCl_2p1/2",
+          "be_eV": 199.3,
+          "delta_eV": 1.6,
+          "delta_vs": "peak_3",
+          "area_pct": 16.7,
+          "fwhm_20": 1.25,
+          "equal_fwhm_to": "peak_3",
+          "lineshape": {
+            "kind": "gl",
+            "casaxps": "GL(30)",
+            "params": {
+              "m": 30
+            }
+          }
+        }
+      ],
+      "footnotes": [
+        "HCl component strongly diminished in the anhydrous form; text quotes 199.3 / 197.8 eV, Table 3 used",
+        "Table 3 lists 2p3/2 only; 2p1/2 partners added from the text (1.6 eV splitting for both doublets), equal FWHM, area_pct 2:1 is a seed only. Chloride vs HCl amounts are free (equal seeds)",
+        "Freakley 2017 Table 2/3: FWHM at 20 eV pass energy only, +/-0.2 eV (Kratos slightly sharper than Thermo)"
+      ]
     }
   ]
 }

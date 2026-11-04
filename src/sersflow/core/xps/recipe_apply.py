@@ -225,6 +225,14 @@ def _peak_param_values(
         m = ls_params.get("m")
         if isinstance(m, (int, float)) and math.isfinite(float(m)) and "fwhm_g" in values:
             values["fwhm_g"] = casaxps_la_m_to_fwhm_g(float(m), fwhm)
+    if ctype == "lf":
+        # CasaXPS LF(alpha, beta, w, m): only the tail exponents carry over. SERSFlow's LF
+        # damps tails over ``w`` eV and convolves with ``fwhm_g`` eV, whereas CasaXPS w / m
+        # are dimensionless indices, so they are not translated (spec defaults remain).
+        for k in ("alpha", "beta"):
+            v = ls_params.get(k)
+            if isinstance(v, (int, float)) and math.isfinite(float(v)):
+                values[k] = float(v)
     if ctype == "a_gl":
         m = ls_params.get("m")
         if isinstance(m, (int, float)) and math.isfinite(float(m)):

@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from sersflow.core.preprocess.fitting_models import _la0, la
+from sersflow.core.preprocess.fitting_models import _la0, la, lf
 
 _LN2 = math.log(2.0)
 # Area = height * FWHM * k for unit-height G / L
@@ -124,6 +124,31 @@ def la_area_per_height(
     return la_area_per_height_analytical(fwhm, alpha, beta, fwhm_g)
 
 
+def lf_area_per_height(
+    fwhm: float,
+    alpha: float,
+    beta: float,
+    w: float,
+    fwhm_g: float = 0.0,
+) -> float:
+    """
+    Numeric Area/amp for unit-height SERSFlow LF (damped LA, see ``fitting_models.lf``).
+
+    The LA closed form ignores the tail damping and diverges for alpha/beta <= 0.5
+    (e.g. IrO2 LF(0.3, ...)), so integrate the actual model instead.
+    """
+    fw = max(float(fwhm), 1e-12)
+    fg = max(float(fwhm_g), 0.0)
+    wd = max(float(w), 1e-12)
+    pad = max(40.0 * fw, 8.0 * wd, 12.0 * fg, 20.0)
+    step = min(fw, fg if fg > 0 else fw) / 40.0
+    n = int(min(max(4096, 2.0 * pad / step), 400_000))
+    x = np.linspace(-pad, pad, n, dtype=float)
+    y = lf(x, 0.0, 1.0, fw, float(alpha), float(beta), wd, fg)
+    trap = getattr(np, "trapezoid", None) or np.trapz
+    return max(float(trap(y, x)), 1e-12)
+
+
 def apv_area_per_height(fwhm_l: float, fwhm_r: float, eta_l: float, eta_r: float) -> float:
     """Split pseudo-Voigt: integrate left/right half analytically via GL factors / 2."""
     left = 0.5 * gl_area_per_height(fwhm_l, max(0.0, min(1.0, float(eta_l))) * 100.0)
@@ -184,10 +209,12 @@ def area_per_height(
             float(values.get("fwhm_g") or 0.0),
         )
     if ct == "lf":
-        return la_area_per_height(
+        w = values.get("w")
+        return lf_area_per_height(
             fwhm,
             float(values.get("alpha") or 1.0),
             float(values.get("beta") or 1.0),
+            float(w) if w is not None else 20.0,
             float(values.get("fwhm_g") or 0.0),
         )
     if ct in ("a_gl", "agl"):
