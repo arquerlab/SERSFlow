@@ -24,6 +24,8 @@ export type SpectrumRef = {
   blob_id?: string | null;
   blob_relative_path?: string | null;
   original_relative_path?: string | null;
+  /** Group aggregates (Aggregate Spectra) carry their own labels; there is no source file. */
+  spectrum_labels?: Record<string, unknown> | null;
 };
 
 export type Dataset = {
@@ -93,7 +95,15 @@ export type SessionRunReturnSpec =
 
 export type SessionRunRequest = { scope: "subset" | "all"; return: SessionRunReturnSpec; up_to_step: string | null };
 
-export type SpectrumSeries = { spectrum_id: string; x: number[]; y: number[] };
+/** Present on aggregated spectra (Aggregate Spectra step). `ref` feeds the spectrum back into /pipeline/run. */
+export type DerivedSpectrumInfo = {
+  kind: string;
+  n_members: number;
+  member_spectrum_ids: string[];
+  labels: Record<string, unknown>;
+  ref: SpectrumRef;
+};
+export type SpectrumSeries = { spectrum_id: string; x: number[]; y: number[]; derived?: DerivedSpectrumInfo };
 export type MetricValue = { name: string; value: number | null; unit: string | null };
 export type SpectrumMetrics = { spectrum_id: string; metrics: MetricValue[] };
 

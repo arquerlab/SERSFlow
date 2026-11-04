@@ -56,10 +56,16 @@ class ReturnFinal(BaseModel):
 PipelineReturnSpec = ReturnMetricsOnly | ReturnFinal
 
 
+class PipelineInputRef(SpectrumRef):
+    """Run input; derived spectra (group aggregates) also carry their own labels."""
+
+    spectrum_labels: dict[str, Any] | None = None
+
+
 class PipelineRunRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    inputs: list[SpectrumRef] = Field(min_length=1)
+    inputs: list[PipelineInputRef] = Field(min_length=1)
     pipeline: Pipeline = Field(default_factory=Pipeline)
     return_: PipelineReturnSpec = Field(default_factory=ReturnMetricsOnly, alias="return")
     up_to_step: str | None = None

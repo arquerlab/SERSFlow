@@ -45,6 +45,42 @@ def _with_steps(pipeline: Pipeline, steps: list) -> Pipeline:
     return pipeline.model_copy(update={"steps": steps})
 
 
+def first_group_step_index(pipeline: Pipeline) -> int | None:
+    """Index of the first enabled group_average step, or None."""
+    return next((i for i, s in enumerate(pipeline.steps) if s.enabled and s.name == GROUP_STEP_NAME), None)
+
+
+def view_is_after_group(pipeline: Pipeline, group_idx: int, token: str | None) -> bool:
+    """
+    Whether the requested view shows aggregated spectra (at/after the group step) rather than raw ones.
+
+    ``token`` is a session-run view: None / final (whole pipeline) -> aggregated; ``__source__`` -> raw;
+    ``__raw__`` -> aggregated; ``__raw__:N`` (cohort steps through N) -> aggregated when N reaches the group
+    step; ``name`` / ``name__N`` -> by the position of that step.
+    """
+    from sersflow.core.pipeline.engine import _parse_collect_token
+    from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
+
+    t = str(token or "").strip()
+    if not t:
+        return True
+    if t == "__source__":
+        return False
+    if t == "__raw__":
+        return True
+    if t.startswith("__raw__:"):
+        try:
+            return int(t.split(":", 1)[1]) > group_idx
+        except ValueError:
+            return True
+    name, num = _parse_collect_token(t)
+    nums = assign_pipeline_step_nums(pipeline.steps)
+    for i, s in enumerate(pipeline.steps):
+        if s.name == name and (num is None or nums[i] == num):
+            return i >= group_idx
+    return True
+
+
 def _last_group_index(pipeline: Pipeline, before: int | None = None) -> int | None:
     """Index of the last enabled group_average step (strictly before ``before`` when given)."""
     end = len(pipeline.steps) if before is None else max(0, int(before))
@@ -92,6 +128,28 @@ def _prefix_pipeline_before_index(pipeline: Pipeline, idx: int) -> Pipeline:
     return _with_steps(pipeline, steps)
 
 
+def _expand_to_touched_groups(
+    *, dataset: DatasetRecord, step: PipelineStep, refs: list[Any], universe: list[Any]
+) -> tuple[list[Any], list[Any]]:
+    """
+    Plan the groups of ``step`` over ``universe`` (labels only) and return (refs to process, touched plan).
+
+    The refs to process are the given ``refs`` plus every other member of a group they belong to, so each
+    aggregate is complete. The plan holds only those touched groups.
+    """
+    from sersflow.api.services.spectrum_context import load_spectrum_contexts
+    from sersflow.core.preprocess.group_average import GroupAverageParams, plan_groups
+
+    gparams = GroupAverageParams.from_dict(step.params)
+    ctxs = load_spectrum_contexts(universe)
+    plan = plan_groups([(c.spectrum_id, c.labels) for c in ctxs], gparams, dataset_id=dataset.dataset_id)
+    subset_ids = {str(r.spectrum_id) for r in refs}
+    touched = [g for g in plan if subset_ids.intersection(g.member_ids)]
+    needed = {sid for g in touched for sid in g.member_ids}
+    expanded = [r for r in universe if str(r.spectrum_id) in needed]
+    return expanded, touched
+
+
 def _validate_group_references(pipeline: Pipeline, group_idx: int) -> None:
     """Steps after a group step cannot point back at steps before it (those no longer run per spectrum)."""
     before_ids = {s.step_id for s in pipeline.steps[:group_idx] if s.step_id}
@@ -118,9 +176,14 @@ def apply_pipeline_qc_filters(
     refs: list[Any],
     cache_namespace: str,
     strict: bool = True,
+    group_universe: list[Any] | None = None,
 ) -> tuple[list[Any], list[QcResult]]:
     """
     Apply session cohort QC steps (low_signal / outlier) in pipeline order.
+
+    ``group_universe`` (the whole cohort the first group_average step would see, e.g. every dataset spectrum)
+    makes a subset preview aggregate *complete* groups: groups are planned over the universe from labels,
+    the members of every group touched by ``refs`` are loaded too, and only those groups are returned.
 
     metadata_filter is not applied here: it runs in the XY engine as a branch-local mask
     (respects input_from), emptying non-matching spectra on that branch.
@@ -128,6 +191,15 @@ def apply_pipeline_qc_filters(
     cfg = EngineConfig(cache_namespace=cache_namespace)
     active_refs = list(refs)
     reports: list[QcResult] = []
+
+    first_group = next(
+        (i for i, s in enumerate(pipeline.steps) if s.enabled and s.name == GROUP_STEP_NAME), None
+    )
+    universe_plan = None
+    if group_universe is not None and first_group is not None:
+        active_refs, universe_plan = _expand_to_touched_groups(
+            dataset=dataset, step=pipeline.steps[first_group], refs=active_refs, universe=group_universe
+        )
 
     for idx, step in enumerate(pipeline.steps):
         if not is_qc_step(step):
@@ -155,7 +227,11 @@ def apply_pipeline_qc_filters(
             _validate_group_references(pipeline, idx)
             gparams = GroupAverageParams.from_dict(step.params)
             derived, gwarnings = average_refs(
-                dataset_id=dataset.dataset_id, refs=active_refs, finals=finals, params=gparams
+                dataset_id=dataset.dataset_id,
+                refs=active_refs,
+                finals=finals,
+                params=gparams,
+                planned=universe_plan if idx == first_group else None,
             )
             members_by_id = {d.spectrum_id: list(d.member_spectrum_ids) for d in derived}
             active_refs = list(derived)

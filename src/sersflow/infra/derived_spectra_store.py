@@ -136,6 +136,31 @@ def get_derived_spectra(
         con.close()
 
 
+def derived_path_owner(relative_path: str) -> str | None:
+    """Owner user id of the dataset a ``derived/<spectrum_id>`` label path belongs to (None if unknown)."""
+    prefix = derived_relative_path("")
+    if not relative_path.startswith(prefix):
+        return None
+    sid = relative_path[len(prefix) :]
+    con = connect()
+    try:
+        ensure_schema(con)
+        row = con.execute(
+            """
+            SELECT d.owner_user_id AS owner
+            FROM derived_spectra s JOIN datasets d ON d.dataset_id = s.dataset_id
+            WHERE s.spectrum_id = ?
+            LIMIT 1
+            """,
+            (sid,),
+        ).fetchone()
+        return str(row["owner"]) if row and row["owner"] is not None else None
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        con.close()
+
+
 def list_derived_spectra(*, dataset_id: str) -> list[DerivedSpectrumRecord]:
     con = connect()
     try:

@@ -20,6 +20,8 @@ import { fetchUploadsList } from "./hooks/useUploadsList";
 const RAMAN_SHIFT_AXIS_TITLE = "Raman Shift (cm⁻¹)";
 /** Session cohort QC only (shrink working set). metadata_filter is an engine mask step. */
 const QC_STEP_NAMES = new Set(["low_signal_filter", "outlier_detection"]);
+/** Cohort step that replaces the working set with aggregated spectra (steps before it are baked in). */
+const GROUP_STEP_NAME = "group_average";
 /** Steps that do not transform plot XY (features/metrics only). */
 const METRIC_STEP_NAMES = new Set([
   "fitting",
@@ -201,6 +203,20 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       batchMetrics: ["peak_height", "fwhm"],
     });
 
+    // Aggregate Spectra: views at/after it show the aggregated spectra of the groups the subset belongs to.
+    const groupIdx = steps.findIndex((s) => s.enabled !== false && s.name === GROUP_STEP_NAME);
+    async function aggregatedInputs(): Promise<SpectrumRef[]> {
+      const out = await runSession(
+        sessionId,
+        { scope: "subset", return: { kind: "final" }, up_to_step: "__raw__" },
+        { signal }
+      );
+      if (isStale()) return [];
+      return ((out as SessionRunFinalResponse).items ?? [])
+        .map((it) => it.derived?.ref)
+        .filter((r): r is SpectrumRef => r != null);
+    }
+
     async function inputsAfterQc(): Promise<SpectrumRef[]> {
       const all = subsetInputsFromIndices(subsetIndices);
       const hasQc = steps.some((s) => s.enabled !== false && QC_STEP_NAMES.has(s.name));
@@ -280,12 +296,13 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         }
       }
 
-      const inputs = await inputsAfterQc();
+      const aggregated = groupIdx >= 0 && groupIdx < baselineIdx;
+      const inputs = aggregated ? await aggregatedInputs() : await inputsAfterQc();
       if (isStale()) return;
 
-      const slice = steps.slice(0, prevEnabledIdx >= 0 ? prevEnabledIdx + 1 : 0);
+      const slice = steps.slice(aggregated ? groupIdx + 1 : 0, prevEnabledIdx >= 0 ? prevEnabledIdx + 1 : 0);
       const pipelineToInput: Pipeline = {
-        steps: editorStepsToApiSteps(slice).filter((s) => !QC_STEP_NAMES.has(s.name)),
+        steps: editorStepsToApiSteps(slice).filter((s) => !QC_STEP_NAMES.has(s.name) && s.name !== GROUP_STEP_NAME),
         technique_family: techniqueFamily,
       };
 
@@ -369,7 +386,8 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         }
       }
 
-      const inputs = await inputsAfterQc();
+      const aggregated = groupIdx >= 0 && groupIdx < fittingIdx;
+      const inputs = aggregated ? await aggregatedInputs() : await inputsAfterQc();
       if (isStale()) return;
 
       const wantedRegion =
@@ -385,6 +403,8 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
             ])
           );
           gatedInputs = inputs.filter((r) => {
+            const ownRegion = r.spectrum_labels?.xps_region;
+            if (typeof ownRegion === "string" && ownRegion.trim()) return fittingRegionMatches(wantedRegion, ownRegion);
             const labels = byPath.get(String(r.relative_path || "")) || {};
             const blocks = (labels as { vms_spectra?: Record<string, { xps_region?: string }> }).vms_spectra;
             let region = "";
@@ -424,9 +444,9 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         return;
       }
 
-      const slice = steps.slice(0, prevEnabledIdx >= 0 ? prevEnabledIdx + 1 : 0);
+      const slice = steps.slice(aggregated ? groupIdx + 1 : 0, prevEnabledIdx >= 0 ? prevEnabledIdx + 1 : 0);
       const pipelineToInput: Pipeline = {
-        steps: editorStepsToApiSteps(slice).filter((s) => !QC_STEP_NAMES.has(s.name)),
+        steps: editorStepsToApiSteps(slice).filter((s) => !QC_STEP_NAMES.has(s.name) && s.name !== GROUP_STEP_NAME),
         technique_family: techniqueFamily,
       };
 

@@ -67,7 +67,12 @@ def assert_path_owner(user_id: str, relative_path: str) -> None:
     if has_global_access(user_id):
         return
     effective = resolve_owner_user_id(user_id)
-    owner = registry_owner_for_path(relative_path)
+    if relative_path.startswith("derived/"):  # group aggregates: owned via their dataset
+        from sersflow.infra.derived_spectra_store import derived_path_owner
+
+        owner = derived_path_owner(relative_path)
+    else:
+        owner = registry_owner_for_path(relative_path)
     if owner is None:
         raise OwnershipError(relative_path)
     if owner != effective:

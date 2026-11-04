@@ -30,6 +30,8 @@ from sersflow.api.services.pipeline_qc import (
     apply_pipeline_qc_filters,
     apply_pipeline_qc_filters_before_step,
     pipeline_without_qc_steps,
+    first_group_step_index,
+    view_is_after_group,
     qc_step_xy_inputs,
 )
 from sersflow.api.services.sessions_service import pipeline_hash, resolve_subset_indices, subset_hash
@@ -416,11 +418,28 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
         if raw_through_step < 1:
             raise HTTPException(status_code=400, detail="__raw__:<N> requires N >= 1")
 
+    # Views before the group_average step show the raw subset spectra; views at/after it show the
+    # aggregated spectra of the groups the subset spectra belong to.
+    view_token = up_token
+    if not view_token and isinstance(payload.return_, SessionRunReturnIntermediates):
+        view_token = str(payload.return_.steps[0] or "").strip()
+    group_idx = first_group_step_index(runtime_pipeline)
+    aggregated_view = group_idx is not None and view_is_after_group(runtime_pipeline, group_idx, view_token)
+    if group_idx is not None and not aggregated_view:
+        runtime_pipeline = runtime_pipeline.model_copy(
+            update={"steps": [s.model_copy(deep=True) for s in runtime_pipeline.steps[:group_idx]]},
+        )
+
     if payload.scope == "all":
         refs = filter_reference_spectra(ds.spectra, runtime_pipeline)
     else:
         indices = resolve_subset_indices(dataset=ds, subset=rec.subset, pipeline=runtime_pipeline)
         refs = filter_reference_spectra([ds.spectra[i] for i in indices], runtime_pipeline)
+    group_universe = (
+        filter_reference_spectra(ds.spectra, runtime_pipeline)
+        if aggregated_view and payload.scope != "all"
+        else None
+    )
 
     if not source_only:
         pipe_for_qc = runtime_pipeline
@@ -434,6 +453,7 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
             refs=refs,
             cache_namespace=cache_ns,
             strict=True,
+            group_universe=group_universe,
         )
     runtime_pipeline_no_qc = pipeline_without_qc_steps(runtime_pipeline)
     # Calibration references (VB partner, reference_filters, group members) may be outside the subset.
@@ -474,6 +494,15 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
                     "n_members": len(dref.member_spectrum_ids),
                     "member_spectrum_ids": list(dref.member_spectrum_ids),
                     "labels": sanitize_floats(dict(dref.spectrum_labels)),
+                    # Enough to feed this spectrum back into /pipeline/run (blob + labels, no source file).
+                    "ref": {
+                        "spectrum_id": dref.spectrum_id,
+                        "relative_path": dref.relative_path,
+                        "blob_id": dref.blob_id,
+                        "blob_relative_path": dref.blob_relative_path,
+                        "original_relative_path": dref.original_relative_path,
+                        "spectrum_labels": sanitize_floats(dict(dref.spectrum_labels)),
+                    },
                 }
             items.append(item)
         return {"items": items}

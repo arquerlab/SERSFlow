@@ -96,6 +96,9 @@ class GroupMember:
     labels: Mapping[str, Any]
 
 
+_NO_XY = XY(x=np.array([], dtype=float), y=np.array([], dtype=float))
+
+
 @dataclass
 class AveragedGroup:
     spectrum_id: str
@@ -269,27 +272,75 @@ def combine_labels(
     return out
 
 
+@dataclass(frozen=True)
+class PlannedGroup:
+    """A group decided from labels alone (no spectral data needed)."""
+
+    spectrum_id: str
+    key: dict[str, Any]
+    member_ids: tuple[str, ...]
+
+
+def plan_groups(
+    items: Iterable[tuple[str, Mapping[str, Any]]],
+    params: GroupAverageParams,
+    *,
+    dataset_id: str,
+) -> list[PlannedGroup]:
+    """Work out the groups (ids, keys, member ids) from ``(spectrum_id, labels)`` pairs only."""
+    params.validate()
+    members = [GroupMember(spectrum_id=sid, xy=_NO_XY, labels=labels) for sid, labels in items]
+    if not members:
+        return []
+    rule = params.rule_dict()
+    return [
+        PlannedGroup(
+            spectrum_id=make_group_spectrum_id(dataset_id, rule, key),
+            key=key,
+            member_ids=tuple(m.spectrum_id for m in mems),
+        )
+        for key, mems in _group_members(members, params)
+    ]
+
+
 def group_average(
     members: Iterable[GroupMember],
     params: GroupAverageParams,
     *,
     dataset_id: str,
+    planned: Sequence[PlannedGroup] | None = None,
 ) -> list[AveragedGroup]:
-    """Group ``members`` according to ``params`` and reduce each group to one spectrum."""
+    """
+    Group ``members`` according to ``params`` and reduce each group to one spectrum.
+
+    With ``planned`` (groups decided over a wider cohort, e.g. the whole dataset) the membership, keys and
+    ids come from the plan and only the planned members present in ``members`` are reduced.
+    """
     params.validate()
     usable = [m for m in members if m.xy.x.size > 0]
     if not usable:
         return []
     rule = params.rule_dict()
+    if planned is None:
+        parts = [
+            (make_group_spectrum_id(dataset_id, rule, key), key, mems)
+            for key, mems in _group_members(usable, params)
+        ]
+    else:
+        by_id = {m.spectrum_id: m for m in usable}
+        parts = [
+            (g.spectrum_id, dict(g.key), [by_id[sid] for sid in g.member_ids if sid in by_id])
+            for g in planned
+        ]
     groups: list[AveragedGroup] = []
-    for key, mems in _group_members(usable, params):
-        if len(mems) < params.min_group_size:
+    for gid, key, mems in parts:
+        if not mems or len(mems) < params.min_group_size:
             continue
         xy, warnings = reduce_spectra([m.xy for m in mems], params.reducer)
         labels = combine_labels(mems, key, n_averaged=len(mems), reducer=params.reducer)
         groups.append(
             AveragedGroup(
-                spectrum_id=make_group_spectrum_id(dataset_id, rule, key),
+                spectrum_id=gid,
                 key=key,
                 member_ids=[m.spectrum_id for m in mems],
                 xy=xy,

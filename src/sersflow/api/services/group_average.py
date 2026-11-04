@@ -15,6 +15,7 @@ from sersflow.core.preprocess.group_average import (
     AveragedGroup,
     GroupAverageParams,
     GroupMember,
+    PlannedGroup,
     group_average,
 )
 from sersflow.core.spectrum import XY
@@ -114,6 +115,7 @@ def average_refs(
     refs: Sequence[Any],
     finals: dict[str, XY],
     params: GroupAverageParams,
+    planned: Sequence[PlannedGroup] | None = None,
 ) -> tuple[list[DerivedSpectrumRef], list[str]]:
     """
     Group the processed spectra ``finals`` (keyed by spectrum_id) and return derived refs + warnings.
@@ -126,7 +128,7 @@ def average_refs(
         for r in refs
         if str(r.spectrum_id) in finals and str(r.spectrum_id) in contexts
     ]
-    groups = group_average(members, params, dataset_id=dataset_id)
+    groups = group_average(members, params, dataset_id=dataset_id, planned=planned)
     rule = params.rule_dict()
     derived: list[DerivedSpectrumRef] = []
     warnings: list[str] = []
