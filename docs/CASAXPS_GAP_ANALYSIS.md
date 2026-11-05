@@ -1,6 +1,6 @@
 # CasaXPS → SpecFlow feature gap analysis
 
-Status: written 2026-11-05 against `main` @ `b845749`. **Implemented since:** K1, K2, K3, IO1, F1 (see "Implementation notes" under each).
+Status: written 2026-11-05 against `main` @ `b845749`. **Implemented since:** K1, K2, K3, IO1, F1, F2, F3, F4 (see "Implementation notes" under each).
 
 ## 0. How to use this document (for a planning / implementing agent)
 
@@ -245,6 +245,18 @@ Suggested order of work, in phases (each phase can ship on its own):
   2. Add an optional Monte Carlo (`n_replicates`, seed): simulate Poisson noise on the fitted envelope plus background, refit, and report SD / percentiles for each parameter and %area.
   3. Run it as an async job, like sweep jobs. Expose it through REST, the UI (Analyze → fit diagnostics) and MCP.
   4. Pass the uncertainty through to Q1 (atomic % ± σ).
+- **Implementation notes (done 2026-11-05):** `FitResult.p_cov` is now the covariance of the FULL flat parameter
+  vector (J C J^T: varied → identity, linked → finite differences through `Parameters.update_constraints`, fixed → 0),
+  scaled by χ²ν (lmfit default, user decision); `FitResult.p_stderr` = 1σ (NaN fixed). `core/metrics/fit_uncertainty.py`:
+  area / %area (share of the step's summed peak areas, backgrounds and DS/GDS excluded) and their errors by numerical
+  Jacobian; `run_monte_carlo` (noise follows the fit weighting — Poisson σ, relative Poisson √(g·y), or RMSE; Gaussian
+  draws; user decision). Observation columns per component: `_area_pct`, `_<param>_stderr`, `_area_stderr`,
+  `_area_pct_stderr` (after the values, so the parameter/area layout is unchanged); fitting `impl_version` 5→6.
+  Monte Carlo is an on-demand job (user decision, not a pipeline option): `POST /analysis/runs/{id}/monte-carlo-jobs`,
+  `GET /analysis/monte-carlo-jobs/{id}/summary`, zip via the fit-curve job download; MCP `post_analysis_monte_carlo_jobs`,
+  `get_analysis_monte_carlo_summary`; UI Analyze → Fit diagnostics (± table + Monte Carlo panel). `/fitting/fit` and the
+  fitting preview return `stderr`, `area`, `area_pct` and their errors per component. Step 4 (Q1) waits for Q1; the R1
+  report should read the `_stderr` columns. Tests: `tests/test_parameter_uncertainty.py`.
 - **Done when:**
   - On synthetic data with known truth, Monte Carlo SDs agree with the empirical scatter.
   - Error columns appear in CSV/Parquet and in the R1 report.
@@ -260,6 +272,20 @@ Suggested order of work, in phases (each phase can ship on its own):
   - Give every line shape an area-per-height expression, numeric where no closed form exists (LA, voigt, apv, asymmetric_voigt, lf, product GL), so `area_ratio` works for all of them.
   - Add a "doublet" helper: create a pair with an offset link, equal-FWHM link and area-ratio link from (2j+1). Make it available in the UI component editor and as a recipe option that locks by default.
   - Recipes lock the spin-orbit ratio unless the recipe says otherwise.
+- **Implementation notes (done 2026-11-05):** literature checked first (Biesinger thesis 1.2.4 / Table 1.1 / 2.3.1-2.3.3,
+  CasaXPS Cookbook p.107-111/137, Blue Book p.37-38). `fitting_lmfit._area_per_height_expr` covers every finite-area
+  peak through a registered `sf_area_per_height(ctype, ...)` (same factors as the area export); DS/GDS rejected.
+  `peak_area.area_per_height` no longer turns 0 into the default (GL(0) was read as GL(30)). `core/xps/spin_orbit.py`:
+  nlj label parsing, pairs (prefix/suffix aware, e.g. `4f7/2_sat`), theoretical ratios p 1/2, d 2/3, f 3/4 (user
+  decision: theoretical always), `doublet_links`, `add_spin_orbit_partner(_for_all_peaks)`. Recipes: labelled pairs get
+  offset + FWHM equal or the table ratio when both widths are printed (Ti/V Coster-Kronig: user decision) + shape
+  equal when the recipe shape is identical (user decision) + area lock (`lock_spin_orbit`, recipe
+  `spin_orbit_area_lock: false` opt-out); the old equal-FWHM link for Ti/V and the duplicate pos link are gone; satellites
+  use area_ratio for every shape (Ir LF parents no longer fall back to a height scale); a 4f5/2 satellite follows the
+  4f7/2 satellite 3:4. One-member recipes (Co/Ni/Fe/Mn/Cr 2p3/2) stay single (user decision) unless
+  `spin_orbit_partner_splitting_eV` is given (user-entered; the project literature has no Co 2p splitting). REST:
+  apply-recipe query params, `POST /xps/spin-orbit-partner`; MCP `post_xps_add_spin_orbit_partner` + recipe tool params;
+  UI: recipe picker options, "Spin-orbit partner…" per peak. Tests: `tests/test_spin_orbit_doublets.py`.
 - **Done when:**
   - A Co 2p recipe fit holds area(2p1/2)/area(2p3/2) = 0.5 exactly.
   - `area_ratio` works for LA components (test).
@@ -354,6 +380,17 @@ Suggested order of work, in phases (each phase can ship on its own):
   - Add an `expr` link mode that takes a safe expression over other components' parameters (reuse the safe evaluator in `core/metrics/feature_operations.py`, or lmfit `expr` with a whitelist).
   - Validate expressions for cycles.
   - In the UI link editor, show linked fields colour-coded by their target, as CasaXPS does.
+- **Implementation notes (done 2026-11-05):** `core/preprocess/param_expressions.py`: link `mode: "expr"` with
+  `{peak.param}` references (user decision: brace syntax; id = text before the last dot), `{A.area}` = amp x
+  area-per-height and `defines: "area"` on amp links (user decision: area on both sides), ast whitelist (numbers,
+  + - * / **, unary +/-, abs sqrt exp log min max), `validate_param_links` (unknown ids/keys, duplicate definitions,
+  self references, cycles over ALL link modes incl. area_ratio shape dependencies, loop named in the error). lmfit:
+  rendered into the parameter `expr`; validation runs before every fit (failures recorded per K2). Every linked
+  parameter now ignores its own bounds (user decision; lmfit used to clip silently, e.g. +12 eV offset -> +10.5 eV).
+  Recipe merge remaps ids inside expressions. REST `POST /fitting/validate-links` ({ok, errors, drivers}); MCP
+  `post_fitting_validate_links`; UI: "Expression…" link mode with a `defines` selector on amp, live validation notice,
+  link fields bordered in the driver peak's plot colour (grey for several drivers), bounds greyed while linked; peak
+  rename / recipe add-remove rewrite expressions. Tests: `tests/test_param_expressions.py`.
 - **Done when:**
   - An expression such as `pos(C) = pos(A) + 0.5*(pos(B)-pos(A))` fits correctly.
   - Cyclic expressions are rejected with a clear error.

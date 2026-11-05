@@ -84,6 +84,7 @@ import {
   findParamLink,
   isAutoAmplitudeParam,
   migrateFittingParamsToEditor,
+  isPeakComponentType,
   normalizeWeighting,
   WEIGHTING_OPTIONS,
   weightingRequestText,
@@ -106,6 +107,11 @@ import {
 } from "./preprocess/fittingUtils";
 import { AcquisitionSummary, summarizeAcquisition } from "./preprocess/AcquisitionSummary";
 import { FittingRecipePicker } from "./preprocess/FittingRecipePicker";
+import { SpinOrbitPartnerControl } from "./preprocess/SpinOrbitPartnerControl";
+import { ExpressionLinkInput } from "./preprocess/ExpressionLinkInput";
+import { LinkValidationNotice } from "./preprocess/LinkValidationNotice";
+import { linkColor } from "./preprocess/paramExpressions";
+import { peakColorMap } from "./preprocess/fitResidualPlot";
 import { DEFAULT_GUARDRAILS, type Mode, type PlotView } from "./preprocess/runController";
 
 function normalizePlotView(s: unknown): PlotView {
@@ -1980,6 +1986,7 @@ export default function PreprocessingWorkspace() {
               {(() => {
                 if (selectedStep.name === "fitting") {
                   const fp = migrateFittingParamsToEditor(selectedStep.params ?? {}, fittingCatalog);
+                  const peakColors = peakColorMap(fp.components);
                   const linkTargets = fp.components.flatMap((c) =>
                     c.rows.map((r) => ({
                       component_id: c.component_id || "(unnamed)",
@@ -2235,6 +2242,7 @@ export default function PreprocessingWorkspace() {
                       {fittingModelsQ.isError ? (
                         <div className="err">Could not load /fitting/models: {String((fittingModelsQ.error as Error)?.message ?? fittingModelsQ.error)}</div>
                       ) : null}
+                      {isXpsPipeline ? <LinkValidationNotice fp={fp} /> : null}
                       {fp.components.map((comp, ci) => (
                         <div
                           key={`fitting-comp-${ci}`}
@@ -2330,6 +2338,14 @@ export default function PreprocessingWorkspace() {
                                   style={{ width: "100px" }}
                                 />
                               </label>
+                            ) : null}
+                            {isXpsPipeline && isPeakComponentType(comp.component_type) && comp.component_type !== "ds" && comp.component_type !== "gds" ? (
+                              <SpinOrbitPartnerControl
+                                fp={fp}
+                                componentId={comp.component_id}
+                                fittingCatalog={fittingCatalog}
+                                onApply={(next) => updateSelectedFittingParams(next)}
+                              />
                             ) : null}
                           </div>
 
@@ -2432,7 +2448,11 @@ export default function PreprocessingWorkspace() {
                                   }}
                                 />
                                 )}
-                                <div className="row" style={{ gap: "6px", justifyContent: "flex-start" }}>
+                                <div
+                                  className="row"
+                                  style={{ gap: "6px", justifyContent: "flex-start", opacity: existingLink ? 0.4 : 1 }}
+                                  title={existingLink ? "Ignored while linked: a linked parameter follows its link exactly" : undefined}
+                                >
                                   {isTempK ? (
                                     <span className="hint" style={{ fontSize: "11px" }}>no limits</span>
                                   ) : (
@@ -2493,11 +2513,27 @@ export default function PreprocessingWorkspace() {
                                   />
                                 ) : null}
                                 {isXpsPipeline ? (
-                                  <div className="row" style={{ gap: "4px", flexWrap: "wrap" }}>
+                                  <div
+                                    className="row"
+                                    data-testid={existingLink ? "linked-field" : undefined}
+                                    style={{
+                                      gap: "4px",
+                                      flexWrap: "wrap",
+                                      ...(existingLink
+                                        ? {
+                                            // F4: colour of the peak this field follows (CasaXPS convention); grey when it follows several.
+                                            borderLeft: `4px solid ${linkColor(existingLink, peakColors)}`,
+                                            paddingLeft: 4,
+                                          }
+                                        : {}),
+                                    }}
+                                  >
                                     <select
                                       value={
                                         existingLink
-                                          ? `${existingLink.target_component_id}::${existingLink.target_key}`
+                                          ? existingLink.mode === "expr"
+                                            ? "__expr__"
+                                            : `${existingLink.target_component_id}::${existingLink.target_key}`
                                           : ""
                                       }
                                       onChange={(e) => {
@@ -2506,6 +2542,27 @@ export default function PreprocessingWorkspace() {
                                           updateSelectedFittingParams({
                                             ...fp,
                                             param_links: upsertParamLink(fp.param_links, null, comp.component_id, row.key),
+                                          });
+                                          return;
+                                        }
+                                        if (v === "__expr__") {
+                                          const other = fp.components.find(
+                                            (c) =>
+                                              c.component_id &&
+                                              c.component_id !== comp.component_id &&
+                                              c.rows.some((r) => r.key === row.key)
+                                          );
+                                          const link: FittingParamLink = {
+                                            source_component_id: comp.component_id,
+                                            source_key: row.key,
+                                            target_component_id: "",
+                                            target_key: "",
+                                            mode: "expr",
+                                            expr: other ? `{${other.component_id}.${row.key}}` : "",
+                                          };
+                                          updateSelectedFittingParams({
+                                            ...fp,
+                                            param_links: upsertParamLink(fp.param_links, link, comp.component_id, row.key),
                                           });
                                           return;
                                         }
@@ -2528,6 +2585,9 @@ export default function PreprocessingWorkspace() {
                                       title="Link this parameter to another component parameter"
                                     >
                                       <option value="">None</option>
+                                      <option value="__expr__" title="Free expression over other peaks, e.g. {A.pos} + 0.5*({B.pos} - {A.pos})">
+                                        Expression…
+                                      </option>
                                       {linkTargets
                                         .filter(
                                           (t) =>
@@ -2539,7 +2599,19 @@ export default function PreprocessingWorkspace() {
                                           </option>
                                         ))}
                                     </select>
-                                    {existingLink ? (
+                                    {existingLink && existingLink.mode === "expr" ? (
+                                      <ExpressionLinkInput
+                                        link={existingLink}
+                                        isAmp={row.key === "amp"}
+                                        onChange={(link) =>
+                                          updateSelectedFittingParams({
+                                            ...fp,
+                                            param_links: upsertParamLink(fp.param_links, link, comp.component_id, row.key),
+                                          })
+                                        }
+                                      />
+                                    ) : null}
+                                    {existingLink && existingLink.mode !== "expr" ? (
                                       <>
                                         <select
                                           value={existingLink.mode}

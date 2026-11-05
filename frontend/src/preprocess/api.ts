@@ -516,10 +516,13 @@ export type FitRequest = {
     source_key: string;
     target_component_id: string;
     target_key: string;
-    mode: "equal" | "scale" | "offset" | "area_ratio";
+    mode: "equal" | "scale" | "offset" | "area_ratio" | "expr";
     scale?: number;
     offset?: number;
     ratio?: number;
+    /** F4 expression link, e.g. "{A.pos} + 0.5*({B.pos} - {A.pos})". */
+    expr?: string;
+    defines?: "value" | "area";
   }>;
   xps_region?: string | null;
   /** Optional internal fit window lower bound (inclusive). */
@@ -541,6 +544,12 @@ export type FitComponentResult = {
   param_keys: string[];
   params: Record<string, number>;
   y_hat?: number[] | null;
+  /** F2: 1σ covariance error per parameter (null = fixed / unavailable), area and %area with errors. */
+  stderr?: Record<string, number | null>;
+  area?: number | null;
+  area_stderr?: number | null;
+  area_pct?: number | null;
+  area_pct_stderr?: number | null;
 };
 
 export type FitDiagnostics = {
@@ -635,10 +644,13 @@ export type FittingRecipeApplyResponse = {
     source_key: string;
     target_component_id: string;
     target_key: string;
-    mode: "equal" | "scale" | "offset" | "area_ratio";
+    mode: "equal" | "scale" | "offset" | "area_ratio" | "expr";
     scale?: number;
     offset?: number;
     ratio?: number;
+    /** F4 expression link, e.g. "{A.pos} + 0.5*({B.pos} - {A.pos})". */
+    expr?: string;
+    defines?: "value" | "area";
   }>;
   initial_area_ratios?: string | null;
   warnings: string[];
@@ -664,17 +676,53 @@ export function applyFittingRecipe(
     pass_energy?: number;
     include_background?: boolean;
     preferred_pass_energy?: number;
+    /** F3: lock spin-orbit doublet area ratios (default true on the server). */
+    lock_spin_orbit?: boolean;
+    /** F3: one-member recipes (e.g. Co 2p3/2) — add a 2p1/2 partner of every peak at +splitting (eV). */
+    spin_orbit_partner_splitting_eV?: number | null;
+    spin_orbit_partner_subshell?: "p" | "d" | "f" | null;
   }
 ) {
   const params = new URLSearchParams();
   if (opts?.pass_energy != null) params.set("pass_energy", String(opts.pass_energy));
   if (opts?.include_background === false) params.set("include_background", "false");
+  if (opts?.lock_spin_orbit === false) params.set("lock_spin_orbit", "false");
+  if (opts?.spin_orbit_partner_splitting_eV != null && opts.spin_orbit_partner_splitting_eV > 0) {
+    params.set("spin_orbit_partner_splitting_eV", String(opts.spin_orbit_partner_splitting_eV));
+  }
+  if (opts?.spin_orbit_partner_subshell) params.set("spin_orbit_partner_subshell", opts.spin_orbit_partner_subshell);
   if (opts?.preferred_pass_energy != null) {
     params.set("preferred_pass_energy", String(opts.preferred_pass_energy));
   }
   const qs = params.toString();
   const path = `/xps/fitting-recipes/${encodeURIComponent(recipeId)}/apply${qs ? `?${qs}` : ""}`;
   return fetchJson<FittingRecipeApplyResponse>(path);
+}
+
+/** F3 "Create x 2": add the spin-orbit partner of one peak (server builds the doublet links). */
+export function postSpinOrbitPartner(body: {
+  params: Record<string, unknown>;
+  component_id: string;
+  splitting_eV: number;
+  subshell: "p" | "d" | "f";
+  lock_area?: boolean;
+  link_shape?: boolean;
+  fwhm_ratio?: number | null;
+}) {
+  return fetchJson<{ params: Record<string, unknown>; partner_id: string }>(`/xps/spin-orbit-partner`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** F4: validate parameter links (expressions, cycles, unknown peaks) without fitting. */
+export function postValidateLinks(body: { components: unknown[]; param_links: unknown[] }) {
+  return fetchJson<{ ok: boolean; errors: string[]; drivers: Record<string, string[]> }>(`/fitting/validate-links`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 export type MethodDefaultPublic = {

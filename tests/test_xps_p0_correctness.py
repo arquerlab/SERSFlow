@@ -77,10 +77,13 @@ def test_multiplet_area_pct_seeds_initial_area_ratios() -> None:
     assert any("area_pct" in w for w in out["warnings"])
 
 
-def test_so_amps_free_no_amp_scale_link() -> None:
+def test_so_amps_locked_by_area_ratio_not_height_scale() -> None:
+    # F3: the spin-orbit AREA ratio (1:2) is locked; never a fixed height scale.
     out = apply_recipe_id("sc_2p_sc0", pass_energy=20, include_background=False)
     amp_links = [l for l in out["param_links"] if l.get("source_key") == "amp"]
-    assert amp_links == []
+    assert [(l["mode"], l["ratio"]) for l in amp_links] == [("area_ratio", 0.5)]
+    free = apply_recipe_id("sc_2p_sc0", pass_energy=20, include_background=False, lock_spin_orbit=False)
+    assert not [l for l in free["param_links"] if l.get("source_key") == "amp"]
     pos_links = [l for l in out["param_links"] if l.get("source_key") == "pos"]
     assert pos_links  # spin-orbit / delta still linked on position
 

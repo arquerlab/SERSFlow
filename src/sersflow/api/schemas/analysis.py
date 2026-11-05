@@ -202,6 +202,25 @@ class SweepJobCreateRequest(BaseModel):
     )
 
 
+class MonteCarloJobCreateRequest(BaseModel):
+    """
+    F2: Monte Carlo parameter uncertainties for one fitting step of a completed run.
+
+    Each spectrum is refitted once (best fit); then ``n_replicates`` noisy copies of the best-fit curve (noise from
+    the fit's weighting model: Poisson, relative Poisson, or constant RMSE when unweighted) are refitted. Poll and
+    download through the fit-curve job endpoints; ``GET /analysis/monte-carlo-jobs/{job_id}/summary`` returns the
+    per-parameter summary as JSON.
+    """
+
+    fitting_step_num: int | None = Field(default=None, description="1-based, from /fitting-steps.")
+    fitting_step_index: int | None = Field(default=None, description="0-based = N in s{N}_ columns.")
+    n_replicates: int = Field(default=100, ge=2, le=2000)
+    seed: int = Field(default=0, ge=0, description="Random seed; spectrum k uses seed + k (reproducible).")
+    spectrum_ids: list[str] | None = Field(
+        default=None, description="Subset of the run's spectra; default = every spectrum the step applies to."
+    )
+
+
 class StepOutputsJobCreateRequest(BaseModel):
     """Export raw XY plus the output of each selected pipeline step (one CSV per spectrum, zipped)."""
 

@@ -66,7 +66,19 @@ export function peakOnBackground(peak: Array<number | null | undefined>, bgSum: 
   return out;
 }
 
-const PEAK_COLORS = ["#e67e22", "#3498db", "#9b59b6", "#1abc9c", "#e74c3c", "#f39c12", "#2ecc71"];
+export const PEAK_COLORS = ["#e67e22", "#3498db", "#9b59b6", "#1abc9c", "#e74c3c", "#f39c12", "#2ecc71"];
+
+/** Plot colour of each peak component, in the same order the fit plots assign them (backgrounds excluded). */
+export function peakColorMap(components: Array<{ component_id?: string | null; component_type: string }>): Map<string, string> {
+  const out = new Map<string, string>();
+  let i = 0;
+  for (const c of components) {
+    if (isBackgroundComponentType(c.component_type) || !isPeakComponentType(c.component_type)) continue;
+    out.set(String(c.component_id ?? ""), PEAK_COLORS[i % PEAK_COLORS.length] ?? "#888");
+    i += 1;
+  }
+  return out;
+}
 
 function hexToRgba(hex: string, a: number): string {
   const h = hex.replace("#", "");

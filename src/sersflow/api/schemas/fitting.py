@@ -103,6 +103,13 @@ class FitComponentResult(BaseModel):
     params: dict[str, float] = Field(default_factory=dict)
     y_hat: list[float] | None = None
     """This component's contribution on the same x as the request (same length as target)."""
+    stderr: dict[str, float | None] = Field(default_factory=dict)
+    """F2: 1-sigma covariance error per parameter (null for fixed parameters or when unavailable)."""
+    area: float | None = None
+    area_stderr: float | None = None
+    area_pct: float | None = None
+    """Share of the summed peak areas of this fit, in % (backgrounds excluded)."""
+    area_pct_stderr: float | None = None
 
 
 class FitDiagnosticsPublic(BaseModel):
@@ -140,6 +147,20 @@ class FitDiagnosticsPublic(BaseModel):
     """Weighted reduced chi2 (absolute Poisson only)."""
     poisson_gain: float | None = None
     """Relative Poisson: fitted gain g in var = g*y (data units per count); 1 for raw counts."""
+
+
+class ValidateLinksRequest(BaseModel):
+    """F4: check a fitting step's ``param_links`` (expressions, cycles, unknown names) without fitting."""
+
+    components: list[dict[str, Any]] = Field(description="[{component_id, component_type, degree?}, ...]")
+    param_links: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ValidateLinksResponse(BaseModel):
+    ok: bool
+    errors: list[str] = Field(default_factory=list)
+    drivers: dict[str, list[str]] = Field(default_factory=dict)
+    """``"<component>.<key>"`` -> component ids it follows (for colour-coding linked fields)."""
 
 
 class FitResponse(BaseModel):

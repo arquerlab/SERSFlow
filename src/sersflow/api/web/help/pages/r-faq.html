@@ -22,7 +22,7 @@
 <h2>Analysis and exports</h2>
 <details><summary>How long does a run take?</summary><p>From seconds (tens of spectra) to many minutes (tens of thousands, with fits). Only one run executes at a time on the server; others wait as <i>pending</i>.</p></details>
 <details><summary>Where is the file name in the export?</summary><p>The observation table has no file-name column. Put what you need into a label (sample, batch…). The PCA scores CSV includes the file path.</p></details>
-<details><summary>How do I get error bars?</summary><p>In <b>Plots → Parameter vs parameter</b> choose <i>Mean ± error bars (group by X)</i>: the bars are the standard deviation of replicates with the same X, or supply an error column.</p></details>
+<details><summary>How do I get error bars?</summary><p>In <b>Plots → Parameter vs parameter</b> choose <i>Mean ± error bars (group by X)</i>: the bars are the standard deviation of replicates with the same X, or supply an error column. Every fitted value also has a 1σ error column (<code>…_stderr</code>) you can use as the error column; for fit uncertainties including the background, run Monte Carlo in Fit diagnostics.</p></details>
 <details><summary>Can I keep my PCA results?</summary><p>Download the CSVs right away. The server keeps one PCA result per run; running again overwrites it. Results are also lost from the page on reload.</p></details>
 
 <h2>AI assistants and Python</h2>

@@ -269,12 +269,37 @@ class FitProblem:
 class FitResult:
     p_opt: np.ndarray
     p_cov: np.ndarray | None
+    """Covariance of the FULL flat parameter vector (same order as ``p_opt``), scaled by the reduced chi2 (F2).
+
+    Fixed parameters have zero rows/columns; linked (expression) parameters carry the covariance propagated
+    through their expression. None when the optimiser could not estimate it (e.g. singular Jacobian).
+    """
     y_hat: np.ndarray
     """Total fitted curve (sum of components)."""
     component_y_hat: list[np.ndarray]
     """Per-component curves on the same x grid, same order as `components`."""
     mapping: list[dict[str, Any]]
     diagnostics: FitDiagnostics
+    p_stderr: np.ndarray | None = None
+    """1-sigma standard error per flat parameter (F2); NaN for fixed parameters or when unavailable."""
+
+
+def stderr_from_cov(p_cov: np.ndarray | None, n: int, free: list[bool] | None = None) -> np.ndarray:
+    """sqrt(diag(cov)) with NaN for fixed parameters, negative/non-finite variances or a missing covariance."""
+    out = np.full(int(n), np.nan, dtype=float)
+    if p_cov is None:
+        return out
+    cov = np.asarray(p_cov, dtype=float)
+    if cov.ndim != 2 or cov.shape[0] != n or cov.shape[1] != n:
+        return out
+    d = np.diag(cov)
+    ok = np.isfinite(d) & (d >= 0)
+    out[ok] = np.sqrt(d[ok])
+    if free is not None:
+        for i, f in enumerate(free[:n]):
+            if not f:
+                out[i] = np.nan
+    return out
 
 
 def _interp_y_at_x(x: np.ndarray, y: np.ndarray, xq: float) -> float:
@@ -803,6 +828,20 @@ def _fit_curve_scipy(problem: FitProblem) -> FitResult:
             ) from e
         raise
     yhat = model_sum(xf, *popt.tolist())
+    free = [True] * cursor
+    if problem.vary is not None:
+        for i, vflag in enumerate(problem.vary):
+            if i < cursor and not vflag:
+                free[i] = False
+    if pcov is not None:
+        pcov = np.asarray(pcov, dtype=float)
+        if not np.all(np.isfinite(np.diag(pcov))):
+            pcov = None
+        else:
+            for i, f in enumerate(free):
+                if not f:
+                    pcov[i, :] = 0.0
+                    pcov[:, i] = 0.0
     comp_curves: list[np.ndarray] = []
     for (_comp, f, _params), (s, e) in zip(funcs, slices):
         comp_curves.append(np.asarray(f(xf, *popt[s:e].tolist()), dtype=float))
@@ -831,4 +870,5 @@ def _fit_curve_scipy(problem: FitProblem) -> FitResult:
         component_y_hat=comp_curves,
         mapping=mapping,
         diagnostics=diag,
+        p_stderr=stderr_from_cov(pcov, cursor, free),
     )

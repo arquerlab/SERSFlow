@@ -9,6 +9,7 @@ import numpy as np
 
 from sersflow.core.preprocess.fit_diagnostics import FitDiagnostics, compute_fit_diagnostics
 from sersflow.core.preprocess.fitting import (
+    stderr_from_cov,
     FitComponent,
     FitProblem,
     FitResult,
@@ -403,6 +404,16 @@ def _assemble_lmfit_model(
 _GAUSS_K_EXPR = "1.0644670194312262"  # sqrt(pi / (4 ln 2)); area per unit height per unit FWHM (Gaussian)
 _LORENTZ_K_EXPR = "1.5707963267948966"  # pi / 2 (Lorentzian)
 _GL_PRODUCT_K_FN = "sf_gl_product_area_k"
+_GENERIC_AREA_K_FN = "sf_area_per_height"
+
+
+def _generic_area_per_height(ctype: str, *vals: float) -> float:
+    """Area / height of any finite-area peak type (F3), shape values in ``component_param_specs`` order."""
+    from sersflow.core.preprocess.fitting_specs import component_param_specs
+    from sersflow.core.preprocess.peak_area import area_per_height
+
+    keys = [s.key for s in component_param_specs(ctype) if s.key not in ("pos", "amp")]
+    return float(area_per_height(ctype, {k: float(v) for k, v in zip(keys, vals)}))
 
 
 def _register_area_functions(params: Any) -> None:
@@ -412,6 +423,7 @@ def _register_area_functions(params: Any) -> None:
     ev = getattr(params, "_asteval", None)
     if ev is not None:
         ev.symtable[_GL_PRODUCT_K_FN] = gl_product_area_k
+        ev.symtable[_GENERIC_AREA_K_FN] = _generic_area_per_height
 
 
 def _area_per_height_expr(
@@ -444,7 +456,17 @@ def _area_per_height_expr(
     if ct == "pseudo_voigt":
         eta = f"min(max({nm('eta')}, 0.0), 1.0)"
         return f"({nm('fwhm')}*({eta}*{_LORENTZ_K_EXPR}+(1.0-{eta})*{_GAUSS_K_EXPR}))"
-    raise ValueError(f"area_ratio link is not supported for component type {ctype!r}")
+    from sersflow.core.preprocess.fitting_specs import AREA_EXPORT_COMPONENT_TYPES, component_param_specs
+
+    if ct in AREA_EXPORT_COMPONENT_TYPES:
+        # F3: every other finite-area shape (LA, LF, voigt, GL(m,n), A-GL, APV, ...) through the same
+        # numeric / closed-form area factors as the area export (peak_area.area_per_height).
+        keys = [s.key for s in component_param_specs(ct) if s.key not in ("pos", "amp")]
+        args = ", ".join(nm(k) for k in keys)
+        return f"{_GENERIC_AREA_K_FN}('{ct}', {args})"
+    raise ValueError(
+        f"area_ratio link is not supported for component type {ctype!r} (no finite area, e.g. DS/GDS tails)"
+    )
 
 
 def _apply_param_links(
@@ -452,12 +474,46 @@ def _apply_param_links(
     problem: FitProblem,
     name_by_comp_key: dict[tuple[str, str], str],
 ) -> None:
+    from sersflow.core.preprocess.param_expressions import (
+        AREA_KEY,
+        parse_expression,
+        render_expression,
+        validate_param_links,
+    )
+
     _register_area_functions(params)
     ctype_by_id = {c.component_id: c.component_type for c in problem.components}
+    if problem.param_links:
+        errors = validate_param_links(
+            [
+                {"component_id": c.component_id, "component_type": c.component_type, "degree": c.degree}
+                for c in problem.components
+            ],
+            problem.param_links,
+        )
+        if errors:
+            raise ValueError("invalid parameter links: " + "; ".join(errors))
+
+    def ref_name(cid: str, key: str) -> str:
+        if key == AREA_KEY:
+            amp = name_by_comp_key[(cid, "amp")]
+            return f"{amp}*{_area_per_height_expr(ctype_by_id.get(cid, ''), cid, name_by_comp_key)}"
+        return name_by_comp_key[(cid, key)]
+
     for link in problem.param_links or []:
         src = (str(link.get("source_component_id") or ""), str(link.get("source_key") or ""))
-        tgt = (str(link.get("target_component_id") or ""), str(link.get("target_key") or ""))
         mode_l = str(link.get("mode") or "equal").strip().lower()
+        if mode_l == "expr":
+            # F4: free expression over other parameters ({A.pos}, {B.area}, ...), whitelisted by parse_expression.
+            src_name = name_by_comp_key[src]
+            rendered = render_expression(parse_expression(str(link.get("expr") or "")), ref_name)
+            if str(link.get("defines") or "value").strip().lower() == AREA_KEY:
+                f_dep = _area_per_height_expr(ctype_by_id.get(src[0], ""), src[0], name_by_comp_key)
+                rendered = f"({rendered})/{f_dep}"
+            # A linked parameter follows its relation exactly; its own bounds are not applied (user decision F4).
+            params[src_name].set(expr=rendered, vary=False, min=-np.inf, max=np.inf)
+            continue
+        tgt = (str(link.get("target_component_id") or ""), str(link.get("target_key") or ""))
         if src not in name_by_comp_key or tgt not in name_by_comp_key:
             raise ValueError(f"Invalid param link: {link}")
         if src == tgt:
@@ -488,7 +544,9 @@ def _apply_param_links(
             expr = f"({ratio})*{tgt_name}*{f_drv}/{f_dep}"
         else:
             raise ValueError(f"Unknown link mode: {mode_l}")
-        params[src_name].set(expr=expr, vary=False)
+        # A linked parameter follows its relation exactly; its own bounds are not applied (user decision F4:
+        # lmfit used to clip it silently, e.g. an offset link of +12 eV became +10.5 eV).
+        params[src_name].set(expr=expr, vary=False, min=-np.inf, max=np.inf)
 
 
 def fit_curve_lmfit(problem: FitProblem) -> FitResult:
@@ -617,10 +675,14 @@ def _fit_curve_lmfit(problem: FitProblem) -> FitResult:
 
     p_opt = np.array([float(result.params[n].value) for n in flat_names], dtype=float)
     try:
-        cov = result.covar
-        p_cov = np.asarray(cov, dtype=float) if cov is not None else None
+        p_cov = _full_flat_covariance(result, flat_names)
     except Exception:
         p_cov = None
+    free_or_linked = [
+        bool(getattr(result.params.get(n), "vary", False)) or bool(getattr(result.params.get(n), "expr", None))
+        for n in flat_names
+    ]
+    p_stderr = stderr_from_cov(p_cov, len(flat_names), free_or_linked)
 
     y_hat = np.asarray(result.best_fit, dtype=float)
     comp_curves: list[np.ndarray] = []
@@ -681,7 +743,47 @@ def _fit_curve_lmfit(problem: FitProblem) -> FitResult:
         component_y_hat=comp_curves,
         mapping=mapping,
         diagnostics=diag,
+        p_stderr=p_stderr,
     )
+
+
+def _full_flat_covariance(result: Any, flat_names: list[str]) -> np.ndarray | None:
+    """
+    Covariance of every flat parameter, from lmfit's covariance of the varied parameters (F2).
+
+    cov_full = J C J^T with J = d(flat)/d(varied). Varied parameters give unit rows; linked (expression)
+    parameters get their row by finite differences through ``Parameters.update_constraints``; fixed
+    parameters get zero rows. lmfit already scales C by the reduced chi2 (scale_covar=True, user decision F2).
+    """
+    covar = getattr(result, "covar", None)
+    var_names = list(getattr(result, "var_names", None) or [])
+    if covar is None or not var_names:
+        return None
+    c = np.asarray(covar, dtype=float)
+    if c.shape != (len(var_names), len(var_names)) or not np.all(np.isfinite(np.diag(c))):
+        return None
+    n = len(flat_names)
+    jac = np.zeros((n, len(var_names)), dtype=float)
+    pos = {name: i for i, name in enumerate(flat_names)}
+    for j, vn in enumerate(var_names):
+        if vn in pos:
+            jac[pos[vn], j] = 1.0
+    linked = [i for i, name in enumerate(flat_names) if getattr(result.params.get(name), "expr", None)]
+    if linked:
+        base = np.array([float(result.params[flat_names[i]].value) for i in linked], dtype=float)
+        for j, vn in enumerate(var_names):
+            p = result.params.copy()
+            par = p[vn]
+            v0 = float(par.value)
+            h = 1e-6 * max(abs(v0), 1e-6)
+            hi = float(par.max) if par.max is not None else np.inf
+            if v0 + h > hi:
+                h = -h  # stay inside the bounds (lmfit clips values)
+            par.value = v0 + h
+            p.update_constraints()
+            vals = np.array([float(p[flat_names[i]].value) for i in linked], dtype=float)
+            jac[linked, j] = (vals - base) / h
+    return jac @ c @ jac.T
 
 
 def evaluate_curve_lmfit(

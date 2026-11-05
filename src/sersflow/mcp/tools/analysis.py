@@ -443,6 +443,64 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
         return await tool_call(ctx, _run)
 
+    @mcp.tool(name="post_analysis_monte_carlo_jobs")
+    async def post_analysis_monte_carlo_jobs(
+        run_id: str,
+        fitting_step_num: int | None = None,
+        fitting_step_index: int | None = None,
+        n_replicates: int = 100,
+        seed: int = 0,
+        spectrum_ids: list[str] | None = None,
+    ) -> str:
+        """
+        POST /analysis/runs/{run_id}/monte-carlo-jobs — F2 Monte Carlo parameter uncertainties for ONE fitting step.
+
+        Every selected spectrum is refitted (best fit), then n_replicates noisy copies of the best-fit curve are
+        refitted (noise follows the fit weighting: Poisson sqrt(counts), relative Poisson g*y, or constant RMSE when
+        unweighted; Shirley/active backgrounds are recomputed per replicate). Cost = spectra x n_replicates fits
+        (server cap SERSFLOW_MC_MAX_FITS). Wait with post_analysis_fit_curve_jobs_wait, then read the JSON summary
+        with get_analysis_monte_carlo_summary (best_fit, stderr_cov, mc_sd, mc_p2_5/p50/p97_5 for every free
+        parameter, area and area_pct), or download the zip (mc_summary.csv, mc_replicates.csv) with
+        get_analysis_fit_curve_jobs_download. Covariance errors alone are already in the observation columns
+        (*_stderr, *_area_stderr, *_area_pct_stderr) of every run.
+        """
+
+        def _run():
+            from sersflow.api.schemas.analysis import MonteCarloJobCreateRequest
+
+            req = MonteCarloJobCreateRequest(
+                fitting_step_num=fitting_step_num,
+                fitting_step_index=fitting_step_index,
+                n_replicates=n_replicates,
+                seed=seed,
+                spectrum_ids=spectrum_ids,
+            )
+            resp = ctx.get_client().analysis.create_monte_carlo_job(run_id, req)
+            return {"ok": True, "job_id": resp.job_id, "status": resp.status, "run_id": run_id}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="get_analysis_monte_carlo_summary")
+    async def get_analysis_monte_carlo_summary(job_id: str, spectrum_id: str | None = None) -> str:
+        """
+        GET /analysis/monte-carlo-jobs/{job_id}/summary — Monte Carlo result of a completed job (F2).
+
+        rows: one per spectrum x component x quantity with best_fit, stderr_cov (covariance 1-sigma), mc_mean,
+        mc_sd, mc_p2_5, mc_p50, mc_p97_5, n_ok/n_requested and the noise model. Pass spectrum_id to filter.
+        """
+
+        def _run():
+            data = ctx.get_client().analysis.get_monte_carlo_summary(job_id)
+            if spectrum_id:
+                data = {
+                    **data,
+                    "rows": [r for r in data.get("rows") or [] if r.get("spectrum_id") == spectrum_id],
+                    "spectra": [s for s in data.get("spectra") or [] if s.get("spectrum_id") == spectrum_id],
+                }
+            return {"ok": True, "data": data}
+
+        return await tool_call(ctx, _run)
+
     @mcp.tool(name="post_analysis_fit_curve_jobs")
     async def post_analysis_fit_curve_jobs(
         run_id: str,

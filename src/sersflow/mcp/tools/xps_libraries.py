@@ -251,8 +251,18 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         include_background: bool = True,
         preferred_pass_energy: int | None = None,
         lock_satellites: bool = True,
+        lock_spin_orbit: bool = True,
+        spin_orbit_partner_splitting_eV: float | None = None,
+        spin_orbit_partner_subshell: str | None = None,
     ) -> str:
-        """Expand an XPS fitting recipe into pipeline fitting-step params (satellite ratios locked by default)."""
+        """
+        Expand an XPS fitting recipe into pipeline fitting-step params.
+
+        Satellite ratios and spin-orbit doublet AREA ratios (p 1:2, d 2:3, f 3:4; lock_spin_orbit) are locked by
+        default; doublet FWHM follows the recipe table ratio (Ti/V 2p1/2 Coster-Kronig broadening) or is equal.
+        One-member recipes (Co/Ni/Fe/Mn/Cr 2p3/2 multiplets) stay single unless spin_orbit_partner_splitting_eV is
+        given: then each peak gets a 2p1/2 partner at +splitting (you must supply the splitting; widen the fit window).
+        """
 
         def _run():
             data = ctx.get_client().xps.apply_fitting_recipe(
@@ -261,6 +271,46 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 include_background=include_background,
                 preferred_pass_energy=preferred_pass_energy,
                 lock_satellites=lock_satellites,
+                lock_spin_orbit=lock_spin_orbit,
+                spin_orbit_partner_splitting_eV=spin_orbit_partner_splitting_eV,
+                spin_orbit_partner_subshell=spin_orbit_partner_subshell,
+            )
+            return {"ok": True, "data": data}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_xps_add_spin_orbit_partner")
+    async def post_xps_add_spin_orbit_partner(
+        params: dict[str, Any],
+        component_id: str,
+        splitting_eV: float,
+        subshell: str,
+        partner_id: str | None = None,
+        lock_area: bool = True,
+        link_shape: bool = True,
+        fwhm_ratio: float | None = None,
+    ) -> str:
+        """
+        POST /xps/spin-orbit-partner — F3 "Create x 2": add the spin-orbit partner of ONE peak to fitting-step params.
+
+        params: the fitting step's params (components, p0, bounds_lower, bounds_upper, vary, param_links).
+        subshell: p (2p1/2 of 2p3/2, area 1:2), d (3d3/2, 2:3) or f (4f5/2, 3:4). splitting_eV > 0 (partner at
+        higher BE). Links: pos offset, FWHM equal (or fwhm_ratio, e.g. ~2 for Ti/V 2p1/2), shape equal
+        (link_shape), area ratio (lock_area). Returns {params, partner_id}; put params back into the pipeline step.
+        """
+
+        def _run():
+            data = ctx.get_client().xps.add_spin_orbit_partner(
+                {
+                    "params": params,
+                    "component_id": component_id,
+                    "splitting_eV": splitting_eV,
+                    "subshell": subshell,
+                    "partner_id": partner_id,
+                    "lock_area": lock_area,
+                    "link_shape": link_shape,
+                    "fwhm_ratio": fwhm_ratio,
+                }
             )
             return {"ok": True, "data": data}
 
@@ -273,6 +323,9 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         include_background: bool = True,
         preferred_pass_energy: int | None = None,
         lock_satellites: bool = True,
+        lock_spin_orbit: bool = True,
+        spin_orbit_partner_splitting_eV: float | None = None,
+        spin_orbit_partner_subshell: str | None = None,
         pipeline: dict[str, Any] | None = None,
         confirm: bool = False,
     ) -> str:
@@ -286,6 +339,9 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 include_background=include_background,
                 preferred_pass_energy=preferred_pass_energy,
                 lock_satellites=lock_satellites,
+                lock_spin_orbit=lock_spin_orbit,
+                spin_orbit_partner_splitting_eV=spin_orbit_partner_splitting_eV,
+                spin_orbit_partner_subshell=spin_orbit_partner_subshell,
             )
             base = Pipeline.model_validate(pipeline) if pipeline else Pipeline(steps=[], technique_family="xps")
             merged = _merge_apply_into_pipeline(base, applied)
@@ -316,6 +372,9 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         include_background: bool = True,
         preferred_pass_energy: int | None = None,
         lock_satellites: bool = True,
+        lock_spin_orbit: bool = True,
+        spin_orbit_partner_splitting_eV: float | None = None,
+        spin_orbit_partner_subshell: str | None = None,
         confirm: bool = False,
     ) -> str:
         """Apply XPS recipe into session working pipeline as a fitting step (technique_family=xps)."""
@@ -329,6 +388,9 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 include_background=include_background,
                 preferred_pass_energy=preferred_pass_energy,
                 lock_satellites=lock_satellites,
+                lock_spin_orbit=lock_spin_orbit,
+                spin_orbit_partner_splitting_eV=spin_orbit_partner_splitting_eV,
+                spin_orbit_partner_subshell=spin_orbit_partner_subshell,
             )
             merged = _merge_apply_into_pipeline(sess.session.pipeline, applied)
             blocked = confirm_gates.check_fitting_components(

@@ -218,6 +218,12 @@ def _a_gl_area(fwhm: float, m: float, a: float, n: float, m_asym: float, base) -
     return max(f, 1e-12)
 
 
+def _v(values: dict[str, Any], key: str, default: Any) -> Any:
+    """values[key] unless missing / None (0 is a real value, e.g. GL(0) or alpha = 0)."""
+    v = values.get(key)
+    return default if v is None else v
+
+
 def area_per_height(
     component_type: str,
     values: dict[str, Any],
@@ -228,78 +234,78 @@ def area_per_height(
     Falls back to a Gaussian approximation on unknown shapes.
     """
     ct = str(component_type or "").strip().lower()
-    fwhm = float(values.get("fwhm") or 1.0)
+    fwhm = float(_v(values, "fwhm", 1.0))
     if ct in ("gaussian", "g"):
         return gaussian_area_per_height(fwhm)
     if ct in ("lorentzian", "l"):
         return lorentzian_area_per_height(fwhm)
     if ct == "gl":
-        return gl_area_per_height(fwhm, float(values.get("m") or 30.0))
+        return gl_area_per_height(fwhm, float(_v(values, "m", 30.0)))
     if ct == "sgl":
-        return sgl_area_per_height(fwhm, float(values.get("m") or 30.0))
+        return sgl_area_per_height(fwhm, float(_v(values, "m", 30.0)))
     if ct == "gl_gauss":
         return gl_gauss_area_per_height(
-            fwhm, float(values.get("m") or 30.0), float(values.get("fwhm_g") or 0.0)
+            fwhm, float(_v(values, "m", 30.0)), float(_v(values, "fwhm_g", 0.0))
         )
     if ct == "pseudo_voigt":
-        eta = float(values.get("eta") or 0.3)
+        eta = float(_v(values, "eta", 0.3))
         return sgl_area_per_height(fwhm, eta * 100.0)
     if ct == "voigt":
         return voigt_area_per_height(
-            float(values.get("fwhm_g") or fwhm),
-            float(values.get("fwhm_l") or 0.0),
+            float(_v(values, "fwhm_g", fwhm)),
+            float(_v(values, "fwhm_l", 0.0)),
         )
     if ct == "la":
         return la_area_per_height(
             fwhm,
-            float(values.get("alpha") or 1.0),
-            float(values.get("beta") or 1.0),
-            float(values.get("fwhm_g") or 0.0),
+            float(_v(values, "alpha", 1.0)),
+            float(_v(values, "beta", 1.0)),
+            float(_v(values, "fwhm_g", 0.0)),
         )
     if ct == "lf":
         w = values.get("w")
         return lf_area_per_height(
             fwhm,
-            float(values.get("alpha") or 1.0),
-            float(values.get("beta") or 1.0),
+            float(_v(values, "alpha", 1.0)),
+            float(_v(values, "beta", 1.0)),
             float(w) if w is not None else 20.0,
-            float(values.get("fwhm_g") or 0.0),
+            float(_v(values, "fwhm_g", 0.0)),
         )
     if ct == "a_sgl":
         return a_sgl_area_per_height(
             fwhm,
-            float(values.get("m") or 30.0),
-            float(values.get("a") or 0.4),
-            float(values.get("n") or 0.55),
-            float(values.get("m_asym") or 0.0),
+            float(_v(values, "m", 30.0)),
+            float(_v(values, "a", 0.4)),
+            float(_v(values, "n", 0.55)),
+            float(_v(values, "m_asym", 0.0)),
         )
     if ct in ("a_gl", "agl"):
         return a_gl_area_per_height(
             fwhm,
-            float(values.get("m") or 30.0),
-            float(values.get("a") or 0.4),
-            float(values.get("n") or 0.55),
-            float(values.get("m_asym") or 0.0),
+            float(_v(values, "m", 30.0)),
+            float(_v(values, "a", 0.4)),
+            float(_v(values, "n", 0.55)),
+            float(_v(values, "m_asym", 0.0)),
         )
     if ct == "apv":
         return apv_area_per_height(
-            float(values.get("fwhm_l") or fwhm),
-            float(values.get("fwhm_r") or fwhm),
-            float(values.get("eta_l") or 0.3),
-            float(values.get("eta_r") or 0.3),
+            float(_v(values, "fwhm_l", fwhm)),
+            float(_v(values, "fwhm_r", fwhm)),
+            float(_v(values, "eta_l", 0.3)),
+            float(_v(values, "eta_r", 0.3)),
         )
     if ct == "asymmetric_voigt":
         left = voigt_area_per_height(
-            float(values.get("fwhm_g_l") or fwhm),
-            float(values.get("fwhm_l_l") or 0.0),
+            float(_v(values, "fwhm_g_l", fwhm)),
+            float(_v(values, "fwhm_l_l", 0.0)),
         )
         right = voigt_area_per_height(
-            float(values.get("fwhm_g_r") or fwhm),
-            float(values.get("fwhm_l_r") or 0.0),
+            float(_v(values, "fwhm_g_r", fwhm)),
+            float(_v(values, "fwhm_l_r", 0.0)),
         )
         return 0.5 * (left + right)
     if ct in ("ds", "gds"):
-        gamma = float(values.get("gamma") or fwhm)
+        gamma = float(_v(values, "gamma", fwhm))
         return lorentzian_area_per_height(max(2.0 * gamma, 1e-12))
     return gaussian_area_per_height(fwhm)
 

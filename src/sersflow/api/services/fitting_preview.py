@@ -19,7 +19,7 @@ from sersflow.api.services.observation_export import _labels_for_spectrum
 from sersflow.api.services.pipeline_qc import apply_pipeline_qc_filters, pipeline_without_qc_steps
 from sersflow.api.services.reference_runtime import filter_reference_spectra, hydrate_reference_transforms
 from sersflow.api.services.sessions_service import resolve_subset_indices
-from sersflow.core.metrics.fitting_features import p_opt_and_gof_from_features
+from sersflow.core.metrics.fitting_features import p_opt_and_gof_from_features, stored_component_uncertainty_rows
 from sersflow.core.pipeline.engine import EngineConfig, fitting_region_applies, run_pipeline_parallel_no_cache
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 from sersflow.core.preprocess.fitting import (
@@ -336,6 +336,9 @@ def fitting_preview_for_run(
         y_in = xy.y.astype(float)
         residual = np.where(np.isfinite(y_hat), y_in - y_hat, np.nan)
         comps_out = []
+        unc_rows = stored_component_uncertainty_rows(
+            pipeline=effective_pipeline, fitting_step_num=fitting_step_num, features=feat
+        )
         for idx, m in enumerate(res.mapping):
             s, e = m["index_range"]
             keys = m["param_keys"]
@@ -349,6 +352,7 @@ def fitting_preview_for_run(
                     "param_keys": keys,
                     "params": {k: float(v) for k, v in zip(keys, vals)},
                     "y_hat": yc,
+                    **(unc_rows[idx] if idx < len(unc_rows) else {}),
                 }
             )
         items.append(

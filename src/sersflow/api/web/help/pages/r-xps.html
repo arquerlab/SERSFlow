@@ -38,12 +38,25 @@
 </ol>
 <ul>
   <li>Positions get bounds of about ±0.5 eV or more; widths have an upper bound of at least 8 eV; amplitudes are not negative.</li>
-  <li>Spin–orbit doublets are seeded 2:1 in area but <b>not locked</b>. Add Links if you want them tied.</li>
+  <li>Spin–orbit doublets the recipe names (2p3/2 + 2p1/2, 3d5/2 + 3d3/2, 4f7/2 + 4f5/2) are <b>locked</b>: area ratio 2:1, 3:2 or 4:3, fixed splitting, line shape equal, FWHM equal or the recipe table's ratio (see Spin–orbit doublets). Untick <span class="ui">Lock spin-orbit area ratios</span> to free the areas.</li>
+  <li>Recipes for multiplet-split 2p3/2 lines (Co, Ni, Fe, Mn, Cr, after Biesinger) fit the 2p3/2 member only. To fit the 2p1/2 too, enter its splitting in <span class="ui">Add 2p1/2 (low-j) copy at + eV</span> and press <span class="ui">Re-apply recipe with these options</span>; then widen the fit window.</li>
   <li>“Active recipes” lists the base and added recipes; <span class="ui">Remove</span> drops one. Fermi-edge recipes give a single Fermi-edge component.</li>
 </ul>
 
-<h2>Links for doublets</h2>
-<p>Example for a 2p doublet: set the 2p1/2 peak's <b>FWHM</b> link to <i>equal</i> to the 2p3/2 FWHM, and its <b>pos</b> link to <i>offset</i> by the spin–orbit splitting. Use <i>scale</i> with care: on amplitude it fixes a height ratio, not an area ratio.</p>
+<h2>Spin–orbit doublets</h2>
+<p>Every p, d and f level is a doublet. The two members share one rule set (Biesinger thesis Table 1.1; CasaXPS constraint <code>A*0.5</code>):</p>
+<table>
+  <tr><th>Level</th><th>Members</th><th>Area ratio (high j : low j)</th></tr>
+  <tr><td>p</td><td>2p3/2, 2p1/2</td><td>2 : 1</td></tr>
+  <tr><td>d</td><td>3d5/2, 3d3/2</td><td>3 : 2</td></tr>
+  <tr><td>f</td><td>4f7/2, 4f5/2</td><td>4 : 3</td></tr>
+</table>
+<ul>
+  <li>The <b>splitting</b> is element and chemical-state specific; recipes carry it, otherwise enter it.</li>
+  <li>Both members have the same line shape and normally the same FWHM. Exception: Ti and V 2p1/2 are broadened by the Coster–Kronig effect (TiO2 2p3/2 0.99 eV, 2p1/2 1.97 eV in Biesinger's standards). Recipes whose table gives both widths keep that ratio.</li>
+  <li>The area ratio is always the theoretical value, not a measured one.</li>
+</ul>
+<p><span class="ui">Spin-orbit partner…</span> under a peak in the component list does what CasaXPS <i>Create x 2</i> does: choose the subshell, the splitting and optionally a FWHM ratio, then <span class="ui">Add partner</span>. It adds the low-j member with these links: pos <i>offset</i>, FWHM <i>equal</i> (or <i>scale</i>), line-shape parameters <i>equal</i> and amp <i>area ratio</i>. Each link stays editable. API: <code>POST /xps/spin-orbit-partner</code>; MCP: <code>post_xps_add_spin_orbit_partner</code>.</p>
 
 <h2>XPS safeguards</h2>
 <p>Widths without an upper bound are limited automatically, and if all peak amplitudes look tiny compared to the data (as with seeds near 1) they are rescaled. You still must place peak centres sensibly: they start at 1000 unless a recipe sets them.</p>

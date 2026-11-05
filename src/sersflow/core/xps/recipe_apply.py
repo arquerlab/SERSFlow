@@ -11,7 +11,14 @@ import math
 import re
 from typing import Any
 
-from sersflow.core.preprocess.fitting_specs import component_param_specs
+from sersflow.core.preprocess.fitting_specs import AREA_EXPORT_COMPONENT_TYPES, component_param_specs
+from sersflow.core.preprocess.param_expressions import expression_refs, remap_expression_ids
+from sersflow.core.xps.spin_orbit import (
+    add_spin_orbit_partners_for_all_peaks,
+    doublet_links,
+    spin_orbit_pairs,
+    subshell_from_text,
+)
 from sersflow.core.preprocess.peak_area import (
     area_per_height,
     casaxps_la_m_to_fwhm_g,
@@ -388,8 +395,9 @@ def _apply_fermi_edge_recipe(
     return out
 
 
-# Component types whose area/height ratio area_ratio links can evaluate (see fitting_lmfit).
-_AREA_RATIO_TYPES = frozenset({"gl", "sgl", "gaussian", "lorentzian", "pseudo_voigt"})
+# Component types whose area/height ratio area_ratio links can evaluate (see fitting_lmfit): every
+# finite-area peak since F3.
+_AREA_RATIO_TYPES = AREA_EXPORT_COMPONENT_TYPES
 
 
 def apply_compound_fit_to_fitting_params(
@@ -399,7 +407,20 @@ def apply_compound_fit_to_fitting_params(
     include_background: bool = True,
     preferred_pass_energy: int | None = None,
     lock_satellites: bool = True,
+    lock_spin_orbit: bool = True,
+    spin_orbit_partner_splitting_eV: float | None = None,
+    spin_orbit_partner_subshell: str | None = None,
 ) -> dict[str, Any]:
+    """
+    Fitting-step params for a recipe.
+
+    F3 spin-orbit doublets: when the recipe labels both members (``2p3/2`` + ``2p1/2``, ``4f7/2`` + ``4f5/2``, ...)
+    they are linked as a doublet: fixed splitting, FWHM equal (or the recipe table's ratio, e.g. Ti/V 2p1/2
+    Coster-Kronig broadening), equal line shape when the recipe gives the same one, and (``lock_spin_orbit``, unless
+    the recipe sets ``spin_orbit_area_lock: false``) the theoretical 2j+1 AREA ratio. One-member recipes (Co/Ni/Fe
+    2p3/2 multiplets) stay single unless ``spin_orbit_partner_splitting_eV`` is given: then every peak gets a
+    partner at +splitting (subshell from the region, or ``spin_orbit_partner_subshell``).
+    """
     warnings: list[str] = []
     peaks = list(fit.peaks)
     if not peaks:
@@ -490,26 +511,17 @@ def apply_compound_fit_to_fitting_params(
         for row in peak_value_rows:
             row["amp"] = 1.0
 
-    # Spin-orbit: seed 2p1/2 height from 2:1 area ratio (not locked as a param_link).
-    so_pair_early = _find_so_pair(labels)
-    so_split_early = fit.raw.get("spin_orbit_split_eV")
-    if (
-        so_pair_early is not None
-        and isinstance(so_split_early, (int, float))
-        and math.isfinite(float(so_split_early))
-        and not any(a is not None for a in areas)
-    ):
-        i3, i1 = so_pair_early
-        amp_scale = height_scale_for_area_ratio(
-            area_i=1.0,
-            area_0=2.0,
-            factor_i=factors[i1],
-            factor_0=factors[i3],
-        )
-        peak_value_rows[i1]["amp"] = float(peak_value_rows[i3]["amp"]) * float(amp_scale)
-        warnings.append(
-            "spin-orbit area ratio 2:1 used only as initial amplitude seed (not locked)"
-        )
+    # Spin-orbit: seed the low-j member's height from the theoretical area ratio when the recipe gives no areas.
+    so_pairs = spin_orbit_pairs(labels)
+    if so_pairs and not any(a is not None for a in areas):
+        for pr in so_pairs:
+            amp_scale = height_scale_for_area_ratio(
+                area_i=pr.area_ratio,
+                area_0=1.0,
+                factor_i=factors[pr.partner],
+                factor_0=factors[pr.main],
+            )
+            peak_value_rows[pr.partner]["amp"] = float(peak_value_rows[pr.main]["amp"]) * float(amp_scale)
 
     for i, peak in enumerate(peaks):
         ctype = peak_ctypes[i]
@@ -584,14 +596,12 @@ def apply_compound_fit_to_fitting_params(
             f"recipe has spin_orbit_split_eV={so_split} but no 2p3/2+2p1/2 peak pair "
             "was found in labels; SO constraints were not applied"
         )
-    # Spin-orbit doublet constraints: ONLY when both labeled SO peaks exist AND
-    # spin_orbit_split_eV is set. Never inferred from region names like Co_2p3/2.
-    # Relative amplitudes are seeded (above) but not locked — only pos/FWHM links.
+    # Spin-orbit splitting of a single labelled doublet (Sc/Ti/V tables): the position offset. FWHM, shape and
+    # area links of every labelled doublet are added below (F3), after the recipe's own equal-FWHM rules.
     if so is not None and isinstance(so_split, (int, float)) and math.isfinite(float(so_split)):
         i3, i1 = so
         id3, id1 = peak_comp_ids[i3], peak_comp_ids[i1]
         add_link(id1, "pos", id3, "pos", "offset", offset=float(so_split))
-        add_link(id1, "fwhm", id3, "fwhm", "equal")
     else:
         for i, peak in enumerate(peaks):
             if i == 0:
@@ -624,12 +634,8 @@ def apply_compound_fit_to_fitting_params(
                 src_idx = i - 1
         if src_idx == i or src_idx < 0 or src_idx >= len(peak_comp_ids):
             continue
-        already = any(
-            link.get("target_component_id") == peak_comp_ids[i]
-            and link.get("target_key") == "pos"
-            and link.get("mode") == "offset"
-            for link in param_links
-        )
+        # A peak position can follow only one link (the doublet splitting added above wins).
+        already = (peak_comp_ids[i], "pos") in driven
         if already:
             continue
         add_link(
@@ -669,6 +675,57 @@ def apply_compound_fit_to_fitting_params(
             if key not in driven:
                 add_link(peak_comp_ids[i], "fwhm", peak_comp_ids[0], "fwhm", "equal")
 
+    # F3 spin-orbit doublets of every labelled pair (2p3/2 + 2p1/2, 3d5/2 + 3d3/2, 4f7/2 + 4f5/2, prefixed or
+    # suffixed alike: IrCl_2p3/2, 4f7/2_sat). Literature: Biesinger thesis Table 1.1 and 2.3; CasaXPS Cookbook p.137.
+    lock_so = bool(lock_spin_orbit) and fit.raw.get("spin_orbit_area_lock") is not False
+    n_so_locked = 0
+    for pr in so_pairs:
+        im, ip = pr.main, pr.partner
+        mid, pid = peak_comp_ids[im], peak_comp_ids[ip]
+        keys = param_keys_per[peak_offset + ip]
+        same_type = peak_ctypes[im] == peak_ctypes[ip]
+        if (pid, "pos") not in driven:
+            add_link(pid, "pos", mid, "pos", "offset", offset=float(peak_value_rows[ip]["pos"] - peak_value_rows[im]["pos"]))
+        fw_m = _table_fwhm(peaks[im], pe)
+        fw_p = _table_fwhm(peaks[ip], pe)
+        fwhm_ratio = fw_p / fw_m if (fw_m and fw_p) else None
+        same_shape = same_type and _lineshape_params(peaks[im]) == _lineshape_params(peaks[ip])
+        for lk in doublet_links(
+            main_id=mid,
+            partner_id=pid,
+            param_keys=keys if same_type else ["pos", "amp"],
+            area_ratio=pr.area_ratio if lock_so else None,
+            splitting_eV=None,
+            fwhm_ratio=fwhm_ratio,
+            link_shape=same_shape,
+        ):
+            if (lk["source_component_id"], lk["source_key"]) in driven:
+                continue
+            add_link(
+                lk["source_component_id"],
+                lk["source_key"],
+                lk["target_component_id"],
+                lk["target_key"],
+                lk["mode"],
+                scale=lk.get("scale"),
+                offset=lk.get("offset"),
+                ratio=lk.get("ratio"),
+            )
+            if lk["mode"] == "area_ratio":
+                n_so_locked += 1
+            if lk["mode"] == "scale" and lk["source_key"] == "fwhm":
+                why = " (2p1/2 Coster-Kronig broadening)" if fwhm_ratio and fwhm_ratio > 1.3 else ""
+                warnings.append(f"{pid} FWHM held at {fwhm_ratio:.2f} x {mid} FWHM, the recipe table ratio{why}")
+        if not same_type:
+            warnings.append(f"{mid}/{pid}: different line shapes in the recipe; FWHM and shape not linked")
+    if n_so_locked:
+        warnings.append(
+            f"{n_so_locked} spin-orbit area ratio(s) locked at the theoretical value (p 1:2, d 2:3, f 3:4); "
+            "remove the amp link or use lock_spin_orbit=false to free them"
+        )
+    elif so_pairs and not lock_so:
+        warnings.append("spin-orbit area ratios NOT locked (lock_spin_orbit=false or recipe spin_orbit_area_lock=false)")
+
     # Satellites (shake-up lines flagged ``"satellite": true`` in the recipe) have a
     # literature intensity relative to the main line, so their amplitude is locked to
     # the first non-satellite peak by default. Edit/remove the amp link to unlock.
@@ -682,6 +739,8 @@ def apply_compound_fit_to_fitting_params(
             peak_comp_types = [str(c.get("component_type") or "").strip().lower() for c in components[peak_offset:]]
             n_height_fallback = 0
             for i in sat_idx:
+                if (peak_comp_ids[i], "amp") in driven:
+                    continue  # e.g. 4f5/2 satellite already held at 3:4 of the 4f7/2 satellite (doublet)
                 if peak_comp_types[i] in _AREA_RATIO_TYPES and peak_comp_types[ref_idx] in _AREA_RATIO_TYPES:
                     # The link keeps the literature AREA ratio whatever fwhm / shape the fit settles on.
                     add_link(
@@ -773,7 +832,60 @@ def apply_compound_fit_to_fitting_params(
     }
     if areas and all(a is not None for a in areas):
         out["initial_area_ratios"] = ":".join(f"{float(a):g}" for a in areas)
+    if spin_orbit_partner_splitting_eV is not None:
+        out = _add_partner_block(
+            out,
+            fit,
+            labels,
+            splitting_eV=float(spin_orbit_partner_splitting_eV),
+            subshell=spin_orbit_partner_subshell,
+            lock_area=lock_so,
+        )
     return out
+
+
+def _table_fwhm(peak: dict[str, Any], pe: int) -> float | None:
+    """FWHM printed in the recipe for this pass energy (no fallback column); None when absent."""
+    raw = peak.get(f"fwhm_{pe}")
+    if isinstance(raw, (int, float)) and math.isfinite(float(raw)) and float(raw) > 0:
+        return float(raw)
+    return None
+
+
+def _add_partner_block(
+    out: dict[str, Any],
+    fit: CompoundFit,
+    labels: list[str],
+    *,
+    splitting_eV: float,
+    subshell: str | None,
+    lock_area: bool,
+) -> dict[str, Any]:
+    """F3 option: the low-j copy of a one-member recipe (e.g. Co 2p1/2 for a Co 2p3/2 multiplet recipe)."""
+    if spin_orbit_pairs(labels):
+        raise ValueError(f"recipe {fit.id} already has both spin-orbit members; no partner block is needed")
+    sub = (subshell or subshell_from_text(fit.region) or "").strip().lower()
+    if sub not in ("p", "d", "f"):
+        raise ValueError(
+            f"cannot tell the subshell of region {fit.region!r}; pass spin_orbit_partner_subshell (p, d or f)"
+        )
+    warn = list(out.get("warnings") or [])
+    new, created = add_spin_orbit_partners_for_all_peaks(
+        {k: v for k, v in out.items() if k != "warnings"},
+        splitting_eV=splitting_eV,
+        subshell=sub,
+        lock_area=lock_area,
+    )
+    ratio = {"p": "1:2", "d": "2:3", "f": "3:4"}[sub]
+    warn.append(
+        f"added {len(created)} spin-orbit partner peak(s) at +{splitting_eV:g} eV (user splitting), "
+        f"area {ratio}{' locked' if lock_area else ' seeded only'}, FWHM and line shape equal to each main peak. "
+        "Widen the fit window to include them; the partner copies the 2p3/2 multiplet as a whole, which is an "
+        "approximation for multiplet-split ions"
+    )
+    new["warnings"] = warn
+    new["spin_orbit_partner"] = {"splitting_eV": splitting_eV, "subshell": sub, "component_ids": created}
+    return new
 
 
 def np_clip_m(m: float) -> float:
@@ -957,8 +1069,18 @@ def merge_fitting_recipe_params(
                 continue
             mapped = dict(link)
             mapped["source_component_id"] = remap_cid(str(link.get("source_component_id") or ""))
-            mapped["target_component_id"] = remap_cid(str(link.get("target_component_id") or ""))
             sid = str(mapped.get("source_component_id") or "")
+            if str(link.get("mode") or "").strip().lower() == "expr":
+                # F4: ids live inside the {id.key} references of the expression.
+                refs = expression_refs(str(link.get("expr") or ""))
+                mapped["expr"] = remap_expression_ids(
+                    str(link.get("expr") or ""), {cid: remap_cid(cid) for cid, _k in refs}
+                )
+                if sid not in known or any(remap_cid(cid) not in known for cid, _k in refs):
+                    continue
+                out.append(mapped)
+                continue
+            mapped["target_component_id"] = remap_cid(str(link.get("target_component_id") or ""))
             tid = str(mapped.get("target_component_id") or "")
             if sid not in known or tid not in known:
                 continue
@@ -1039,6 +1161,9 @@ def apply_recipe_id(
     include_background: bool = True,
     preferred_pass_energy: int | None = None,
     lock_satellites: bool = True,
+    lock_spin_orbit: bool = True,
+    spin_orbit_partner_splitting_eV: float | None = None,
+    spin_orbit_partner_subshell: str | None = None,
 ) -> dict[str, Any]:
     fit = get_compound_fit(recipe_id)
     if fit is None:
@@ -1049,6 +1174,9 @@ def apply_recipe_id(
         include_background=include_background,
         preferred_pass_energy=preferred_pass_energy,
         lock_satellites=lock_satellites,
+        lock_spin_orbit=lock_spin_orbit,
+        spin_orbit_partner_splitting_eV=spin_orbit_partner_splitting_eV,
+        spin_orbit_partner_subshell=spin_orbit_partner_subshell,
     )
     rid = str(out.get("recipe_id") or recipe_id).strip()
     if rid:

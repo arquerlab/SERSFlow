@@ -1,6 +1,7 @@
 import { fetchBlob, fetchJson } from "../lib/http";
 import type { PcaScaler } from "./types";
 import type { Pipeline, SubsetStrategy } from "../preprocess/api";
+import type { ComponentUncertainty, MonteCarloSummary } from "./fitUncertainty";
 
 // --- Sessions (list) ---
 
@@ -230,12 +231,12 @@ export type FittingPreviewItem = {
   residual?: number[] | null;
   /** (y − ŷ)/σ when the fit was weighted (F1). */
   residual_normalised?: Array<number | null> | null;
-  components: Array<{
-    component_id: string;
-    component_type: string;
-    degree?: number | null;
-    y_hat?: number[] | null;
-  }>;
+  components: Array<
+    ComponentUncertainty & {
+      degree?: number | null;
+      y_hat?: number[] | null;
+    }
+  >;
   diagnostics?: Record<string, number | null> | null;
 };
 
@@ -289,6 +290,22 @@ export type FitCurveJobStatus = {
 
 export function getFitCurveJob(jobId: string) {
   return fetchJson<FitCurveJobStatus>(`/analysis/fit-curve-jobs/${encodeURIComponent(jobId)}`);
+}
+
+/** F2: Monte Carlo parameter uncertainties for one fitting step (async job, polled with getFitCurveJob). */
+export function postMonteCarloJob(
+  runId: string,
+  body: { fitting_step_num: number; n_replicates: number; seed: number; spectrum_ids?: string[] | null }
+) {
+  return fetchJson<FitCurveJobCreateResponse>(`/analysis/runs/${encodeURIComponent(runId)}/monte-carlo-jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function getMonteCarloSummary(jobId: string) {
+  return fetchJson<MonteCarloSummary>(`/analysis/monte-carlo-jobs/${encodeURIComponent(jobId)}/summary`);
 }
 
 export function getFitCurveJobDownloadUrl(jobId: string) {

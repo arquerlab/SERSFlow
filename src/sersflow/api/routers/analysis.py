@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from sersflow.api.schemas.analysis import (
+    MonteCarloJobCreateRequest,
     AnalysisExportManifest,
     AnalysisJobStatusResponse,
     AnalysisRunCreateRequest,
@@ -42,6 +43,11 @@ from sersflow.api.services.fitting_preview import (
     list_fitting_steps_for_pipeline,
 )
 from sersflow.api.services.json_safe import sanitize_floats
+from sersflow.api.services.monte_carlo_runner import (
+    MONTE_CARLO_CONTENT,
+    execute_monte_carlo_job,
+    read_monte_carlo_summary,
+)
 from sersflow.api.services.sweep_runner import SWEEP_CONTENT, _fixed_params, execute_sweep_job, grid_points
 from sersflow.api.services.pipeline_qc import pipeline_without_qc_steps
 from sersflow.api.services.step_outputs_export_runner import (
@@ -706,6 +712,50 @@ def post_sweep_job(
     )
 
 
+@router.post("/runs/{run_id}/monte-carlo-jobs", response_model=FitCurveJobCreateResponse)
+def post_monte_carlo_job(
+    run_id: str, payload: MonteCarloJobCreateRequest, request: Request
+) -> FitCurveJobCreateResponse | JSONResponse:
+    """F2 Monte Carlo uncertainties over one fitting step; poll/download through the fit-curve job endpoints."""
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
+    if rec.status != "completed":
+        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    step_num = _resolve_fitting_step_num(
+        rec, num=payload.fitting_step_num, index=payload.fitting_step_index
+    )
+    jid = create_fit_curve_job(
+        run_id=run_id,
+        fitting_step_num=step_num,
+        content=MONTE_CARLO_CONTENT,
+        format="csv",
+        params_json=json.dumps(
+            {"n_replicates": payload.n_replicates, "seed": payload.seed, "spectrum_ids": payload.spectrum_ids}
+        ),
+    )
+    Thread(target=execute_monte_carlo_job, args=(jid,), daemon=True).start()
+    return JSONResponse(
+        status_code=202,
+        content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump(),
+    )
+
+
+@router.get("/monte-carlo-jobs/{job_id}/summary", response_model=None)
+def get_monte_carlo_summary(job_id: str, request: Request) -> dict[str, Any]:
+    """Per spectrum x component x quantity: best fit, covariance stderr, Monte Carlo mean/SD/percentiles."""
+    user_id = current_user_id(request)
+    job = get_fit_curve_job(job_id)
+    if job is None or job.content != MONTE_CARLO_CONTENT:
+        raise HTTPException(status_code=404, detail="Monte Carlo job not found")
+    _require_run(job.run_id, user_id)
+    if job.status != "completed" or not job.artifact_path:
+        raise HTTPException(status_code=400, detail=f"Monte Carlo job is not ready (status {job.status})")
+    try:
+        return read_monte_carlo_summary(job.artifact_path)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read summary: {e}") from e
+
+
 @router.post("/runs/{run_id}/fit-curve-jobs", response_model=FitCurveJobCreateResponse)
 def post_fit_curve_job(
     run_id: str, payload: FitCurveJobCreateRequest, request: Request
@@ -766,7 +816,9 @@ def download_fit_curve_job(job_id: str, request: Request) -> Response:
             data = f.read()
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Failed to read artifact: {e}") from e
-    prefix = {STEP_OUTPUTS_CONTENT: "step_outputs", SWEEP_CONTENT: "sweep"}.get(job.content, "fit_curves")
+    prefix = {STEP_OUTPUTS_CONTENT: "step_outputs", SWEEP_CONTENT: "sweep", MONTE_CARLO_CONTENT: "monte_carlo"}.get(
+        job.content, "fit_curves"
+    )
     return Response(
         content=data,
         media_type="application/zip",

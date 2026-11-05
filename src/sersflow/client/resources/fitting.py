@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sersflow.api.schemas.fitting import FitRequest, FitResponse, FittingModelsResponse
 from sersflow.client.http import request_json
@@ -17,6 +17,15 @@ class FittingResource(_Base):
     def models(self) -> FittingModelsResponse:
         data = request_json(self._root.http, "GET", "/fitting/models")
         return FittingModelsResponse.model_validate(data)
+
+    def validate_links(self, components: list[dict[str, Any]], param_links: list[dict[str, Any]]) -> dict[str, Any]:
+        data = request_json(
+            self._root.http,
+            "POST",
+            "/fitting/validate-links",
+            json_body={"components": components, "param_links": param_links},
+        )
+        return dict(data) if isinstance(data, dict) else {}
 
     def fit(self, payload: FitRequest) -> FitResponse:
         data = request_json(self._root.http, "POST", "/fitting/fit", json_body=dump_json(payload))

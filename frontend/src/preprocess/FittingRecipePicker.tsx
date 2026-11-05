@@ -1,3 +1,4 @@
+import { linkUsesOnly, remapLink } from "./paramExpressions";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -190,12 +191,8 @@ export function appendRecipeApplyIntoEditor(
     [...current.components, ...addedComps].map((c) => String(c.component_id ?? "").trim())
   );
   const remappedLinks: FittingParamLink[] = (migrated.param_links ?? [])
-    .map((l) => ({
-      ...l,
-      source_component_id: remap(l.source_component_id),
-      target_component_id: remap(l.target_component_id),
-    }))
-    .filter((l) => known.has(l.source_component_id) && known.has(l.target_component_id));
+    .map((l) => remapLink(l, remap))
+    .filter((l) => linkUsesOnly(l, known));
 
   const existingIds = recipeIdsOf(current);
   const rid = String(applied.recipe_id ?? "").trim();
@@ -263,9 +260,7 @@ export function removeRecipeFromEditor(
     return !dropIds.has(id);
   });
   const keepIds = new Set(components.map((c) => String(c.component_id ?? "").trim()).filter(Boolean));
-  const param_links = (current.param_links ?? []).filter(
-    (l) => keepIds.has(l.source_component_id) && keepIds.has(l.target_component_id)
-  );
+  const param_links = (current.param_links ?? []).filter((l) => linkUsesOnly(l, keepIds));
 
   const stillHasPeaks = components.some((c) => !isXpsBgComponentType(c.component_type));
   if (!stillHasPeaks) {
@@ -336,6 +331,9 @@ export function FittingRecipePicker({
   const [warnings, setWarnings] = useState<string[]>([]);
   const [peNotice, setPeNotice] = useState<string | null>(null);
   const [showMethods, setShowMethods] = useState(false);
+  /** F3: lock doublet area ratios; optional low-j partners for one-member (2p3/2-only) recipes. */
+  const [soLock, setSoLock] = useState(true);
+  const [soSplit, setSoSplit] = useState("");
   const blurTimer = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [panelPos, setPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -416,6 +414,10 @@ export function FittingRecipePicker({
       ? [fittingParams.recipe_pass_energy]
       : [];
 
+  const soSplitNum = Number(soSplit);
+  const soSplitValue = soSplit.trim() && Number.isFinite(soSplitNum) && soSplitNum > 0 ? soSplitNum : null;
+  const oneMemberRegion = /[1-7][pdf]\s*[3457]\s*\/\s*2/i.test(String(selectedItem?.region ?? ""));
+
   function defaultPassEnergy(item: FittingRecipeIndexItem): number | undefined {
     return preferPassEnergy(item.pass_energies ?? [], preferredPassEnergy);
   }
@@ -448,6 +450,8 @@ export function FittingRecipePicker({
         pass_energy: passEnergy,
         include_background: resolved === "replace",
         preferred_pass_energy: preferredPassEnergy ?? undefined,
+        lock_spin_orbit: soLock,
+        spin_orbit_partner_splitting_eV: soSplitValue,
       });
       const next =
         resolved === "add"
@@ -648,6 +652,42 @@ export function FittingRecipePicker({
           {multiRecipes ? (
             <div className="hint">PE locked with multiple recipes (remove extras or Replace).</div>
           ) : null}
+          <div data-testid="recipe-spin-orbit-options" style={{ display: "grid", gap: "4px", fontSize: "12px" }}>
+            <label className="inline" title="Doublets the recipe names (2p3/2 + 2p1/2, 4f7/2 + 4f5/2, ...) keep the theoretical area ratio">
+              <input type="checkbox" checked={soLock} disabled={busy} onChange={(e) => setSoLock(e.target.checked)} />
+              Lock spin-orbit area ratios (2p 2:1, 3d 3:2, 4f 4:3)
+            </label>
+            <label
+              className="inline"
+              style={{ justifyContent: "space-between" }}
+              title="For recipes that fit one spin-orbit member only (e.g. Co/Ni/Fe 2p3/2): add the other member of every peak at +splitting, area locked, FWHM and shape equal. Empty = fit the one member only."
+            >
+              Add 2p1/2 (low-j) copy at + eV
+              <input
+                type="number"
+                step="0.01"
+                min={0}
+                placeholder="off"
+                value={soSplit}
+                disabled={busy}
+                onChange={(e) => setSoSplit(e.target.value)}
+                style={{ width: "80px" }}
+              />
+            </label>
+            {soSplitValue != null && selectedItem && !oneMemberRegion ? (
+              <div className="hint">This recipe already has both members; the copy applies to one-member recipes only.</div>
+            ) : null}
+            {selectedId && !multiRecipes ? (
+              <button
+                type="button"
+                className="mini"
+                disabled={busy}
+                onClick={() => void loadRecipe(selectedId, fittingParams.recipe_pass_energy ?? undefined, "replace")}
+              >
+                Re-apply recipe with these options
+              </button>
+            ) : null}
+          </div>
         </div>
 
         {/* Right: active recipes */}

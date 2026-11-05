@@ -15,6 +15,7 @@ from sersflow.api.schemas.analysis import (
     FitCurveJobCreateResponse,
     FitCurveJobStatusResponse,
     FittingPreviewRequest,
+    MonteCarloJobCreateRequest,
     ObservationSchemaResponse,
     SweepJobCreateRequest,
 )
@@ -154,6 +155,18 @@ class AnalysisResource(_Base):
             json_body=dump_json(payload),
         )
         return FitCurveJobCreateResponse.model_validate(data)
+
+    def create_monte_carlo_job(self, run_id: str, payload: MonteCarloJobCreateRequest) -> FitCurveJobCreateResponse:
+        data = request_json(
+            self._root.http,
+            "POST",
+            f"/analysis/runs/{run_id}/monte-carlo-jobs",
+            json_body=dump_json(payload),
+        )
+        return FitCurveJobCreateResponse.model_validate(data)
+
+    def get_monte_carlo_summary(self, job_id: str) -> dict[str, Any]:
+        return request_json(self._root.http, "GET", f"/analysis/monte-carlo-jobs/{job_id}/summary")
 
     def get_fit_curve_job(self, job_id: str) -> FitCurveJobStatusResponse:
         data = request_json(self._root.http, "GET", f"/analysis/fit-curve-jobs/{job_id}")

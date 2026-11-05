@@ -90,13 +90,18 @@ class FittingComponentPublic(BaseModel):
 class FittingParamLinkPublic(BaseModel):
     source_component_id: str
     source_key: str
-    target_component_id: str
-    target_key: str
-    mode: Literal["equal", "scale", "offset", "area_ratio"] = "equal"
+    target_component_id: str | None = None
+    """Required for every mode except expr."""
+    target_key: str | None = None
+    mode: Literal["equal", "scale", "offset", "area_ratio", "expr"] = "equal"
     scale: float | None = None
     offset: float | None = None
     ratio: float | None = None
     """Only for mode=area_ratio: dependent AREA = ratio x driver AREA (amp links only)."""
+    expr: str | None = None
+    """Only for mode=expr (F4): e.g. ``{A.pos} + 0.5*({B.pos} - {A.pos})``; ``{A.area}`` = peak area."""
+    defines: Literal["value", "area"] | None = None
+    """mode=expr on an amp parameter: ``area`` makes the expression the peak AREA (amp solved through its shape)."""
 
 
 class FwhmColumnFallback(BaseModel):
@@ -136,6 +141,32 @@ class FittingRecipeApplyResponse(BaseModel):
     initial_area_ratios: str | None = None
     """Area1:Area2:... from recipe area_pct when all peaks specify percentages."""
     warnings: list[str] = Field(default_factory=list)
+    spin_orbit_partner: dict[str, Any] | None = None
+    """F3: set when spin-orbit partners were added ({splitting_eV, subshell, component_ids})."""
+
+
+class SpinOrbitPartnerRequest(BaseModel):
+    """
+    F3 "Create x 2": add the spin-orbit partner of one peak to fitting-step params.
+
+    The partner (2p1/2, 3d3/2 or 4f5/2) copies the peak's line shape at +``splitting_eV`` and is linked as a doublet:
+    position offset, FWHM equal (or ``fwhm_ratio``), line-shape parameters equal (``link_shape``) and the theoretical
+    area ratio p 1:2, d 2:3, f 3:4 (``lock_area``).
+    """
+
+    params: dict[str, Any] = Field(description="Fitting-step params (components, p0, bounds_lower/upper, vary, param_links)")
+    component_id: str
+    splitting_eV: float = Field(gt=0, description="Partner binding energy minus main-peak binding energy (eV)")
+    subshell: Literal["p", "d", "f"]
+    partner_id: str | None = None
+    lock_area: bool = True
+    link_shape: bool = True
+    fwhm_ratio: float | None = Field(default=None, gt=0, description="Partner FWHM / main FWHM; null = equal")
+
+
+class SpinOrbitPartnerResponse(BaseModel):
+    params: dict[str, Any]
+    partner_id: str
 
 
 class FittingRecipesResponse(BaseModel):

@@ -14,6 +14,7 @@ import { ResizableSplit } from "./components/ResizableSplit";
 import Plotly from "plotly.js-dist-min";
 import { DatasetPicker } from "./components/DatasetPicker";
 import { listDatasets, listPipelines, type PipelineLibraryItem, type SubsetStrategy } from "./preprocess/api";
+import { FitUncertaintyPanel } from "./analyze/FitUncertaintyPanel";
 import { downloadBlob, downloadCsv, plotlyDivToPngBytes, plotlyDivToSvgText, rowsToCsv, zipFiles } from "./analyze/export";
 import { buildFitResidualFigure } from "./preprocess/fitResidualPlot";
 import { fitHealthSummary } from "./preprocess/fitHealth";
@@ -70,6 +71,7 @@ import {
   postFitCurveJob,
   postStepOutputsJob,
   postFittingPreview,
+  type FittingPreviewItem,
   postFpcaDiscrete,
   postFpcaFda,
   postMatrixJob,
@@ -565,6 +567,8 @@ export default function AnalyzeWorkspace() {
     }>
   >([]);
   const [fitDiagBusy, setFitDiagBusy] = useState(false);
+  /** Preview items of the last refresh (F2 parameter ± table). */
+  const [fitDiagItems, setFitDiagItems] = useState<FittingPreviewItem[]>([]);
   /** F1: show (data − fit)/σ instead of the raw residual in fit plots. */
   const [fitDiagNormResid, setFitDiagNormResid] = useState(false);
   /** Only the latest fit-diagnostics refresh may draw (rapid toggles start overlapping requests). */
@@ -913,6 +917,7 @@ export default function AnalyzeWorkspace() {
   async function refreshFitDiagnostics() {
     if (!runId || fitDiagStepNum == null || fitDiagSelectedIds.length === 0) {
       setFitDiagFigures([]);
+      setFitDiagItems([]);
       return;
     }
     const seq = ++fitDiagReqSeq.current;
@@ -960,10 +965,12 @@ export default function AnalyzeWorkspace() {
         return { spectrum_id: it.spectrum_id, ...built, badge: health.text, badgeWarn: health.warn };
       });
       setFitDiagFigures(figs);
+      setFitDiagItems(resp.items ?? []);
     } catch (e) {
       if (seq !== fitDiagReqSeq.current) return;
       setFitDiagError(String((e as Error)?.message ?? e));
       setFitDiagFigures([]);
+      setFitDiagItems([]);
     } finally {
       if (seq === fitDiagReqSeq.current) setFitDiagBusy(false);
     }
@@ -3251,6 +3258,15 @@ export default function AnalyzeWorkspace() {
                       <div className="hint" style={{ marginTop: 8 }}>
                         {fitDiagFigures.length} fit plot{fitDiagFigures.length === 1 ? "" : "s"} shown in the right panel.
                       </div>
+                    ) : null}
+                    {runId && fitDiagStepNum != null ? (
+                      <FitUncertaintyPanel
+                        runId={runId}
+                        stepNum={fitDiagStepNum}
+                        selectedIds={fitDiagSelectedIds}
+                        items={fitDiagBusy ? [] : fitDiagItems}
+                        download={safeDownload}
+                      />
                     ) : null}
                   </>
                 )}

@@ -29,6 +29,28 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
         return await tool_call(ctx, _run)
 
+    @mcp.tool(name="post_fitting_validate_links")
+    async def post_fitting_validate_links(
+        components: list[dict[str, Any]],
+        param_links: list[dict[str, Any]],
+    ) -> str:
+        """
+        POST /fitting/validate-links — check a fitting step's param_links before running (F4).
+
+        Link modes: equal / scale / offset / area_ratio (one target), or expr (free expression):
+        {"source_component_id": "C", "source_key": "pos", "mode": "expr",
+         "expr": "{A.pos} + 0.5*({B.pos} - {A.pos})"}. References are {peak.param}; {A.area} is the peak area;
+        "defines": "area" on an amp link makes the expression the peak AREA. Allowed: numbers, + - * / **,
+        abs sqrt exp log min max. A linked parameter ignores its own bounds. Returns {ok, errors, drivers};
+        errors name unknown peaks/keys, parameters defined twice and cycles (C.pos -> B.pos -> C.pos).
+        """
+
+        def _run():
+            data = ctx.get_client().fitting.validate_links(components, param_links)
+            return {"ok": True, "data": data}
+
+        return await tool_call(ctx, _run)
+
     @mcp.tool(name="post_fitting_fit")
     async def post_fitting_fit(
         request: dict[str, Any],

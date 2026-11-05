@@ -81,6 +81,10 @@ class XpsResource(_Base):
         data = request_json(self._root.http, "GET", "/xps/fitting-recipes", params=params)
         return dict(data) if isinstance(data, dict) else {}
 
+    def add_spin_orbit_partner(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = request_json(self._root.http, "POST", "/xps/spin-orbit-partner", json_body=payload)
+        return dict(data) if isinstance(data, dict) else {}
+
     def apply_fitting_recipe(
         self,
         recipe_id: str,
@@ -89,11 +93,19 @@ class XpsResource(_Base):
         include_background: bool = True,
         preferred_pass_energy: int | None = None,
         lock_satellites: bool = True,
+        lock_spin_orbit: bool = True,
+        spin_orbit_partner_splitting_eV: float | None = None,
+        spin_orbit_partner_subshell: str | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "include_background": include_background,
             "lock_satellites": lock_satellites,
+            "lock_spin_orbit": lock_spin_orbit,
         }
+        if spin_orbit_partner_splitting_eV is not None:
+            params["spin_orbit_partner_splitting_eV"] = spin_orbit_partner_splitting_eV
+        if spin_orbit_partner_subshell:
+            params["spin_orbit_partner_subshell"] = spin_orbit_partner_subshell
         if pass_energy is not None:
             params["pass_energy"] = pass_energy
         if preferred_pass_energy is not None:

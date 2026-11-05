@@ -1,3 +1,4 @@
+import { exprRefs, remapLink } from "./paramExpressions";
 import type { FittingComponentSpecPublic, FittingParamSpecPublic, FittingWeighting } from "./api";
 
 export const MAX_POLY_DEGREE = 12;
@@ -176,13 +177,20 @@ export function fittingRegionMatches(wanted: string | null | undefined, spectrum
 export type FittingParamLink = {
   source_component_id: string;
   source_key: string;
+  /** Empty for mode "expr" (the expression names its peaks). */
   target_component_id: string;
   target_key: string;
-  /** area_ratio (amp links only): dependent AREA = ratio x driver AREA, whatever fwhm / shape each peak has. */
-  mode: "equal" | "scale" | "offset" | "area_ratio";
+  /**
+   * area_ratio (amp links only): dependent AREA = ratio x driver AREA, whatever fwhm / shape each peak has.
+   * expr (F4): free expression such as `{A.pos} + 0.5*({B.pos} - {A.pos})`; `{A.area}` is a peak area.
+   */
+  mode: "equal" | "scale" | "offset" | "area_ratio" | "expr";
   scale?: number;
   offset?: number;
   ratio?: number;
+  expr?: string;
+  /** mode "expr" on amp: "area" makes the expression the peak AREA. */
+  defines?: "value" | "area";
 };
 
 export function isPeakComponentType(ct: string): ct is FittingPeakType {
@@ -621,11 +629,8 @@ export function renameFittingComponent(
   const components = fp.components.slice();
   components[componentIndex] = { ...current, component_id: componentId };
   const remap = (id: string) => (id === previousId ? componentId : id);
-  const param_links = (fp.param_links ?? []).map((link) => ({
-    ...link,
-    source_component_id: remap(link.source_component_id),
-    target_component_id: remap(link.target_component_id),
-  }));
+  // F4: expression links mention peaks inside their text; rename them there too.
+  const param_links = (fp.param_links ?? []).map((link) => remapLink(link, remap));
   const recipe_components = Object.fromEntries(
     Object.entries(fp.recipe_components ?? {}).map(([recipeId, ids]) => [
       recipeId,
@@ -730,7 +735,22 @@ function normalizeParamLinks(raw: unknown): FittingParamLink[] {
           ? "offset"
           : modeRaw === "area_ratio"
             ? "area_ratio"
-            : "equal";
+            : modeRaw === "expr"
+              ? "expr"
+              : "equal";
+    if (mode === "expr") {
+      const exprLink: FittingParamLink = {
+        source_component_id: String(r.source_component_id ?? ""),
+        source_key: String(r.source_key ?? ""),
+        target_component_id: "",
+        target_key: "",
+        mode,
+        expr: String(r.expr ?? ""),
+      };
+      if (r.defines === "area") exprLink.defines = "area";
+      if (exprLink.source_component_id && exprLink.source_key) out.push(exprLink);
+      continue;
+    }
     const link: FittingParamLink = {
       source_component_id: String(r.source_component_id ?? ""),
       source_key: String(r.source_key ?? ""),
@@ -782,11 +802,18 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
   );
   // A legacy draft can retain a link after deleting a peak or changing its model.
   // Do not send those dangling links to the fitter.
-  const links = normalizeParamLinks(fp.param_links).filter(
-    (link) =>
-      validParamKeys.has(linkKey(link.source_component_id, link.source_key)) &&
-      validParamKeys.has(linkKey(link.target_component_id, link.target_key))
-  );
+  const links = normalizeParamLinks(fp.param_links)
+    .filter(
+      (link) =>
+        validParamKeys.has(linkKey(link.source_component_id, link.source_key)) &&
+        // Expression links name their peaks inside the text; the server validates those references.
+        (link.mode === "expr" || validParamKeys.has(linkKey(link.target_component_id, link.target_key)))
+    )
+    .map((link) => {
+      if (link.mode !== "expr") return link;
+      const { target_component_id: _t, target_key: _k, ...rest } = link;
+      return rest as FittingParamLink;
+    });
   const out: Record<string, unknown> = {
     output_mode: fp.output_mode,
     fill_opacity: fp.fill_opacity,
@@ -1090,7 +1117,9 @@ export function changeFittingComponentType(
   const param_links = (fp.param_links ?? []).filter(
     (l) =>
       (l.source_component_id !== id || keys.has(l.source_key)) &&
-      (l.target_component_id !== id || keys.has(l.target_key))
+      (l.mode === "expr"
+        ? exprRefs(l.expr).every((r) => r.componentId !== id || r.key === "area" || keys.has(r.key))
+        : l.target_component_id !== id || keys.has(l.target_key))
   );
   return { ...fp, components, param_links };
 }

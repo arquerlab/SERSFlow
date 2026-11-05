@@ -103,7 +103,7 @@ def median_rel_stderr(
     ratios: list[float] = []
     for i in range(n):
         var = float(cov[i, i])
-        if not math.isfinite(var) or var < 0:
+        if not math.isfinite(var) or var <= 0:  # fixed parameters have zero variance (F2 full covariance)
             continue
         se = math.sqrt(var)
         den = abs(float(p[i]))

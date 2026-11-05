@@ -15,10 +15,13 @@ from sersflow.api.schemas.fitting import (
     FitRequest,
     FitResponse,
     FitSpectrumRef,
+    ValidateLinksRequest,
+    ValidateLinksResponse,
 )
 from sersflow.api.services.fit_diagnostics_public import diagnostics_to_public
 from sersflow.api.services.uploads import resolve_existing_upload
 from sersflow.core.io.load_file import load_dataset
+from sersflow.core.metrics.fit_uncertainty import component_uncertainty_rows
 from sersflow.core.preprocess.fitting import (
     expand_fit_curves_to_full,
     fit_curve,
@@ -26,6 +29,7 @@ from sersflow.core.preprocess.fitting import (
     normalised_residual_full,
 )
 from sersflow.core.preprocess.fitting_specs import list_component_types
+from sersflow.core.preprocess.param_expressions import link_driver_ids, validate_param_links
 from sersflow.core.spectrum import XY
 
 
@@ -104,6 +108,18 @@ def _resolve_target(target: FitInlineSeries | FitSpectrumRef, *, owner_user_id: 
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+@router.post("/validate-links", response_model=ValidateLinksResponse)
+def validate_links(payload: ValidateLinksRequest) -> dict[str, Any]:
+    """F4: validate parameter links (expression syntax, unknown peaks/keys, duplicates, cycles) without fitting."""
+    errors = validate_param_links(payload.components, payload.param_links)
+    drivers = {
+        f"{lk.get('source_component_id')}.{lk.get('source_key')}": link_driver_ids(lk)
+        for lk in payload.param_links
+        if isinstance(lk, dict)
+    }
+    return {"ok": not errors, "errors": errors, "drivers": drivers}
+
+
 @router.post("/fit", response_model=FitResponse)
 def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
@@ -157,6 +173,7 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
         residual = np.where(np.isfinite(y_hat_full), residual, np.nan)
 
         comps_out = []
+        unc_rows = component_uncertainty_rows(res)
         for idx, m in enumerate(res.mapping):
             s, e = m["index_range"]
             keys = m["param_keys"]
@@ -170,6 +187,7 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
                     "param_keys": keys,
                     "params": {k: float(v) for k, v in zip(keys, vals)},
                     "y_hat": yc,
+                    **unc_rows[idx],
                 }
             )
 

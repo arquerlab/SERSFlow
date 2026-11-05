@@ -9,6 +9,8 @@ from sersflow.api.schemas.xps import (
     FittingRecipeApplyResponse,
     FittingRecipesIndexResponse,
     FittingRecipesResponse,
+    SpinOrbitPartnerRequest,
+    SpinOrbitPartnerResponse,
 )
 from sersflow.core.xps.chemical_states import (
     list_chemical_state_entries,
@@ -21,6 +23,7 @@ from sersflow.core.xps.fitting_recipes import (
     load_fitting_recipes_catalog,
 )
 from sersflow.core.xps.recipe_apply import apply_recipe_id
+from sersflow.core.xps.spin_orbit import add_spin_orbit_partner
 
 router = APIRouter(prefix="/xps", tags=["XPS"])
 
@@ -107,6 +110,18 @@ def apply_fitting_recipe(
         default=True,
         description="Lock flagged satellite amplitudes to the main peak (literature area ratio); the link stays editable",
     ),
+    lock_spin_orbit: bool = Query(
+        default=True,
+        description="Lock the area ratio of spin-orbit doublets the recipe labels (p 1:2, d 2:3, f 3:4)",
+    ),
+    spin_orbit_partner_splitting_eV: float | None = Query(
+        default=None,
+        gt=0,
+        description="One-member recipes (e.g. Co 2p3/2): add a low-j partner of every peak at +this splitting (eV)",
+    ),
+    spin_orbit_partner_subshell: str | None = Query(
+        default=None, description="p, d or f; default from the recipe region (e.g. Co_2p3/2 -> p)"
+    ),
 ) -> dict[str, Any]:
     try:
         return apply_recipe_id(
@@ -115,11 +130,33 @@ def apply_fitting_recipe(
             include_background=include_background,
             preferred_pass_energy=preferred_pass_energy,
             lock_satellites=lock_satellites,
+            lock_spin_orbit=lock_spin_orbit,
+            spin_orbit_partner_splitting_eV=spin_orbit_partner_splitting_eV,
+            spin_orbit_partner_subshell=spin_orbit_partner_subshell,
         )
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/spin-orbit-partner", response_model=SpinOrbitPartnerResponse)
+def post_spin_orbit_partner(payload: SpinOrbitPartnerRequest) -> dict[str, Any]:
+    """F3: add the spin-orbit partner of one peak (doublet links) to fitting-step params; returns the new params."""
+    try:
+        params, pid = add_spin_orbit_partner(
+            payload.params,
+            payload.component_id,
+            splitting_eV=payload.splitting_eV,
+            subshell=payload.subshell,
+            partner_id=payload.partner_id,
+            lock_area=payload.lock_area,
+            link_shape=payload.link_shape,
+            fwhm_ratio=payload.fwhm_ratio,
+        )
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"params": params, "partner_id": pid}
 
 
 @router.get("/fitting-recipes", response_model=FittingRecipesResponse)

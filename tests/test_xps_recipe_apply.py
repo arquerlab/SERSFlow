@@ -65,9 +65,11 @@ def test_apply_sc0_la_so_links() -> None:
     assert out["xps_region"] == "Sc2p"
     modes = {(l["source_key"], l["mode"]) for l in out["param_links"]}
     assert ("pos", "offset") in modes
-    assert ("fwhm", "equal") in modes
-    # Amplitudes are seeded, not locked.
+    # F3: table widths 0.76 / 0.79 eV -> 2p1/2 FWHM held at that ratio; LA shape equal; 1:2 area locked.
+    assert ("fwhm", "scale") in modes and ("alpha", "equal") in modes and ("beta", "equal") in modes
+    assert ("amp", "area_ratio") in modes
     assert ("amp", "scale") not in modes
+    assert sum(1 for l in out["param_links"] if l["source_key"] == "pos") == 1  # no duplicate offset link
     offset_link = next(l for l in out["param_links"] if l["mode"] == "offset")
     assert abs(float(offset_link["offset"]) - 4.74) < 1e-6
 
@@ -264,9 +266,9 @@ def test_lock_satellites_false_keeps_amplitudes_free() -> None:
     assert all(out["vary"][_flat_index(out, f"peak_{n}", "amp")] for n in (1, 2, 3, 4))
 
 
-def test_recipes_without_satellite_flags_are_unchanged() -> None:
+def test_recipes_without_satellite_flags_only_lock_the_doublet() -> None:
     out = apply_recipe_id("sc_2p_sc0", pass_energy=20, include_background=False)
-    assert _amp_links(out) == {}
+    assert {k: (v["mode"], v.get("ratio")) for k, v in _amp_links(out).items()} == {"2p1_2": ("area_ratio", 0.5)}
 
 
 def test_satellite_flags_present_in_all_co_2p32_recipes_with_high_be_shakeup() -> None:
@@ -371,14 +373,16 @@ def test_iro2_satellite_lock_uses_finite_lf_area() -> None:
 
     out = apply_recipe_id("ir_4f_iro2_anhydrous", pass_energy=20)
     links = _amp_links(out)
-    assert set(links) == {"4f7_2_sat", "4f5_2_sat"}
-    main = {"fwhm": 0.70, "alpha": 0.3, "beta": 1.0, "w": 65.0, "fwhm_g": 0.0}
-    sat = {"fwhm": 3.64, "m": 90.0}
-    expected = (7.7 / 49.5) * area_per_height("lf", main) / area_per_height("gl", sat)
+    assert set(links) == {"4f5_2", "4f7_2_sat", "4f5_2_sat", "5p1_2"}
+    # F3: LF parents support area_ratio, so the satellite AREA (not height) is locked to the 4f7/2 main line ...
     lk = links["4f7_2_sat"]
-    assert lk["mode"] == "scale"  # LF parent is not area_ratio-capable: fixed height scale
-    assert lk["scale"] == pytest.approx(expected, rel=1e-9)
-    assert 0.01 < lk["scale"] < 0.1
+    assert lk["mode"] == "area_ratio" and lk["target_component_id"] == "4f7_2"
+    assert lk["ratio"] == pytest.approx(7.7 / 49.5)
+    # ... the 4f5/2 satellite is the 3:4 doublet partner of the 4f7/2 satellite, and the doublets are locked
+    assert (links["4f5_2_sat"]["target_component_id"], links["4f5_2_sat"]["ratio"]) == ("4f7_2_sat", 0.75)
+    assert (links["4f5_2"]["mode"], links["4f5_2"]["ratio"]) == ("area_ratio", 0.75)
+    assert links["5p1_2"]["ratio"] == 0.5
+    assert area_per_height("lf", {"fwhm": 0.70, "alpha": 0.3, "beta": 1.0, "w": 65.0, "fwhm_g": 0.0}) > 0
 
 
 def test_lf_area_per_height_is_finite_for_heavy_tails() -> None:

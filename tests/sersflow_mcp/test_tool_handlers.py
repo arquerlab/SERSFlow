@@ -627,3 +627,73 @@ def test_post_analysis_sweep_jobs_gate_and_post(tmp_path: Path) -> None:
     )
     assert ok["ok"] is True and ok["job_id"] == "fcjob_1" and ok["grid_points"] == 2
     assert seen[0][1]["fitting_step_index"] == 0
+
+
+def test_post_analysis_monte_carlo_jobs_and_summary(tmp_path: Path) -> None:
+    seen: list[tuple[str, dict]] = []
+    summary = {
+        "n_replicates": 20,
+        "spectra": [{"spectrum_id": "a"}, {"spectrum_id": "b"}],
+        "rows": [{"spectrum_id": "a", "quantity": "fwhm"}, {"spectrum_id": "b", "quantity": "fwhm"}],
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/analysis/runs/r1/monte-carlo-jobs":
+            seen.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(202, json={"job_id": "fcjob_2", "status": "queued"})
+        if request.url.path == "/analysis/monte-carlo-jobs/fcjob_2/summary":
+            return httpx.Response(200, json=summary)
+        return httpx.Response(404, json={"detail": request.url.path})
+
+    ctx = _ready_ctx(tmp_path, httpx.MockTransport(handle))
+    mcp = create_server(ctx)
+    post = _tool_fn(mcp, "post_analysis_monte_carlo_jobs")
+    ok = json.loads(asyncio.run(post(run_id="r1", fitting_step_index=0, n_replicates=20, seed=4)))
+    assert ok["ok"] is True and ok["job_id"] == "fcjob_2"
+    assert seen[0][1]["n_replicates"] == 20 and seen[0][1]["seed"] == 4
+    get = _tool_fn(mcp, "get_analysis_monte_carlo_summary")
+    data = json.loads(asyncio.run(get(job_id="fcjob_2", spectrum_id="b")))["data"]
+    assert [r["spectrum_id"] for r in data["rows"]] == ["b"] and len(data["spectra"]) == 1
+
+
+def test_post_xps_add_spin_orbit_partner_and_recipe_options(tmp_path: Path) -> None:
+    seen: list[tuple[str, object]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/xps/spin-orbit-partner":
+            body = json.loads(request.content)
+            seen.append((request.url.path, body))
+            return httpx.Response(200, json={"params": body["params"], "partner_id": "p1_2p1_2"})
+        if request.url.path == "/xps/fitting-recipes/co_2p32_coo/apply":
+            seen.append((request.url.path, dict(request.url.params)))
+            return httpx.Response(200, json={"recipe_id": "co_2p32_coo", "components": []})
+        return httpx.Response(404, json={"detail": request.url.path})
+
+    ctx = _ready_ctx(tmp_path, httpx.MockTransport(handle))
+    mcp = create_server(ctx)
+    add = _tool_fn(mcp, "post_xps_add_spin_orbit_partner")
+    out = json.loads(asyncio.run(add(params={"components": []}, component_id="p1", splitting_eV=15.0, subshell="p")))
+    assert out["ok"] is True and out["data"]["partner_id"] == "p1_2p1_2"
+    assert seen[0][1]["subshell"] == "p" and seen[0][1]["lock_area"] is True
+    apply = _tool_fn(mcp, "apply_xps_fitting_recipe")
+    json.loads(asyncio.run(apply(recipe_id="co_2p32_coo", spin_orbit_partner_splitting_eV=15.6, lock_spin_orbit=False)))
+    q = seen[1][1]
+    assert q["spin_orbit_partner_splitting_eV"] == "15.6" and q["lock_spin_orbit"] == "false"
+
+
+def test_post_fitting_validate_links(tmp_path: Path) -> None:
+    seen: list[dict] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/fitting/validate-links":
+            seen.append(json.loads(request.content))
+            return httpx.Response(200, json={"ok": False, "errors": ["cyclic constraint: C.pos -> B.pos -> C.pos"], "drivers": {}})
+        return httpx.Response(404, json={"detail": request.url.path})
+
+    ctx = _ready_ctx(tmp_path, httpx.MockTransport(handle))
+    mcp = create_server(ctx)
+    fn = _tool_fn(mcp, "post_fitting_validate_links")
+    links = [{"source_component_id": "C", "source_key": "pos", "mode": "expr", "expr": "{B.pos}+1"}]
+    out = json.loads(asyncio.run(fn(components=[{"component_id": "C", "component_type": "gl"}], param_links=links)))
+    assert out["ok"] is True and out["data"]["ok"] is False and "cyclic" in out["data"]["errors"][0]
+    assert seen[0]["param_links"] == links

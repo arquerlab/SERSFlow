@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 from scipy.special import voigt_profile
 
+from sersflow.core.metrics.fit_uncertainty import area_uncertainty
 from sersflow.core.metrics.key_dedupe import dedupe_parallel
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 from sersflow.core.preprocess.fit_diagnostics import (
@@ -141,8 +142,16 @@ def _feature_keys_for_component(
     mid = f"{region}_" if region else ""
     base = f"{prefix}fit_{mid}{cid}_"
     keys = [base + _safe_id_fragment(k) for k in param_keys]
-    if component_type.strip().lower() in AREA_EXPORT_COMPONENT_TYPES:
+    has_area = component_type.strip().lower() in AREA_EXPORT_COMPONENT_TYPES
+    if has_area:
         keys.append(base + "area")
+        keys.append(base + "area_pct")
+    # F2: 1-sigma covariance errors, after the values so ``[: len(param_keys)]`` / ``[len(param_keys)]``
+    # (parameters / area) keep their positions.
+    keys.extend(base + _safe_id_fragment(k) + "_stderr" for k in param_keys)
+    if has_area:
+        keys.append(base + "area_stderr")
+        keys.append(base + "area_pct_stderr")
     return keys
 
 
@@ -423,6 +432,69 @@ def p_opt_and_gof_from_features(
     return np.asarray(p_vals, dtype=float), diag, None
 
 
+def stored_component_uncertainty_rows(
+    *,
+    pipeline: Any,
+    fitting_step_num: int,
+    features: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """
+    F2: per component of one fitting step, the stored ``stderr`` / ``area`` / ``area_pct`` / ``area_stderr`` /
+    ``area_pct_stderr`` observation values (same shape as ``fit_uncertainty.component_uncertainty_rows``).
+    Missing columns (runs made before F2) give None.
+    """
+    steps = getattr(pipeline, "steps", None) or []
+    sns = assign_pipeline_step_nums(steps)
+    groups = fitting_feature_key_groups_for_pipeline(pipeline)
+    finals = groups.get(int(fitting_step_num))
+    target = next(
+        (
+            i
+            for i, s in enumerate(steps)
+            if getattr(s, "enabled", True) and s.name == "fitting" and int(sns[i]) == int(fitting_step_num)
+        ),
+        None,
+    )
+    if target is None or finals is None:
+        return []
+    params = steps[target].params or {}
+    region = params.get("xps_region")
+    xps_region = str(region).strip() if region is not None and str(region).strip() else None
+    fit_indices = [i for i, s in enumerate(steps) if getattr(s, "enabled", True) and s.name == "fitting"]
+    multi = len(fit_indices) > 1
+    rows: list[dict[str, Any]] = []
+    cursor = 0
+    for row in params.get("components") or []:
+        if not isinstance(row, dict):
+            continue
+        ctype = str(row.get("component_type", "")).strip()
+        cid = str(row.get("component_id") or "").strip() or "comp"
+        try:
+            param_keys = _param_keys_for_component(row)
+        except ValueError:
+            continue
+        n = len(_feature_keys_for_component(target, multi, cid, ctype, param_keys, xps_region=xps_region))
+        g = finals[cursor : cursor + n]
+        cursor += n
+        has_area = ctype.lower() in AREA_EXPORT_COMPONENT_TYPES
+        np_ = len(param_keys)
+        se_start = np_ + (2 if has_area else 0)
+
+        def val(idx: int) -> float | None:
+            return _finite_float(features.get(g[idx])) if 0 <= idx < len(g) else None
+
+        rows.append(
+            {
+                "stderr": {k: val(se_start + j) for j, k in enumerate(param_keys)},
+                "area": val(np_) if has_area else None,
+                "area_pct": val(np_ + 1) if has_area else None,
+                "area_stderr": val(se_start + np_) if has_area else None,
+                "area_pct_stderr": val(se_start + np_ + 1) if has_area else None,
+            }
+        )
+    return rows
+
+
 def collect_fitting_features_for_pipeline(
     xy: XY,
     pipeline: Any,
@@ -560,7 +632,9 @@ def collect_fitting_features_for_pipeline(
             continue
 
         out = dict(nulls)
-        for m, final_group in zip(res.mapping, step_final_groups):
+        unc = area_uncertainty(res.mapping, res.p_opt, res.p_cov)
+        stderr_vec = res.p_stderr
+        for ci, (m, final_group) in enumerate(zip(res.mapping, step_final_groups)):
             ctype = str(m.get("component_type", "")).strip().lower()
             keys_list = list(m.get("param_keys") or [])
             start, end = m.get("index_range", [0, 0])
@@ -574,9 +648,18 @@ def collect_fitting_features_for_pipeline(
                 if value is not None and math.isfinite(value):
                     out[final_key] = value
 
-            if ctype in AREA_EXPORT_COMPONENT_TYPES and len(final_group) > len(keys_list):
+            has_area = ctype in AREA_EXPORT_COMPONENT_TYPES and len(final_group) > len(keys_list)
+            if has_area:
                 area_key = final_group[len(keys_list)]
                 out[area_key] = _derived_peak_area(ctype, pk)
+                out[final_group[len(keys_list) + 1]] = _finite_float(unc.area_pct[ci])
+            se_start = len(keys_list) + (2 if has_area else 0)
+            for j, fk in enumerate(final_group[se_start : se_start + len(keys_list)]):
+                if stderr_vec is not None and start + j < len(stderr_vec):
+                    out[fk] = _finite_float(stderr_vec[start + j])
+            if has_area and len(final_group) >= se_start + len(keys_list) + 2:
+                out[final_group[se_start + len(keys_list)]] = _finite_float(unc.area_stderr[ci])
+                out[final_group[se_start + len(keys_list) + 1]] = _finite_float(unc.area_pct_stderr[ci])
 
         gof_vals = diagnostics_as_feature_dict(res.diagnostics)
         for fk, metric in zip(gof_final_keys, GOF_METRIC_KEYS):
