@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import numpy as np
+
 from fastapi import APIRouter, HTTPException, Request
 
 from sersflow.api.deps import current_user_id
@@ -75,10 +77,18 @@ def run_pipeline_endpoint(payload: PipelineRunRequest, request: Request) -> dict
         )
 
         if isinstance(payload.return_, ReturnFinal):
-            items = [
-                {"spectrum_id": sid, "x": xy.x.astype(float).tolist(), "y": xy.y.astype(float).tolist()}
-                for sid, xy in final.items()
-            ]
+            items = []
+            for sid, xy in final.items():
+                item: dict[str, Any] = {
+                    "spectrum_id": sid,
+                    "x": xy.x.astype(float).tolist(),
+                    "y": xy.y.astype(float).tolist(),
+                }
+                var = getattr(xy, "var", None)
+                if var is not None and np.shape(var) == np.shape(xy.y):
+                    item["var"] = np.asarray(var, dtype=float).tolist()
+                    item["var_kind"] = getattr(xy, "var_kind", None)
+                items.append(item)
             return {"items": items}
 
         ret_metrics = cast(ReturnMetricsOnly, payload.return_)

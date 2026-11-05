@@ -73,7 +73,8 @@ def normalize_by_reference_point(
         denom = float(ry[idx])
     if denom == 0.0:
         denom = 1.0
-    return XY(x=xy.x, y=y / denom)
+    # Poisson variance scales exactly with a constant factor (F1).
+    return xy.keep_var(xy.x, y / denom, scale=1.0 / abs(denom))
 
 
 def _crop(xy: XY, params: dict[str, Any]) -> XY:
@@ -82,7 +83,7 @@ def _crop(xy: XY, params: dict[str, Any]) -> XY:
     x = xy.x
     y = xy.y
     mask = (x >= min_x) & (x <= max_x)
-    return XY(x=x[mask], y=y[mask])
+    return xy.keep_var(x[mask], y[mask], mask=mask)
 
 
 def _metadata_filter(xy: XY, params: dict[str, Any]) -> XY:
@@ -147,7 +148,8 @@ def _normalize(xy: XY, params: dict[str, Any]) -> XY:
         raise ValueError(f"Unknown normalization method: {method}")
     if denom == 0.0:
         denom = 1.0
-    return XY(x=xy.x, y=y / denom)
+    # Poisson variance scales exactly with a constant factor (F1).
+    return xy.keep_var(xy.x, y / denom, scale=1.0 / abs(denom))
 
 
 def _xas_normalize(xy: XY, params: dict[str, Any]) -> XY:
@@ -197,7 +199,7 @@ def _cosmic_ray_removal(xy: XY, params: dict[str, Any]) -> XY:
         min_intensity_ratio=min_intensity_ratio,
         n_iterations=n_iterations,
     )
-    return XY(x=xy.x, y=np.asarray(corrected, dtype=float))
+    return xy.keep_var(xy.x, np.asarray(corrected, dtype=float))
 
 
 def _baseline(xy: XY, params: dict[str, Any]) -> XY:
@@ -212,7 +214,8 @@ def _baseline(xy: XY, params: dict[str, Any]) -> XY:
         x=xy.x.astype(float, copy=False),
         **kwargs,
     )
-    return XY(x=xy.x, y=np.asarray(corrected, dtype=float))
+    # Static background subtraction: weights keep using the RAW counts (background treated as exact).
+    return xy.keep_var(xy.x, np.asarray(corrected, dtype=float))
 
 
 def _fitting(xy: XY, params: dict[str, Any]) -> XY:
@@ -465,7 +468,8 @@ DEFAULT_STEPS: dict[str, StepImpl] = {
     "baseline": StepImpl(name="baseline", impl_version="1", transform=_baseline),
     "baseline_curve": StepImpl(name="baseline_curve", impl_version="1", transform=_baseline_curve),
     # 4: K1 — ``gl`` is the CasaXPS product GL(m); invalidates step caches computed with the sum form.
-    "fitting": StepImpl(name="fitting", impl_version="4", transform=_fitting),
+    # 5: F1 — Poisson weighting by default for XPS (``weighting`` param, default "auto").
+    "fitting": StepImpl(name="fitting", impl_version="5", transform=_fitting),
     "spectral_intensities": StepImpl(name="spectral_intensities", impl_version="1", transform=_spectral_intensities),
     "spectral_integrations": StepImpl(name="spectral_integrations", impl_version="1", transform=_spectral_integrations),
     "feature_operations": StepImpl(name="feature_operations", impl_version="1", transform=_feature_operations),

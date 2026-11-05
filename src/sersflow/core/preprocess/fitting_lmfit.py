@@ -319,7 +319,10 @@ def _shirley_needs_flip(problem: FitProblem) -> bool:
 def _flip_problem(problem: FitProblem) -> FitProblem:
     from dataclasses import replace
 
-    return replace(problem, x=np.asarray(problem.x)[::-1].copy(), y=np.asarray(problem.y)[::-1].copy())
+    sigma = None if problem.sigma is None else np.asarray(problem.sigma)[::-1].copy()
+    return replace(
+        problem, x=np.asarray(problem.x)[::-1].copy(), y=np.asarray(problem.y)[::-1].copy(), sigma=sigma
+    )
 
 
 def _flip_result(res: FitResult) -> FitResult:
@@ -604,8 +607,11 @@ def _fit_curve_lmfit(problem: FitProblem) -> FitResult:
     fit_kws: dict[str, Any] = {"x": xf}
     if has_active_bg:
         fit_kws["y"] = _model_y_input(problem, yf)
+    weights = None
+    if problem.sigma is not None and np.shape(problem.sigma) == yf.shape:
+        weights = 1.0 / np.asarray(problem.sigma, dtype=float)  # F1: lmfit minimises sum((y - f) * w)^2
     try:
-        result = model.fit(yf, params, max_nfev=50_000, **fit_kws)
+        result = model.fit(yf, params, max_nfev=50_000, weights=weights, **fit_kws)
     except Exception as e:
         raise ValueError(f"lmfit fit failed: {e}") from e
 
@@ -664,6 +670,9 @@ def _fit_curve_lmfit(problem: FitProblem) -> FitResult:
         x=xf,
         bg_curve=bg_curve,
         n_at_bound=n_at_bound,
+        sigma=problem.sigma,
+        weighting=problem.weighting,
+        weighting_note=problem.weighting_note,
     )
     return FitResult(
         p_opt=p_opt,
@@ -780,6 +789,9 @@ def _evaluate_curve_lmfit(
                 ),
                 None,
             ),
+            sigma=problem.sigma,
+            weighting=problem.weighting,
+            weighting_note=problem.weighting_note,
         )
     return FitResult(
         p_opt=p,

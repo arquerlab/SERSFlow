@@ -91,6 +91,10 @@ class SpectrumSeries(BaseModel):
     spectrum_id: str
     x: list[float]
     y: list[float]
+    var: list[float] | None = None
+    """Counting variance of y carried through the pipeline (F1); null when unavailable."""
+    var_kind: str | None = None
+    """``absolute`` (raw counts) or ``relative`` (Poisson shape, unknown gain)."""
 
 
 class PipelineRunFinalResponse(BaseModel):

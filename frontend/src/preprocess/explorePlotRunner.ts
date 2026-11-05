@@ -472,6 +472,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       const nSpectra = rawItems.length;
 
       const figures: FitStackFigure["figures"] = [];
+      const appliedCounts = new Map<string, number>();
       for (let si = 0; si < rawItems.length; si++) {
         const it = rawItems[si]!;
         if (isStale()) return;
@@ -480,7 +481,16 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         try {
           fitResp = await postFittingFit(
             {
-              target: { kind: "inline", x: it.x, y: it.y },
+              target: {
+                kind: "inline",
+                x: it.x,
+                y: it.y,
+                // F1: counting variance carried through the prior steps (absent when a step broke it).
+                ...(Array.isArray(it.var) && it.var.length === it.y.length
+                  ? { y_variance: it.var, variance_kind: it.var_kind ?? "relative" }
+                  : {}),
+              },
+              weighting: fp.weighting ?? "auto",
               components: compsApi.map((c) => ({
                 component_id: c.component_id,
                 component_type: c.component_type,
@@ -509,6 +519,13 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
           if (isAbortErr(e)) return;
           throw new Error(`Fitting failed for ${it.spectrum_id}: ${(e as Error)?.message ?? e}`);
         }
+        const appliedLabel =
+          fitResp.diagnostics?.weighting === "poisson"
+            ? "Poisson"
+            : fitResp.diagnostics?.weighting === "poisson_relative"
+              ? "relative Poisson"
+              : "unweighted";
+        appliedCounts.set(appliedLabel, (appliedCounts.get(appliedLabel) ?? 0) + 1);
         const residual =
           fitResp.residual ??
           it.y.map((yv, i) => {
@@ -521,6 +538,8 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
           y: it.y,
           yHat: fitResp.y_hat ?? [],
           residual,
+          residualNormalised: fitResp.residual_normalised ?? null,
+          residualView: fp.residual_view ?? "raw",
           components: fitResp.components ?? [],
           diagnostics: fitResp.diagnostics,
           title: it.spectrum_id,
@@ -530,7 +549,10 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         figures.push({ ...built, spectrum_id: it.spectrum_id });
       }
 
-      setExplorePlotStatus(`Fitting preview: ${figures.length} spectra (stacked)`);
+      const appliedSummary = [...appliedCounts.entries()].map(([k, n]) => `${k} ×${n}`).join(", ");
+      setExplorePlotStatus(
+        `Fitting preview: ${figures.length} spectra (stacked)` + (appliedSummary ? ` · weighting applied: ${appliedSummary}` : "")
+      );
       commitFigure({ kind: "fit_stack", figures } satisfies FitStackFigure);
       return;
     }

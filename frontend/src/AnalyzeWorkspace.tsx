@@ -565,6 +565,10 @@ export default function AnalyzeWorkspace() {
     }>
   >([]);
   const [fitDiagBusy, setFitDiagBusy] = useState(false);
+  /** F1: show (data − fit)/σ instead of the raw residual in fit plots. */
+  const [fitDiagNormResid, setFitDiagNormResid] = useState(false);
+  /** Only the latest fit-diagnostics refresh may draw (rapid toggles start overlapping requests). */
+  const fitDiagReqSeq = useRef(0);
   const [fitDiagError, setFitDiagError] = useState<string | null>(null);
   const [fitExportContent, setFitExportContent] = useState<"data_fit_resid" | "data_fit_components_resid">(
     "data_fit_components_resid"
@@ -911,6 +915,7 @@ export default function AnalyzeWorkspace() {
       setFitDiagFigures([]);
       return;
     }
+    const seq = ++fitDiagReqSeq.current;
     setFitDiagBusy(true);
     setFitDiagError(null);
     try {
@@ -919,6 +924,7 @@ export default function AnalyzeWorkspace() {
         fitting_step_num: fitDiagStepNum,
         return_curve: true,
       });
+      if (seq !== fitDiagReqSeq.current) return; // a newer refresh superseded this one
       const figs = (resp.items ?? []).map((it) => {
         if (it.error || !it.y_hat?.length) {
           return {
@@ -943,6 +949,8 @@ export default function AnalyzeWorkspace() {
           y: it.y,
           yHat: it.y_hat,
           residual,
+          residualNormalised: it.residual_normalised ?? null,
+          residualView: fitDiagNormResid ? "normalised" : "raw",
           components: it.components ?? [],
           diagnostics: it.diagnostics as any,
           title: it.spectrum_id,
@@ -953,10 +961,11 @@ export default function AnalyzeWorkspace() {
       });
       setFitDiagFigures(figs);
     } catch (e) {
+      if (seq !== fitDiagReqSeq.current) return;
       setFitDiagError(String((e as Error)?.message ?? e));
       setFitDiagFigures([]);
     } finally {
-      setFitDiagBusy(false);
+      if (seq === fitDiagReqSeq.current) setFitDiagBusy(false);
     }
   }
 
@@ -1011,6 +1020,8 @@ export default function AnalyzeWorkspace() {
             y: it.y,
             yHat: it.y_hat,
             residual,
+            residualNormalised: it.residual_normalised ?? null,
+            residualView: fitDiagNormResid ? "normalised" : "raw",
             components: includeComps ? it.components ?? [] : [],
             diagnostics: it.diagnostics as any,
             title: it.spectrum_id,
@@ -1122,7 +1133,7 @@ export default function AnalyzeWorkspace() {
     if (section !== "meta_plot" || plotsSubTab !== "fit") return;
     void refreshFitDiagnostics();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [section, plotsSubTab, runId, fitDiagStepNum, fitDiagSelectedIds.join("|")]);
+  }, [section, plotsSubTab, runId, fitDiagStepNum, fitDiagSelectedIds.join("|"), fitDiagNormResid]);
 
   const jobQ = useQuery({
     queryKey: ["analysisJob", pendingJobId],
@@ -3183,6 +3194,14 @@ export default function AnalyzeWorkspace() {
                       <span className="hint" style={{ margin: 0 }}>
                         Selected {fitDiagSelectedIds.length}/10
                       </span>
+                      <label className="inline" title="Residual divided by its counting uncertainty σ (weighted fits only); ≈ ±1 noise band for a good fit">
+                        <input
+                          type="checkbox"
+                          checked={fitDiagNormResid}
+                          onChange={(e) => setFitDiagNormResid(e.target.checked)}
+                        />
+                        Normalised residual (/σ)
+                      </label>
                       <button type="button" className="mini" disabled={fitDiagBusy} onClick={() => void refreshFitDiagnostics()}>
                         {fitDiagBusy ? "Fitting…" : "Refresh"}
                       </button>

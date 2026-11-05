@@ -1,4 +1,4 @@
-import type { FittingComponentSpecPublic, FittingParamSpecPublic } from "./api";
+import type { FittingComponentSpecPublic, FittingParamSpecPublic, FittingWeighting } from "./api";
 
 export const MAX_POLY_DEGREE = 12;
 
@@ -332,6 +332,10 @@ export type FittingEditorParams = {
   recipe_components?: Record<string, string[]>;
   /** Pass energy used when applying the recipe (eV). */
   recipe_pass_energy?: number;
+  /** F1 least-squares weighting; undefined = "auto" (Poisson for XPS when counting statistics are known). */
+  weighting?: FittingWeighting;
+  /** Residual panel of the fit plots: raw (data − fit) or normalised ((data − fit)/σ). Plot only. */
+  residual_view?: "raw" | "normalised";
   /** Optional internal fit window lower bound (inclusive). Empty/undefined = full spectrum. */
   fit_min_x?: number | null;
   /** Optional internal fit window upper bound (inclusive). Empty/undefined = full spectrum. */
@@ -806,6 +810,9 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
   if (typeof fp.recipe_pass_energy === "number" && Number.isFinite(fp.recipe_pass_energy)) {
     out.recipe_pass_energy = fp.recipe_pass_energy;
   }
+  // Only non-defaults are written, so untouched steps keep their pipeline hash.
+  if (fp.weighting && fp.weighting !== "auto") out.weighting = fp.weighting;
+  if (fp.residual_view === "normalised") out.residual_view = "normalised";
   const fitMin = optionalFiniteNumber(fp.fit_min_x);
   const fitMax = optionalFiniteNumber(fp.fit_max_x);
   if (fitMin != null) out.fit_min_x = fitMin;
@@ -859,6 +866,8 @@ export function migrateFittingParamsToEditor(
         typeof r.recipe_pass_energy === "number" && Number.isFinite(r.recipe_pass_energy)
           ? r.recipe_pass_energy
           : undefined,
+      weighting: normalizeWeighting(r.weighting),
+      residual_view: r.residual_view === "normalised" ? "normalised" : "raw",
       fit_min_x: optionalFiniteNumber(r.fit_min_x) ?? null,
       fit_max_x: optionalFiniteNumber(r.fit_max_x) ?? null,
       initial_area_ratios: typeof r.initial_area_ratios === "string" ? r.initial_area_ratios : "",
@@ -888,6 +897,8 @@ export function migrateFittingParamsToEditor(
       : undefined;
   const fit_min_x = optionalFiniteNumber(p.fit_min_x) ?? null;
   const fit_max_x = optionalFiniteNumber(p.fit_max_x) ?? null;
+  const weighting = normalizeWeighting(p.weighting);
+  const residual_view: "raw" | "normalised" = p.residual_view === "normalised" ? "normalised" : "raw";
   const amp_auto_bands_raw = p.amp_auto_bands === true;
   const initial_area_ratios = typeof p.initial_area_ratios === "string" ? p.initial_area_ratios : "";
   const peak_shift_eV =
@@ -977,6 +988,8 @@ export function migrateFittingParamsToEditor(
     recipe_ids,
     recipe_components,
     recipe_pass_energy,
+    weighting,
+    residual_view,
     fit_min_x,
     fit_max_x,
     amp_auto_bands: amp_auto_bands_raw,
@@ -987,6 +1000,43 @@ export function migrateFittingParamsToEditor(
     ...migrated,
     amp_auto_bands: amp_auto_bands_raw || allBandAmplitudeAutosOn(migrated),
   });
+}
+
+export const WEIGHTING_OPTIONS: Array<{ value: FittingWeighting; label: string }> = [
+  { value: "auto", label: "Auto — Poisson for XPS (default)" },
+  { value: "poisson", label: "Poisson (σ = √counts)" },
+  { value: "poisson_relative", label: "Relative Poisson (σ² = g·y, gain fitted)" },
+  { value: "none", label: "None (unweighted least squares)" },
+];
+
+export function normalizeWeighting(v: unknown): FittingWeighting {
+  return v === "poisson" || v === "poisson_relative" || v === "none" ? v : "auto";
+}
+
+/** Plain-language description of the requested weighting for the step header. */
+export function weightingRequestText(w: FittingWeighting | undefined, technique: string): string {
+  const mode = normalizeWeighting(w);
+  if (mode === "none") return "Unweighted least squares (every point counts the same).";
+  if (mode === "auto" && technique !== "xps")
+    return "Auto: unweighted for this technique (Poisson weighting applies to XPS).";
+  const base =
+    mode === "poisson_relative"
+      ? "Relative Poisson: σ² = g·y with the gain g fitted (for scaled or normalised counts)."
+      : "Poisson: σ = √counts for raw integer counts; relative Poisson (gain fitted) when the counts are scaled or normalised.";
+  return `${mode === "auto" ? "Auto → " : ""}${base} Falls back to unweighted when the spectrum has no counting statistics.`;
+}
+
+/** What was actually applied, from fit diagnostics. */
+export function weightingAppliedText(d: { weighting?: string | null; poisson_gain?: number | null; residual_std_normalised?: number | null } | null | undefined): string | null {
+  if (!d || !d.weighting) return null;
+  const std = d.residual_std_normalised;
+  const stdTxt = std != null && Number.isFinite(std) ? ` · residual STD (norm.) ${std.toFixed(2)}` : "";
+  if (d.weighting === "poisson") return `Poisson (absolute)${stdTxt}`;
+  if (d.weighting === "poisson_relative") {
+    const g = d.poisson_gain;
+    return `Relative Poisson${g != null && Number.isFinite(g) ? `, gain g = ${g.toPrecision(3)}` : ""}${stdTxt}`;
+  }
+  return "Unweighted";
 }
 
 export function linkKey(componentId: string, paramKey: string): string {

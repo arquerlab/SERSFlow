@@ -19,7 +19,12 @@ from sersflow.api.schemas.fitting import (
 from sersflow.api.services.fit_diagnostics_public import diagnostics_to_public
 from sersflow.api.services.uploads import resolve_existing_upload
 from sersflow.core.io.load_file import load_dataset
-from sersflow.core.preprocess.fitting import expand_fit_curves_to_full, fit_curve, fit_problem_from_step_params
+from sersflow.core.preprocess.fitting import (
+    expand_fit_curves_to_full,
+    fit_curve,
+    fit_problem_from_step_params,
+    normalised_residual_full,
+)
 from sersflow.core.preprocess.fitting_specs import list_component_types
 from sersflow.core.spectrum import XY
 
@@ -31,6 +36,34 @@ router = APIRouter(prefix="/fitting", tags=["Fitting"])
 def list_fitting_models() -> dict[str, Any]:
     comps = [c.to_public_dict() for c in list_component_types()]
     return {"components": comps}
+
+
+def _nan_to_none(a: np.ndarray | None) -> list[float | None] | None:
+    if a is None:
+        return None
+    return [float(v) if np.isfinite(v) else None for v in np.asarray(a, dtype=float)]
+
+
+def _resolve_target_xy(target: FitInlineSeries | FitSpectrumRef, *, owner_user_id: str) -> XY:
+    """Target spectrum with counting variance when known (F1)."""
+    if isinstance(target, FitInlineSeries):
+        x = np.asarray(target.x, dtype=float)
+        y = np.asarray(target.y, dtype=float)
+        if target.y_variance is not None:
+            return XY(x=x, y=y, var=np.asarray(target.y_variance, dtype=float), var_kind=target.variance_kind or "relative")
+        return XY(x=x, y=y)
+    if target.spectrum.relative_path:
+        try:
+            p = resolve_existing_upload(target.spectrum.relative_path, owner_user_id=owner_user_id)
+            ds = load_dataset(Path(p))
+            if getattr(ds, "kind", None) == "multi":
+                from sersflow.core.spectrum import extract_xy
+
+                return extract_xy(ds, record_index=target.spectrum.record_index or 0)
+        except (OwnershipError, ValueError, IndexError, OSError):
+            pass
+    x, y = _resolve_target(target, owner_user_id=owner_user_id)
+    return XY(x=x, y=y)
 
 
 def _resolve_target(target: FitInlineSeries | FitSpectrumRef, *, owner_user_id: str) -> tuple[np.ndarray, np.ndarray]:
@@ -75,8 +108,7 @@ def _resolve_target(target: FitInlineSeries | FitSpectrumRef, *, owner_user_id: 
 def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
     try:
-        x, y = _resolve_target(payload.target, owner_user_id=user_id)
-        xy = XY(x=np.asarray(x, dtype=float), y=np.asarray(y, dtype=float))
+        xy = _resolve_target_xy(payload.target, owner_user_id=user_id)
 
         if not payload.p0:
             raise ValueError("p0 is required (use /fitting/models to build the correct length/order)")
@@ -108,6 +140,8 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
             step_params["fit_max_x"] = float(payload.fit_max_x)
         if payload.initial_area_ratios is not None and str(payload.initial_area_ratios).strip():
             step_params["initial_area_ratios"] = str(payload.initial_area_ratios).strip()
+        if payload.weighting is not None:
+            step_params["weighting"] = payload.weighting
 
         prob = fit_problem_from_step_params(xy, step_params)
         if prob is None:
@@ -144,6 +178,9 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
             "components": comps_out,
             "y_hat": y_hat_full.astype(float).tolist() if payload.return_curve else None,
             "residual": residual.astype(float).tolist() if payload.return_curve else None,
+            "residual_normalised": _nan_to_none(normalised_residual_full(xy, residual, res.diagnostics))
+            if payload.return_curve
+            else None,
             "diagnostics": diagnostics_to_public(res.diagnostics),
         }
     except HTTPException:

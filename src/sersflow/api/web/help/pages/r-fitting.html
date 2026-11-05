@@ -6,7 +6,8 @@
   <li><b>Engines:</b> vibrational pipelines use SciPy bounded <code>curve_fit</code>; XPS pipelines use <code>lmfit</code>, which adds the Vary checkboxes, parameter links, active backgrounds and the Fermi edge.</li>
   <li><b>It replaces the spectrum with the fitted curve.</b> Any later step (Normalization, Integration…) sees the model, not the data. Points outside the fit window keep their original values.</li>
   <li>The exported columns come from re-fitting the step's <i>input</i>, so they are independent of later steps.</li>
-  <li>If a fit fails, the spectrum passes through unchanged <b>without an error</b>; its fit columns are empty and <code>gof_success</code> is 0. Check this in Analyze → Plots → Fit diagnostics.</li>
+  <li>If a fit fails, the spectrum passes through unchanged, but the failure is recorded: its fit columns are empty, <code>gof_success</code> is 0 and the run shows a warning (see Failed fits).</li>
+  <li>XPS fits are <b>Poisson-weighted</b> by default (see Weighting). The weighting used is shown at the top of the Peak Fitting step and in every fit plot title.</li>
 </ul>
 
 <h2>Editor controls</h2>
@@ -71,8 +72,21 @@
 <div class="tip">Start with one peak on one spectrum, check the residual, then add peaks one at a time. Narrow the fit window rather than adding background peaks.</div>
 
 <h2>Fitting results</h2>
-<p>Per component: <code>fit_[region_]&lt;peak&gt;_&lt;param&gt;</code> and <code>…_area</code> (all peak types except DS and GDS). Per fit: <code>fit_[region_]gof_&lt;rmse|r2|r2_adj|aic|bic|aicc|chi2|redchi|…&gt;</code>. See <a href="#" data-help="r-exports">Exports and column names</a>. AIC and BIC assume unit variance, so compare models only on the same data. There are no per-parameter error columns, only <code>gof_median_rel_stderr</code>. A failed fit has empty columns and <code>gof_success</code> = 0 (see Failed fits).</p>
+<p>Per component: <code>fit_[region_]&lt;peak&gt;_&lt;param&gt;</code> and <code>…_area</code> (all peak types except DS and GDS). Per fit: <code>fit_[region_]gof_&lt;rmse|r2|r2_adj|aic|bic|aicc|chi2|redchi|…&gt;</code>. See <a href="#" data-help="r-exports">Exports and column names</a>. For weighted fits, <code>chi2</code>, <code>redchi</code>, AIC and BIC use the weighted residuals (residual/σ); for unweighted fits they assume unit variance. Either way, compare models only on the same data. Weighted fits also export <code>gof_weighting</code> (0 none, 1 Poisson, 2 relative Poisson), <code>gof_residual_std_normalised</code>, <code>gof_chi2_reduced_weighted</code> and <code>gof_poisson_gain</code>. There are no per-parameter error columns, only <code>gof_median_rel_stderr</code>. A failed fit has empty columns and <code>gof_success</code> = 0 (see Failed fits).</p>
 <h3>Fit health</h3>
+<h2>Weighting</h2>
+<p>XPS spectra are counts, and counting noise grows as √counts: ±100 at 10 000 counts but ±5 at 25. An unweighted fit treats a 50-count miss as equally bad everywhere, so the brightest points dominate. Poisson weighting divides every residual by its expected noise σ, as CasaXPS does by default (Cookbook p.119). Choose it at the top of the Peak Fitting step:</p>
+<table>
+  <tr><th>Weighting</th><th>What it does</th></tr>
+  <tr><td><b>Auto</b> (default)</td><td>Poisson for XPS pipelines, unweighted for other techniques.</td></tr>
+  <tr><td><b>Poisson</b></td><td>σ = √counts when the file holds raw integer counts (or counts/s with dwell time and scans). χ² then has an absolute meaning. When the “counts” are scaled, averaged or normalised (non-integer, typical of synchrotron data), it switches to relative Poisson.</td></tr>
+  <tr><td><b>Relative Poisson</b></td><td>σ² = g·y: Poisson-shaped weights with an unknown gain g, which the fit estimates (<code>gof_poisson_gain</code>). The relative weights are right, but the reduced χ² and the normalised residual STD are ≈ 1 by construction, so they are not an absolute quality test.</td></tr>
+  <tr><td><b>None</b></td><td>Unweighted least squares, as before.</td></tr>
+</table>
+<p>σ always comes from the <b>raw</b> counts of the file, before any static background is subtracted. Crop, x-axis calibration, static baseline subtraction, normalisation (σ rescaled exactly) and cosmic-ray removal keep it. Smoothing, resampling, derivatives, reference transforms and averaging change the statistics: after them the fit runs unweighted and says so. Counting statistics are known for multi-block XPS files (VAMAS, NeXus, SPECS Prodigy); single text files are fitted unweighted.</p>
+<p><b>Normalised residual STD</b> (<code>gof_residual_std_normalised</code>) is the spread of residual/σ. For raw counts it should be about 1: well above 1 means a systematic misfit (missing component, wrong line shape or background); well below 1 means overfitting or data that are not raw counts. Tick <span class="ui">Show normalised residual</span> in the Peak Fitting step (or <span class="ui">Normalised residual (/σ)</span> in Analyze → Plots → Fit diagnostics) to draw residual/σ, where a good fit stays within about ±2 everywhere.</p>
+<div class="warn">Weighting is on by default for all XPS fitting steps, including pipelines saved before it existed. Re-running an older XPS pipeline therefore gives slightly different parameters. Set <b>None</b> to reproduce an old unweighted fit exactly.</div>
+
 <h2>Failed fits</h2>
 <p>A fit that cannot run (invalid set-up, optimizer error, empty spectrum) is <b>recorded, not hidden</b>. The fitting step still passes the raw spectrum through, so later steps and plots keep working, but in an analysis run:</p>
 <ul>

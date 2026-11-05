@@ -18,7 +18,12 @@ from scipy.special import voigt_profile
 
 from sersflow.core.metrics.key_dedupe import dedupe_parallel
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
-from sersflow.core.preprocess.fit_diagnostics import GOF_METRIC_KEYS, FitDiagnostics, diagnostics_as_feature_dict
+from sersflow.core.preprocess.fit_diagnostics import (
+    GOF_METRIC_KEYS,
+    WEIGHTING_FROM_CODE,
+    FitDiagnostics,
+    diagnostics_as_feature_dict,
+)
 from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
 from sersflow.core.preprocess.fitting_specs import (
     AREA_EXPORT_COMPONENT_TYPES,
@@ -317,6 +322,10 @@ def diagnostics_from_feature_gof(gof: dict[str, float | None]) -> FitDiagnostics
         n_at_bound=f_opt("n_at_bound"),
         bg_gt_data_frac=f_opt("bg_gt_data_frac"),
         resid_mean_edge_lo=f_opt("resid_mean_edge_lo"),
+        weighting=WEIGHTING_FROM_CODE.get(f_opt("weighting") or 0.0, "none"),
+        residual_std_normalised=f_opt("residual_std_normalised"),
+        chi2_reduced_weighted=f_opt("chi2_reduced_weighted"),
+        poisson_gain=f_opt("poisson_gain"),
         resid_mean_edge_hi=f_opt("resid_mean_edge_hi"),
         resid_lag1_autocorr=f_opt("resid_lag1_autocorr"),
     )

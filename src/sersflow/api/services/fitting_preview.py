@@ -22,7 +22,12 @@ from sersflow.api.services.sessions_service import resolve_subset_indices
 from sersflow.core.metrics.fitting_features import p_opt_and_gof_from_features
 from sersflow.core.pipeline.engine import EngineConfig, fitting_region_applies, run_pipeline_parallel_no_cache
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
-from sersflow.core.preprocess.fitting import evaluate_fit_curves, expand_fit_curves_to_full, fit_problem_from_step_params
+from sersflow.core.preprocess.fitting import (
+    evaluate_fit_curves,
+    expand_fit_curves_to_full,
+    fit_problem_from_step_params,
+    normalised_residual_full,
+)
 from sersflow.core.preprocess.x_axis_calibration import calibration_method_needs_cohort
 from sersflow.infra.analysis_store import get_run as store_get_run
 from sersflow.infra.analysis_store import get_spectrum_features_for_ids
@@ -30,6 +35,12 @@ from sersflow.infra.datasets_store import get_dataset_internal
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
 
 logger = logging.getLogger(__name__)
+
+
+def _nan_list(a: np.ndarray | None) -> list[float | None] | None:
+    if a is None:
+        return None
+    return [float(v) if np.isfinite(v) else None for v in np.asarray(a, dtype=float)]
 
 _ANALYSIS_COHORT = SubsetStrategy(kind="all")
 
@@ -348,6 +359,9 @@ def fitting_preview_for_run(
                 "y": y_in.tolist(),
                 "y_hat": y_hat.tolist() if return_curve else None,
                 "residual": residual.tolist() if return_curve else None,
+                "residual_normalised": _nan_list(normalised_residual_full(xy, residual, res.diagnostics))
+                if return_curve
+                else None,
                 "components": comps_out,
                 "diagnostics": diagnostics_to_public(res.diagnostics),
             }

@@ -103,7 +103,15 @@ export type DerivedSpectrumInfo = {
   labels: Record<string, unknown>;
   ref: SpectrumRef;
 };
-export type SpectrumSeries = { spectrum_id: string; x: number[]; y: number[]; derived?: DerivedSpectrumInfo };
+export type SpectrumSeries = {
+  spectrum_id: string;
+  x: number[];
+  y: number[];
+  derived?: DerivedSpectrumInfo;
+  /** Counting variance of y carried through the pipeline (F1); absent when unavailable. */
+  var?: number[] | null;
+  var_kind?: "absolute" | "relative" | null;
+};
 export type MetricValue = { name: string; value: number | null; unit: string | null };
 export type SpectrumMetrics = { spectrum_id: string; metrics: MetricValue[] };
 
@@ -477,7 +485,14 @@ export function listFittingModels() {
 }
 
 export type FitTarget =
-  | { kind: "inline"; x: number[]; y: number[] }
+  | {
+      kind: "inline";
+      x: number[];
+      y: number[];
+      /** Counting variance of y (from /pipeline/run final `var`) — enables Poisson weighting. */
+      y_variance?: number[];
+      variance_kind?: "absolute" | "relative";
+    }
   | { kind: "spectrum_ref"; spectrum: SpectrumRef };
 
 export type FitComponentRequest = {
@@ -513,7 +528,11 @@ export type FitRequest = {
   fit_max_x?: number | null;
   /** Optional Area1:Area2:… ratios for amp Auto seeding. */
   initial_area_ratios?: string | null;
+  /** F1 weighting request; omitted = auto (Poisson for XPS when counts are known). */
+  weighting?: FittingWeighting;
 };
+
+export type FittingWeighting = "auto" | "poisson" | "poisson_relative" | "none";
 
 export type FitComponentResult = {
   component_id: string;
@@ -547,6 +566,12 @@ export type FitDiagnostics = {
   resid_mean_edge_lo?: number | null;
   resid_mean_edge_hi?: number | null;
   resid_lag1_autocorr?: number | null;
+  /** F1: weighting applied (poisson | poisson_relative | none) and why. */
+  weighting?: string | null;
+  weighting_note?: string | null;
+  residual_std_normalised?: number | null;
+  chi2_reduced_weighted?: number | null;
+  poisson_gain?: number | null;
 };
 
 export type FitResponse = {
@@ -554,6 +579,8 @@ export type FitResponse = {
   components: FitComponentResult[];
   y_hat: number[] | null;
   residual?: number[] | null;
+  /** (y − ŷ)/σ when the fit was weighted (F1). */
+  residual_normalised?: Array<number | null> | null;
   diagnostics?: FitDiagnostics | null;
 };
 

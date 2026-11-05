@@ -42,7 +42,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
             req = FitRequest.model_validate(request)
             resp = ctx.get_client().fitting.fit(req)
             data = resp.model_dump() if hasattr(resp, "model_dump") else dict(resp)
-            curve_keys = {"x", "y", "y_fit", "residual", "components", "curve"}
+            curve_keys = {"x", "y", "y_fit", "y_hat", "residual", "residual_normalised", "components", "curve"}
             compact = {
                 k: v
                 for k, v in (data.items() if isinstance(data, dict) else [])

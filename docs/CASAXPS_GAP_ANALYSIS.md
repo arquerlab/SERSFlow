@@ -1,6 +1,6 @@
 # CasaXPS → SpecFlow feature gap analysis
 
-Status: written 2026-11-05 against `main` @ `b845749`. **Implemented since:** K1, K2, K3, IO1 (see "Implementation notes" under each).
+Status: written 2026-11-05 against `main` @ `b845749`. **Implemented since:** K1, K2, K3, IO1, F1 (see "Implementation notes" under each).
 
 ## 0. How to use this document (for a planning / implementing agent)
 
@@ -216,6 +216,17 @@ Suggested order of work, in phases (each phase can ship on its own):
   - Add a normalised-residual view in the UI (`fitResidualPlot.ts`).
   - Static background subtraction before fitting changes the statistics. Document that weighting uses the raw counts, before any static background is removed.
   - Default to `poisson` for XPS when counts are known.
+- **Implementation notes (done 2026-11-05):** `XY.var` / `var_kind` carry the RAW counting variance from load
+  (multi-block XPS files: integer counts or cps×dwell×scans → absolute; scaled/normalised "counts" or unknown units →
+  relative, σ² = g·y) through crop, x-calibration, static baseline (raw counts kept), normalize (exact rescale) and
+  cosmic-ray removal; every other step drops it. Fitting-step `weighting` = auto (default, Poisson for XPS) | poisson |
+  poisson_relative | none, applied as lmfit `weights=1/σ`; default applies to stored steps too (user decision), fitting
+  `impl_version` 4→5. Diagnostics: `weighting`, `weighting_note`, `residual_std_normalised`, `chi2_reduced_weighted`,
+  `poisson_gain`; chi2/redchi/AIC/BIC use weighted residuals when weighted. REST: `/pipeline/run` final items return
+  `var`, `/fitting/fit` takes `y_variance`/`variance_kind`/`weighting` and returns `residual_normalised` (also the Analyze
+  fitting preview). UI: weighting selector + description at the top of the Peak Fitting step, applied weighting in every
+  fit plot title and preview status, normalised-residual toggle (Prepare and Analyze). Single-spectrum text formats have
+  no counting statistics (fitted unweighted). Tests: `tests/test_poisson_weighting.py`.
 - **Done when:**
   - On simulated Poisson data with a known model, the reduced χ² is about 1 and the normalised residual STD is about 1.
   - The UI can show the normalised residual.

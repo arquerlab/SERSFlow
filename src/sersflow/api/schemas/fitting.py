@@ -36,11 +36,16 @@ class FitInlineSeries(BaseModel):
     kind: Literal["inline"] = "inline"
     x: list[float] = Field(min_length=3)
     y: list[float] = Field(min_length=3)
+    y_variance: list[float] | None = None
+    """Counting variance of y (e.g. ``var`` from /pipeline/run final); enables Poisson weighting (F1)."""
+    variance_kind: Literal["absolute", "relative"] | None = None
 
     @model_validator(mode="after")
     def validate_lengths(self) -> "FitInlineSeries":
         if len(self.x) != len(self.y):
             raise ValueError("x and y length mismatch")
+        if self.y_variance is not None and len(self.y_variance) != len(self.y):
+            raise ValueError("y_variance and y length mismatch")
         return self
 
 
@@ -86,6 +91,8 @@ class FitRequest(BaseModel):
     """Optional internal fit window upper bound (inclusive)."""
     initial_area_ratios: str | None = None
     """Optional Area1:Area2:... string for chord-based amplitude auto-guess."""
+    weighting: Literal["auto", "poisson", "poisson_relative", "none"] | None = None
+    """F1: auto (default; Poisson for XPS when counting variance is known), poisson, poisson_relative, none."""
 
 
 class FitComponentResult(BaseModel):
@@ -124,6 +131,15 @@ class FitDiagnosticsPublic(BaseModel):
     """Mean residual (data - fit) over the outermost ~5% of the window at the low-/high-x end."""
     resid_lag1_autocorr: float | None = None
     """Lag-1 autocorrelation of the residual (0 = noise-like, near 1 = structured)."""
+    weighting: str | None = None
+    """Weighting applied: poisson | poisson_relative | none (F1)."""
+    weighting_note: str | None = None
+    residual_std_normalised: float | None = None
+    """STD of residual / sigma: ≈1 when the misfit is at counting-noise level (relative Poisson: ≈1 by construction)."""
+    chi2_reduced_weighted: float | None = None
+    """Weighted reduced chi2 (absolute Poisson only)."""
+    poisson_gain: float | None = None
+    """Relative Poisson: fitted gain g in var = g*y (data units per count); 1 for raw counts."""
 
 
 class FitResponse(BaseModel):
@@ -133,4 +149,6 @@ class FitResponse(BaseModel):
     """Total fitted curve (sum of components)."""
     residual: list[float] | None = None
     """y - y_hat when return_curve; not persisted."""
+    residual_normalised: list[float | None] | None = None
+    """(y - y_hat) / sigma when the fit was weighted (F1); null otherwise."""
     diagnostics: FitDiagnosticsPublic | None = None

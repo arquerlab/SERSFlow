@@ -6,7 +6,7 @@
  * never coerce with ``Number(x) || 0`` or fills drop to zero and wreck the plot.
  */
 
-import { isPeakComponentType, isXpsBgComponentType } from "./fittingUtils";
+import { isPeakComponentType, isXpsBgComponentType, weightingAppliedText } from "./fittingUtils";
 import type { FitDiagnostics } from "./api";
 
 export type FitPlotComponent = {
@@ -89,6 +89,10 @@ export type BuildFitResidualFigureArgs = {
   y: number[];
   yHat: Array<number | null>;
   residual: Array<number | null>;
+  /** (y − ŷ)/σ from a weighted fit (F1); used when residualView = "normalised". */
+  residualNormalised?: Array<number | null> | null;
+  /** "normalised" draws (y − ŷ)/σ (falls back to raw when the fit was unweighted). */
+  residualView?: "raw" | "normalised";
   components: FitPlotComponent[];
   diagnostics?: FitDiagnostics | null;
   title?: string;
@@ -105,6 +109,8 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
     y,
     yHat,
     residual,
+    residualNormalised,
+    residualView = "raw",
     components,
     diagnostics,
     title,
@@ -113,7 +119,8 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
   } = args;
   const n = x.length;
   const yHatGap = gapSeries(yHat, n);
-  const residualGap = gapSeries(residual, n);
+  const showNorm = residualView === "normalised" && Boolean(residualNormalised?.length === n);
+  const residualGap = gapSeries(showNorm ? residualNormalised : residual, n);
   const { bgSum, hasBg } = sumBackgroundY(components, n);
   const traces: Record<string, unknown>[] = [];
 
@@ -216,15 +223,17 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
     mode: "markers",
     x,
     y: residualGap,
-    name: "Residual",
+    name: showNorm ? "Residual / σ" : "Residual",
     marker: { color: "#2c3e50", size: 3, opacity: 0.7 },
     yaxis: "y2",
     showlegend: false,
   });
 
+  const applied = weightingAppliedText(diagnostics);
   const subtitle =
     diagnostics != null
-      ? `RMSE=${fmtDiag(diagnostics.rmse)}  R²=${fmtDiag(diagnostics.r2)}  BIC=${fmtDiag(diagnostics.bic)}`
+      ? `RMSE=${fmtDiag(diagnostics.rmse)}  R²=${fmtDiag(diagnostics.r2)}  BIC=${fmtDiag(diagnostics.bic)}` +
+        (applied ? `  · Weighting: ${applied}` : "")
       : undefined;
 
   // Layout: title (+ GoF) at top; residual below main panel; legend under residual
@@ -261,7 +270,7 @@ export function buildFitResidualFigure(args: BuildFitResidualFigureArgs): {
       anchor: "x",
     },
     yaxis2: {
-      title: { text: "Residual" },
+      title: { text: showNorm ? "Residual / σ" : "Residual" },
       domain: [0.12, 0.34],
       anchor: "x",
       zeroline: true,

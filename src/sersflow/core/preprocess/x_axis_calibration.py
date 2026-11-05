@@ -300,8 +300,8 @@ def apply_x_axis_calibration(xy: XY, params: dict[str, Any]) -> XY:
         raise ValueError("x_axis_calibration: x and y must have the same length")
     delta = calibration_delta(params)
     if delta == 0.0:
-        return XY(x=xy.x, y=xy.y)
-    return XY(x=x + delta, y=y.astype(float, copy=False))
+        return xy
+    return xy.keep_var(x + delta, y.astype(float, copy=False))
 
 
 @dataclass

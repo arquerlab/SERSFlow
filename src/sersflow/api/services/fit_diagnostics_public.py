@@ -29,6 +29,12 @@ _FIELDS = (
     "resid_mean_edge_lo",
     "resid_mean_edge_hi",
     "resid_lag1_autocorr",
+    # F1 weighting
+    "weighting",
+    "weighting_note",
+    "residual_std_normalised",
+    "chi2_reduced_weighted",
+    "poisson_gain",
 )
 
 

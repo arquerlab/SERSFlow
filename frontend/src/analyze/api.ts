@@ -228,6 +228,8 @@ export type FittingPreviewItem = {
   y: number[];
   y_hat?: number[] | null;
   residual?: number[] | null;
+  /** (y − ŷ)/σ when the fit was weighted (F1). */
+  residual_normalised?: Array<number | null> | null;
   components: Array<{
     component_id: string;
     component_type: string;

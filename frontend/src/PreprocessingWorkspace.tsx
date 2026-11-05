@@ -84,6 +84,9 @@ import {
   findParamLink,
   isAutoAmplitudeParam,
   migrateFittingParamsToEditor,
+  normalizeWeighting,
+  WEIGHTING_OPTIONS,
+  weightingRequestText,
   parseFittingComponentType,
   parseInitialAreaRatios,
   renameFittingComponent,
@@ -1986,6 +1989,39 @@ export default function PreprocessingWorkspace() {
                   );
                   return (
                     <>
+                      <div
+                        className="fit-weighting-header"
+                        data-testid="fit-weighting-header"
+                        style={{ display: "grid", gap: "4px", padding: "6px 8px", border: "1px solid var(--border)", borderRadius: 8 }}
+                      >
+                        <label className="inline" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                          <b>Weighting</b>
+                          <select
+                            value={normalizeWeighting(fp.weighting)}
+                            onChange={(e) => updateSelectedFittingParams({ ...fp, weighting: normalizeWeighting(e.target.value) })}
+                          >
+                            {WEIGHTING_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="hint" style={{ margin: 0 }}>
+                          {weightingRequestText(fp.weighting, effectiveTechniqueFamily)} The weighting actually applied to each
+                          spectrum is shown in its fit plot title.
+                        </div>
+                        <label className="inline" style={{ gap: 6 }}>
+                          <input
+                            type="checkbox"
+                            checked={fp.residual_view === "normalised"}
+                            onChange={(e) =>
+                              updateSelectedFittingParams({ ...fp, residual_view: e.target.checked ? "normalised" : "raw" })
+                            }
+                          />
+                          Show normalised residual ((data − fit)/σ) in the fit plots
+                        </label>
+                      </div>
                       {isXpsPipeline ? (
                         <div className="pipeline-fitting-xps-chrome" style={{ display: "grid", gap: "8px", position: "relative", zIndex: 5 }}>
                         <FittingRecipePicker

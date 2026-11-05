@@ -83,7 +83,7 @@ def test_preview_fitting_keys_gaussian_component() -> None:
     assert "fit_gof_rmse" in keys
     assert "fit_gof_bic" in keys
     assert "fit_gof_median_rel_stderr" in keys
-    assert keys[-1] == "fit_gof_resid_lag1_autocorr"
+    assert keys[-1] == "fit_gof_poisson_gain"  # F1 weighting columns are appended last
     for k in (
         "fit_gof_n_at_bound",
         "fit_gof_bg_gt_data_frac",

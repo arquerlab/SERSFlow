@@ -95,7 +95,7 @@ def apply_fit_window_xy(xy: XY, params: dict[str, Any]) -> tuple[XY, np.ndarray]
     mask = fit_window_mask(xy.x, params)
     if bool(np.all(mask)):
         return xy, mask
-    return XY(x=xy.x[mask], y=xy.y[mask]), mask
+    return xy.keep_var(xy.x[mask], xy.y[mask], mask=mask), mask
 
 
 def expand_fit_curves_to_full(
@@ -251,6 +251,12 @@ class FitProblem:
     param_links: list[dict[str, Any]] | None = None
     xps_region: str | None = None
     initial_area_ratios: str | None = None
+    sigma: np.ndarray | None = None
+    """Per-point standard deviation used as lmfit weights 1/sigma (F1); None = unweighted."""
+    weighting: str = "none"
+    """Weighting actually applied: ``poisson`` | ``poisson_relative`` | ``none``."""
+    weighting_note: str | None = None
+    """Why that weighting was applied (e.g. requested mode, or why Poisson was not possible)."""
     """
     default: use client p0; amp ≤ 0 on peaks is auto-estimated (chord height at center).
     auto (legacy): force auto amplitude for every peak component.
@@ -408,6 +414,61 @@ def _apply_auto_peak_amplitudes(
 _apply_auto_gaussian_amplitudes = _apply_auto_peak_amplitudes
 
 
+WEIGHTING_MODES = ("auto", "poisson", "poisson_relative", "none")
+
+
+def normalised_residual_full(xy: XY, residual: np.ndarray, diagnostics: Any) -> np.ndarray | None:
+    """Full-length residual / sigma for plots (F1); None when the fit was unweighted."""
+    from sersflow.core.preprocess.fit_diagnostics import normalised_residual
+
+    var = getattr(xy, "var", None)
+    if var is None or np.shape(var) != np.shape(residual):
+        return None
+    v = np.asarray(var, dtype=float)
+    pos = v[np.isfinite(v) & (v > 0)]
+    v = np.where(np.isfinite(v) & (v > 0), v, float(np.min(pos)) if pos.size else 1.0)
+    return normalised_residual(np.asarray(residual, dtype=float), np.sqrt(v), diagnostics)
+
+
+def resolve_weighting(xy: XY, params: dict[str, Any], technique_family: str) -> tuple[np.ndarray | None, str, str]:
+    """
+    Turn the step's ``weighting`` request into (sigma, applied_mode, note) for the (windowed) ``xy`` (F1).
+
+    Modes: ``auto`` (default; Poisson for XPS, unweighted otherwise), ``poisson`` (Poisson whenever the
+    spectrum carries counting variance), ``poisson_relative`` (sigma^2 = g*y even for raw counts),
+    ``none``. ``poisson`` is absolute when the raw data are integer counts (or cps with dwell and
+    scans) and relative (unknown gain) when the counts are scaled, averaged or normalised.
+    """
+    raw = str(params.get("weighting") or "auto").strip().lower()
+    mode = raw if raw in WEIGHTING_MODES else "auto"
+    tech = str(technique_family or "vibrational").strip().lower()
+    if mode == "none":
+        return None, "none", "weighting = none (unweighted least squares)"
+    if mode == "auto" and tech != "xps":
+        return None, "none", f"auto: Poisson weighting applies to XPS only ({tech} fitted unweighted)"
+    if tech not in ("xps", "xas"):
+        return None, "none", "Poisson weighting needs the lmfit engine (XPS/XAS pipelines)"
+    var = getattr(xy, "var", None)
+    if var is None or np.shape(var) != np.shape(xy.y):
+        return None, "none", (
+            "no counting statistics for this spectrum (not a multi-block XPS file, or an earlier step "
+            "such as smoothing, resampling or averaging changed the statistics): fitted unweighted"
+        )
+    v = np.asarray(var, dtype=float)
+    pos = v[np.isfinite(v) & (v > 0)]
+    floor = float(np.min(pos)) if pos.size else 1.0
+    v = np.where(np.isfinite(v) & (v > 0), v, floor)
+    sigma = np.sqrt(v)
+    kind = getattr(xy, "var_kind", None) or "relative"
+    if mode == "poisson_relative" or kind != "absolute":
+        why = (
+            "requested" if mode == "poisson_relative"
+            else "counts are scaled/normalised (non-integer) or units unknown"
+        )
+        return sigma, "poisson_relative", f"relative Poisson, sigma^2 = g*y with gain g fitted ({why})"
+    return sigma, "poisson", "Poisson, sigma = sqrt(raw counts) (absolute)"
+
+
 def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem | None:
     """
     Build a FitProblem from pipeline fitting step params (same contract as the fitting transform).
@@ -480,6 +541,7 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
                 f"Invalid technique_family {tech_raw!r}; expected 'vibrational', 'xps' or 'xas'"
             )
 
+    sigma, w_applied, w_note = resolve_weighting(xy_fit, params, tech)
     return FitProblem(
         x=xy_fit.x.astype(float, copy=False),
         y=xy_fit.y.astype(float, copy=False),
@@ -493,6 +555,9 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
         param_links=param_links,
         xps_region=xps_region,
         initial_area_ratios=initial_area_ratios,
+        sigma=sigma,
+        weighting=w_applied,
+        weighting_note=w_note,
     )
 
 

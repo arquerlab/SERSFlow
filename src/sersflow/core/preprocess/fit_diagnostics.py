@@ -32,6 +32,55 @@ class FitDiagnostics:
     resid_mean_edge_lo: float | None = None
     resid_mean_edge_hi: float | None = None
     resid_lag1_autocorr: float | None = None
+    # F1 weighting: applied mode, normalised residual STD (≈1 for a fit at counting-noise level),
+    # weighted reduced chi2 (absolute Poisson only) and fitted gain g (relative Poisson: var = g*y).
+    weighting: str = "none"
+    weighting_note: str | None = None
+    residual_std_normalised: float | None = None
+    chi2_reduced_weighted: float | None = None
+    poisson_gain: float | None = None
+
+
+WEIGHTING_CODES = {"none": 0.0, "poisson": 1.0, "poisson_relative": 2.0}
+WEIGHTING_FROM_CODE = {v: k for k, v in WEIGHTING_CODES.items()}
+
+
+def weighted_stats(
+    resid: np.ndarray, sigma: np.ndarray | None, *, weighting: str, n_vary: int
+) -> dict[str, float | None]:
+    """chi2_w, redchi_w, normalised residual STD and gain for a weighted fit (F1)."""
+    if sigma is None or weighting == "none":
+        return {"chi2_w": None, "redchi_w": None, "residual_std_normalised": None,
+                "chi2_reduced_weighted": None, "poisson_gain": None}
+    r = np.asarray(resid, dtype=float)
+    s = np.asarray(sigma, dtype=float)
+    ok = np.isfinite(r) & np.isfinite(s) & (s > 0)
+    n = int(np.count_nonzero(ok))
+    if n == 0:
+        return {"chi2_w": None, "redchi_w": None, "residual_std_normalised": None,
+                "chi2_reduced_weighted": None, "poisson_gain": None}
+    z = r[ok] / s[ok]
+    chi2_w = float(np.dot(z, z))
+    redchi_w = chi2_w / max(n - max(0, int(n_vary)), 1)
+    if weighting == "poisson_relative":
+        # var = g * y: the gain g is the weighted reduced chi2; normalise by sqrt(g).
+        gain = redchi_w
+        zn = z / math.sqrt(gain) if gain > 0 else z
+        return {"chi2_w": chi2_w, "redchi_w": redchi_w, "residual_std_normalised": float(np.std(zn)),
+                "chi2_reduced_weighted": None, "poisson_gain": gain}
+    return {"chi2_w": chi2_w, "redchi_w": redchi_w, "residual_std_normalised": float(np.std(z)),
+            "chi2_reduced_weighted": redchi_w, "poisson_gain": 1.0}
+
+
+def normalised_residual(resid: np.ndarray, sigma: np.ndarray | None, diag: "FitDiagnostics | None") -> np.ndarray | None:
+    """residual / sigma (relative Poisson: / sqrt(g * y)); None when the fit was unweighted."""
+    if sigma is None or diag is None or getattr(diag, "weighting", "none") == "none":
+        return None
+    s = np.asarray(sigma, dtype=float)
+    if diag.weighting == "poisson_relative" and diag.poisson_gain and diag.poisson_gain > 0:
+        s = s * math.sqrt(float(diag.poisson_gain))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(np.isfinite(s) & (s > 0), np.asarray(resid, dtype=float) / s, np.nan)
 
 
 def _finite_or_nan(v: float) -> float:
@@ -130,11 +179,16 @@ def compute_fit_diagnostics(
     x: np.ndarray | None = None,
     bg_curve: np.ndarray | None = None,
     n_at_bound: int | None = None,
+    sigma: np.ndarray | None = None,
+    weighting: str = "none",
+    weighting_note: str | None = None,
 ) -> FitDiagnostics:
     """
     Compute GoF scalars from observed y and model y_hat.
 
-    Uses a unit-variance Gaussian residual model for AIC/BIC/AICc (k_ic = n_vary + 1).
+    Unweighted: unit-variance Gaussian residual model for chi2/AIC/BIC/AICc (k_ic = n_vary + 1).
+    Weighted (F1): chi2 / redchi are the weighted sums sum(r/sigma)^2, and AIC/BIC/AICc use them.
+    rmse, r2 and the residual summaries stay in data units.
     """
     yf = np.asarray(y, dtype=float).ravel()
     yh = np.asarray(y_hat, dtype=float).ravel()
@@ -177,14 +231,16 @@ def compute_fit_diagnostics(
     else:
         r2_adj = float("nan")
 
-    chi2 = ssr
+    ws = weighted_stats(resid, sigma, weighting=weighting, n_vary=k)
+    ssr_ic = ws["chi2_w"] if ws["chi2_w"] is not None else ssr
+    chi2 = ssr_ic
     dof = max(n - k, 1)
-    redchi = ssr / dof
+    redchi = ssr_ic / dof
 
     k_ic = k + 1
-    if ssr > 0 and math.isfinite(ssr):
-        aic = n * math.log(ssr / n) + 2.0 * k_ic
-        bic = n * math.log(ssr / n) + k_ic * math.log(n)
+    if ssr_ic > 0 and math.isfinite(ssr_ic):
+        aic = n * math.log(ssr_ic / n) + 2.0 * k_ic
+        bic = n * math.log(ssr_ic / n) + k_ic * math.log(n)
         if n > k_ic + 1:
             aicc = aic + (2.0 * k_ic * (k_ic + 1)) / (n - k_ic - 1)
         else:
@@ -215,6 +271,11 @@ def compute_fit_diagnostics(
         nfev=float(nfev) if nfev is not None and math.isfinite(float(nfev)) else None,
         median_rel_stderr=median_rel_stderr(p_opt, p_cov),
         n_at_bound=float(n_at_bound) if n_at_bound is not None else None,
+        weighting=weighting if ws["chi2_w"] is not None else "none",
+        weighting_note=weighting_note,
+        residual_std_normalised=ws["residual_std_normalised"],
+        chi2_reduced_weighted=ws["chi2_reduced_weighted"],
+        poisson_gain=ws["poisson_gain"],
         **health,
     )
 
@@ -241,6 +302,11 @@ GOF_METRIC_KEYS: tuple[str, ...] = (
     "resid_mean_edge_lo",
     "resid_mean_edge_hi",
     "resid_lag1_autocorr",
+    # F1 weighting (appended): 0 none, 1 Poisson, 2 relative Poisson
+    "weighting",
+    "residual_std_normalised",
+    "chi2_reduced_weighted",
+    "poisson_gain",
 )
 
 
@@ -267,6 +333,10 @@ def diagnostics_as_feature_dict(diag: FitDiagnostics) -> dict[str, float | None]
         "resid_mean_edge_lo": diag.resid_mean_edge_lo,
         "resid_mean_edge_hi": diag.resid_mean_edge_hi,
         "resid_lag1_autocorr": diag.resid_lag1_autocorr,
+        "weighting": WEIGHTING_CODES.get(diag.weighting, 0.0),
+        "residual_std_normalised": diag.residual_std_normalised,
+        "chi2_reduced_weighted": diag.chi2_reduced_weighted,
+        "poisson_gain": diag.poisson_gain,
     }
     for k, v in list(out.items()):
         if v is not None and isinstance(v, float) and not math.isfinite(v):
