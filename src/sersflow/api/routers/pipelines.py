@@ -18,7 +18,12 @@ from sersflow.api.schemas.pipelines import (
     PipelineUpdateRequest,
     PipelineUpdateResponse,
 )
-from sersflow.api.services.pipeline_export import export_pipeline_package, import_pipeline_package
+from sersflow.api.services.pipeline_export import (
+    export_pipeline_package,
+    import_pipeline_package,
+    pipeline_for_schema,
+)
+from sersflow.core.pipeline.lineshape_migration import SUPPORTED_PIPELINE_SCHEMAS
 from sersflow.infra.pipelines_store import (
     create_pipeline,
     delete_pipeline,
@@ -115,12 +120,13 @@ def export_pipeline_endpoint(pipeline_id: str, request: Request) -> Response:
 @router.post("/import", response_model=PipelineImportResponse)
 def import_pipeline_endpoint(payload: PipelineImportRequest, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
-    if payload.schema_version != "sersflow.pipeline.v1":
+    if payload.schema_version not in SUPPORTED_PIPELINE_SCHEMAS:
         raise HTTPException(status_code=400, detail=f"Unsupported pipeline package schema: {payload.schema_version}")
+    pipeline, _n_renamed = pipeline_for_schema(payload.pipeline, payload.schema_version)
     try:
         rec = import_pipeline_package(
             name=payload.name,
-            pipeline=payload.pipeline,
+            pipeline=pipeline,
             owner_user_id=user_id,
             technique_family=payload.technique_family,
         )

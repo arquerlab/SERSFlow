@@ -103,7 +103,20 @@ def session_summary(session: Any) -> dict[str, Any]:
     }
 
 
-def analysis_run_summary(run: Any) -> dict[str, Any]:
+def run_fit_warning_fields(d: dict[str, Any], *, compact: bool = False) -> dict[str, Any]:
+    """Run-level warnings + fit_failures (K2); compact drops the per-spectrum item list."""
+    out: dict[str, Any] = {}
+    if d.get("warnings"):
+        out["warnings"] = list(d["warnings"])
+    ff = d.get("fit_failures")
+    if isinstance(ff, dict) and (ff.get("n_failed") or ff.get("n_not_converged")):
+        out["fit_failures"] = (
+            {k: v for k, v in ff.items() if k not in ("items", "truncated")} if compact else ff
+        )
+    return out
+
+
+def analysis_run_summary(run: Any, *, compact: bool = False) -> dict[str, Any]:
     d = _dump(run)
     if "run" in d and isinstance(d["run"], dict):
         d = d["run"]
@@ -125,6 +138,7 @@ def analysis_run_summary(run: Any) -> dict[str, Any]:
         "label": d.get("label"),
         "created_at": d.get("created_at"),
         "finished_at": d.get("finished_at"),
+        **run_fit_warning_fields(d, compact=compact),
     }
 
 

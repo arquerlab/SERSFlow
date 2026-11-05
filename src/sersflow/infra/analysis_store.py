@@ -47,6 +47,8 @@ class AnalysisRunRecord:
     params_json: str | None
     feature_columns_json: str | None
     client_job_key: str | None
+    warnings_json: str | None = None
+    """Run-level warnings + fit_failures summary (K2), JSON object or None."""
 
 
 def ensure_schema() -> None:
@@ -129,6 +131,10 @@ def ensure_schema() -> None:
             pass
         try:
             con.execute("ALTER TABLE fit_curve_jobs ADD COLUMN params_json TEXT NULL")
+        except Exception:
+            pass
+        try:
+            con.execute("ALTER TABLE analysis_runs ADD COLUMN warnings_json TEXT NULL")
         except Exception:
             pass
 
@@ -227,7 +233,16 @@ def _row_to_run(row: Any) -> AnalysisRunRecord:
         params_json=row["params_json"],
         feature_columns_json=row["feature_columns_json"],
         client_job_key=row["client_job_key"],
+        warnings_json=row["warnings_json"] if "warnings_json" in row.keys() else None,
     )
+
+
+def set_run_warnings(*, run_id: str, warnings: dict[str, Any] | None) -> None:
+    """Store the run-level warnings object (``{"warnings": [...], "fit_failures": {...}}``)."""
+    ensure_schema()
+    payload = _compact_json(warnings) if warnings else None
+    with connect() as con:
+        con.execute("UPDATE analysis_runs SET warnings_json = ? WHERE run_id = ?", (payload, run_id))
 
 
 def delete_run(*, run_id: str) -> bool:

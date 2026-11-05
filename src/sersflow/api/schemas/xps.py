@@ -99,10 +99,32 @@ class FittingParamLinkPublic(BaseModel):
     """Only for mode=area_ratio: dependent AREA = ratio x driver AREA (amp links only)."""
 
 
+class FwhmColumnFallback(BaseModel):
+    peak: str
+    requested_column: str
+    used_column: str | None = None
+    """None = no FWHM column at all; width seeded with 1.0 eV."""
+
+
+class PassEnergyResolution(BaseModel):
+    """How the recipe pass-energy column was chosen (K3)."""
+
+    recipe_id: str | None = None
+    requested: int | None = None
+    acquisition: int | None = None
+    used: int
+    source: Literal["request", "acquisition", "acquisition_closest", "default"]
+    available: list[int] = Field(default_factory=list)
+    fallback: bool = False
+    """True when the dataset/requested PE column was not used for every peak."""
+    fwhm_fallbacks: list[FwhmColumnFallback] = Field(default_factory=list)
+
+
 class FittingRecipeApplyResponse(BaseModel):
     recipe_id: str
     # Null for recipes without pass-energy tables (e.g. Fermi edge).
     recipe_pass_energy: int | None = None
+    pass_energy_resolution: PassEnergyResolution | None = None
     xps_region: str = ""
     components: list[FittingComponentPublic] = Field(default_factory=list)
     p0: list[float] = Field(default_factory=list)

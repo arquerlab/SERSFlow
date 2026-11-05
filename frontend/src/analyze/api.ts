@@ -37,6 +37,26 @@ export type AnalysisRunSummary = {
   label: string | null;
   pinned: boolean;
   feature_columns: string[] | null;
+  /** Run-level warnings (e.g. failed fits). Absent on older runs. */
+  warnings?: string[];
+  fit_failures?: FitFailureSummary | null;
+};
+
+export type FitFailureSummary = {
+  n_fits: number;
+  n_ok: number;
+  n_failed: number;
+  n_not_converged: number;
+  n_not_applicable: number;
+  items: Array<{
+    spectrum_id: string;
+    step_index?: number | null;
+    step_id?: string | null;
+    xps_region?: string | null;
+    status: "failed" | "not_converged";
+    reason?: string | null;
+  }>;
+  truncated: boolean;
 };
 
 export type AnalysisRunCreateBody = {

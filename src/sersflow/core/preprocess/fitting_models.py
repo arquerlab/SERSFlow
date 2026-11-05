@@ -12,9 +12,12 @@ energy convention differs.
 
 from __future__ import annotations
 
+import math
+from functools import lru_cache
+
 import numpy as np
 from scipy.signal import fftconvolve
-from scipy.special import voigt_profile
+from scipy.special import erfcx, voigt_profile
 
 _LN2 = np.log(2.0)
 _GAUSS_FWHM_TO_SIGMA = 1.0 / (2.0 * np.sqrt(2.0 * _LN2))
@@ -48,19 +51,147 @@ def pseudo_voigt(x, *params):
     return eta * lor + (1.0 - eta) * g
 
 
-def gl(x, *params):
+def sgl(x, *params):
     """
-    CasaXPS-style Gaussian–Lorentzian sum GL(m).
+    CasaXPS SGL(m): Gaussian–Lorentzian SUM form (CasaXPS Cookbook 2026 p.67).
 
-    GL(x) = (m/100) * L(x) + (1 - m/100) * G(x)
-    with shared center and FWHM. m is percent Lorentzian in [0, 100]
-    (e.g. GL(30) means m = 30).
+    SGL(x) = (m/100) * L(x) + (1 - m/100) * G(x)
+    with shared center and FWHM; m is percent Lorentzian in [0, 100].
+    This was SpecFlow's ``gl`` before the K1 change (pipeline schema v2); stored
+    pipelines were migrated from ``gl`` to ``sgl`` so their results are unchanged.
     """
     pos = params[0]
     amp = params[1]
     fwhm = params[2]
     m = params[3]
     return pseudo_voigt(x, pos, amp, fwhm, float(m) / 100.0)
+
+
+def _gl_p(m: float) -> float:
+    """Lorentzian fraction p = m/100 clipped to [0, 1]."""
+    return min(max(float(m), 0.0), 100.0) / 100.0
+
+
+@lru_cache(maxsize=4096)
+def _gl_product_fwhm_scale_cached(p: float) -> float:
+    # Half maximum of exp(-ln2 (1-p) t) / (1 + p t) with t = 4 u^2, u = x / F:
+    #   f(t) = ln2 - ln2 (1-p) t - ln(1 + p t) = 0,  f(0) = ln2 > 0,  f(1) = p ln2 - ln(1+p) <= 0.
+    # f is strictly decreasing on [0, 1]; FWHM / F = sqrt(t*).
+    if p <= 0.0 or p >= 1.0:
+        return 1.0
+    lo, hi = 0.0, 1.0
+    for _ in range(80):
+        mid = 0.5 * (lo + hi)
+        f = math.log(2.0) - math.log(2.0) * (1.0 - p) * mid - math.log1p(p * mid)
+        if f > 0.0:
+            lo = mid
+        else:
+            hi = mid
+    return math.sqrt(0.5 * (lo + hi))
+
+
+def gl_product_fwhm_scale(m: float) -> float:
+    """
+    True FWHM of the CasaXPS product GL(m) in units of its width parameter F.
+
+    1.0 at m = 0 and m = 100, slightly below 1 in between.
+    """
+    return _gl_product_fwhm_scale_cached(round(_gl_p(m), 12))
+
+
+@lru_cache(maxsize=4096)
+def _gl_product_area_k_cached(p: float) -> float:
+    s = _gl_product_fwhm_scale_cached(p)
+    if p <= 0.0:
+        integral_f1 = math.sqrt(math.pi / (4.0 * math.log(2.0)))  # Gaussian, F = 1
+    elif p >= 1.0:
+        integral_f1 = math.pi / 2.0  # Lorentzian, F = 1
+    else:
+        # ∫ exp(-a u²) / (1 + b u²) du = (π / √b) · erfcx(√(a/b)),  a = 4 ln2 (1-p), b = 4p.
+        a = 4.0 * math.log(2.0) * (1.0 - p)
+        b = 4.0 * p
+        integral_f1 = math.pi / math.sqrt(b) * float(erfcx(math.sqrt(a / b)))
+    return integral_f1 / s
+
+
+def gl_product_area_k(m: float) -> float:
+    """Area / (height · true FWHM) of the CasaXPS product GL(m) (closed form via erfcx)."""
+    return _gl_product_area_k_cached(round(_gl_p(m), 12))
+
+
+def _unit_height_gl_product(dx: np.ndarray, fwhm: float, m: float) -> np.ndarray:
+    """Unit-height CasaXPS product GL(m) whose TRUE full width at half maximum is ``fwhm``."""
+    p = _gl_p(m)
+    f_param = max(float(fwhm), 1e-12) / gl_product_fwhm_scale(m)
+    u2 = np.power(np.asarray(dx, dtype=float) / f_param, 2)
+    return np.exp(-4.0 * _LN2 * (1.0 - p) * u2) / (1.0 + 4.0 * p * u2)
+
+
+def gl(x, *params):
+    """
+    CasaXPS GL(m): Gaussian–Lorentzian PRODUCT form (CasaXPS Cookbook 2026 p.67).
+
+        GL(x, m) = exp(-(1 - m/100) 4 ln2 u²) / (1 + 4 (m/100) u²),   u = (x - pos) / F
+
+    m is percent Lorentzian in [0, 100] (GL(30): m = 30). ``fwhm`` is the TRUE full width at half
+    maximum (as Biesinger and the CasaXPS component table report it); F is derived from it, so
+    F = fwhm / gl_product_fwhm_scale(m). ``amp`` is the peak height.
+    """
+    pos = float(params[0])
+    amp = float(params[1])
+    fwhm = float(params[2])
+    m = float(params[3])
+    return amp * _unit_height_gl_product(_as_1d(x) - pos, fwhm, m)
+
+
+def gl_gauss(x, *params):
+    """
+    CasaXPS GL(m, n) = GL(x, m) ⊗ G(n): product GL convolved with a Gaussian (Cookbook p.67).
+
+    Params: pos, amp, fwhm, m, fwhm_g. ``fwhm`` is the true FWHM of the GL(m) core (before
+    convolution); ``fwhm_g`` is the FWHM of the convolving Gaussian in energy units (0 = plain
+    GL(m)), the same convention as LA/LF. ``amp`` is the height of the convolved profile at pos.
+    """
+    pos = float(params[0])
+    amp = float(params[1])
+    fwhm = max(float(params[2]), 1e-12)
+    m = float(params[3])
+    fwhm_g = max(float(params[4]) if len(params) > 4 else 0.0, 0.0)
+    xf = _as_1d(x)
+    if fwhm_g <= 0:
+        return amp * _unit_height_gl_product(xf - pos, fwhm, m)
+    return amp * _unit_height_gl_gauss(xf - pos, fwhm, m, fwhm_g)
+
+
+def _unit_height_gl_gauss(dx: np.ndarray, fwhm: float, m: float, fwhm_g: float) -> np.ndarray:
+    """
+    Unit-height GL(m) ⊗ G(fwhm_g) evaluated on a local grid centred on the peak.
+
+    The grid step follows the narrowest width (not the spectrum's x range), so the shape is the same
+    whatever x range the caller asks for. Far outside the grid the convolution is negligible and the
+    GL(m) core (rescaled to the same height normalisation) is used.
+    """
+    sigma = fwhm_g * _GAUSS_FWHM_TO_SIGMA
+    half = max(30.0 * fwhm, 10.0 * fwhm_g)
+    step = min(fwhm, fwhm_g) / 40.0
+    n_half = int(min(max(half / step, 256), 1 << 15))
+    step = half / n_half
+    grid = np.arange(-n_half, n_half + 1, dtype=float) * step
+    core = _unit_height_gl_product(grid, fwhm, m)
+    k = np.arange(-int(np.ceil(6 * sigma / step)), int(np.ceil(6 * sigma / step)) + 1, dtype=float) * step
+    kern = np.exp(-0.5 * (k / sigma) ** 2)
+    kern /= kern.sum()
+    conv = fftconvolve(core, kern, mode="same")
+    peak = float(conv[n_half])
+    if not np.isfinite(peak) or peak <= 0:
+        return np.zeros_like(np.asarray(dx, dtype=float))
+    dxf = np.asarray(dx, dtype=float)
+    out = _unit_height_gl_product(dxf, fwhm, m)  # outside the grid: unconvolved core
+    inside = np.abs(dxf) <= half
+    if np.any(inside):
+        out = out.copy()
+        out[inside] = np.interp(dxf[inside], grid, conv)
+    return out / peak
 
 
 def voigt(x, *params):
@@ -396,17 +527,32 @@ def apv(x, *params):
 
 def a_gl(x, *params):
     """
-    CasaXPS-style asymmetric GL: A(a, n, m_asym)GL(m).
+    CasaXPS-style asymmetric GL: A(a, n, m_asym)GL(m) on the PRODUCT GL(m) base (K1).
+
+    Same parameters and asymmetry approximation as :func:`a_sgl`; only the base line shape is the
+    CasaXPS product GL(m) (true FWHM) instead of the sum form.
+    """
+    return _a_gl_impl(x, params, _unit_height_gl_product)
+
+
+def a_sgl(x, *params):
+    """
+    Legacy asymmetric GL on the SUM base: A(a, n, m_asym)SGL(m).
 
     Params: pos, amp, fwhm, m, a, n, m_asym
 
-    Approximate model used for Biesinger/CasaXPS legacy metal packs:
-    - Base shape is GL(m) (percent Lorentzian).
+    Approximate model used for Biesinger/CasaXPS legacy metal packs (SpecFlow ``a_gl`` before K1):
+    - Base shape is SGL(m) (percent Lorentzian, sum form).
     - High-BE side (``x >= pos``) uses a stretched FWHM ``fwhm*(1+a)``.
     - Low-BE side uses mild stretch from ``n``: ``fwhm*(1+0.5*n)``.
     - Optional Gaussian convolution width from CasaXPS ``m_asym`` via
       ``fwhm_g = fwhm * m_asym/100`` (same mapping as LA ``m``).
     """
+    return _a_gl_impl(x, params, lambda dx, fwhm, m: _unit_height_pseudo_voigt(dx, fwhm, _gl_p(m)))
+
+
+def _a_gl_impl(x, params, unit_fn) -> np.ndarray:
+    """Shared A(a, n, m_asym) asymmetry on a unit-height base ``unit_fn(dx, fwhm, m)``."""
     pos = float(params[0])
     amp = float(params[1])
     fwhm = max(float(params[2]), 1e-12)
@@ -414,16 +560,15 @@ def a_gl(x, *params):
     a = max(float(params[4]), 0.0)
     n = max(float(params[5]), 0.0)
     m_asym = max(float(params[6]) if len(params) > 6 else 0.0, 0.0)
-    eta = max(0.0, min(100.0, m)) / 100.0
     fwhm_low = fwhm * (1.0 + 0.5 * n)
     fwhm_high = fwhm * (1.0 + a)
     xf = _as_1d(x)
     high = xf >= pos
     out = np.empty_like(xf)
     if np.any(~high):
-        out[~high] = _unit_height_pseudo_voigt(xf[~high] - pos, fwhm_low, eta)
+        out[~high] = unit_fn(xf[~high] - pos, fwhm_low, m)
     if np.any(high):
-        out[high] = _unit_height_pseudo_voigt(xf[high] - pos, fwhm_high, eta)
+        out[high] = unit_fn(xf[high] - pos, fwhm_high, m)
     fwhm_g = fwhm * (m_asym / 100.0)
     sigma = max(fwhm_g, 0.0) * _GAUSS_FWHM_TO_SIGMA
     if sigma > 0:
@@ -433,9 +578,9 @@ def a_gl(x, *params):
             hh = xu >= pos
             yy = np.empty_like(xu)
             if np.any(~hh):
-                yy[~hh] = _unit_height_pseudo_voigt(xu[~hh] - pos, fwhm_low, eta)
+                yy[~hh] = unit_fn(xu[~hh] - pos, fwhm_low, m)
             if np.any(hh):
-                yy[hh] = _unit_height_pseudo_voigt(xu[hh] - pos, fwhm_high, eta)
+                yy[hh] = unit_fn(xu[hh] - pos, fwhm_high, m)
             return yy
 
         out = _eval_convolved_on_x(xf, y_on_grid, sigma=sigma, pad_widths=pad, n_points=2048)

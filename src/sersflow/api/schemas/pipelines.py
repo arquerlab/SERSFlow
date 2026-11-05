@@ -74,7 +74,7 @@ class PipelineUpdateResponse(BaseModel):
 
 
 class PipelineExportPackage(BaseModel):
-    schema_version: str = "sersflow.pipeline.v1"
+    schema_version: str = "sersflow.pipeline.v2"
     created_by: str = "SpecFlow"
     exported_at: str
     name: str
@@ -84,7 +84,8 @@ class PipelineExportPackage(BaseModel):
 
 
 class PipelineImportRequest(BaseModel):
-    schema_version: str = "sersflow.pipeline.v1"
+    # v1 packages are upgraded on import (gl sum -> sgl); omit or send v2 for current semantics.
+    schema_version: str = "sersflow.pipeline.v2"
     name: str | None = Field(default=None, max_length=200)
     pipeline: Pipeline
     technique_family: TechniqueFamily | None = None

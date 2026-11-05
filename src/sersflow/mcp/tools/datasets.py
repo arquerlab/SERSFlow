@@ -129,6 +129,27 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
         return await tool_call(ctx, _run)
 
+    @mcp.tool(name="get_datasets_spectrum_acquisition")
+    async def get_datasets_spectrum_acquisition(
+        dataset_id: str, spectrum_id: str, include_arrays: bool = False
+    ) -> str:
+        """
+        GET /datasets/{dataset_id}/spectra/{spectrum_id}/acquisition — VAMAS ordinate statistics.
+
+        y_unit (counts | cps | unknown), dwell_time_s, n_scans, counts_scale (counts per channel =
+        y * counts_scale; null when y is not count-based, e.g. normalised synchrotron data) and the
+        auxiliary corresponding variables (aux_arrays, e.g. "transmission"). include_arrays=true adds
+        the x axis and the auxiliary arrays themselves.
+        """
+
+        def _run() -> dict[str, Any]:
+            data = ctx.get_client().datasets.spectrum_acquisition(
+                dataset_id, spectrum_id, include_arrays=include_arrays
+            )
+            return {"ok": True, **data}
+
+        return await tool_call(ctx, _run)
+
     @mcp.tool(name="get_datasets_filter_fields")
     async def get_datasets_filter_fields(dataset_id: str) -> str:
         """GET /datasets/{dataset_id}/filter-fields."""

@@ -309,12 +309,12 @@ def test_fit_single_pseudo_voigt_smoke() -> None:
     assert 0.0 <= float(res.p_opt[3]) <= 1.0
 
 
-def test_gl_matches_pseudo_voigt_at_equivalent_mix() -> None:
-    from sersflow.core.preprocess.fitting_models import gl, pseudo_voigt
+def test_sgl_matches_pseudo_voigt_at_equivalent_mix() -> None:
+    from sersflow.core.preprocess.fitting_models import pseudo_voigt, sgl
 
     x = np.linspace(400.0, 600.0, 500)
-    # CasaXPS GL(30) <=> eta = 0.30
-    y_gl = gl(x, 500.0, 100.0, 20.0, 30.0)
+    # CasaXPS SGL(30) (sum form) <=> eta = 0.30
+    y_gl = sgl(x, 500.0, 100.0, 20.0, 30.0)
     y_pv = pseudo_voigt(x, 500.0, 100.0, 20.0, 0.30)
     assert np.allclose(y_gl, y_pv, rtol=1e-12, atol=1e-12)
 

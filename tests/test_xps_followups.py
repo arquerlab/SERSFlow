@@ -166,7 +166,9 @@ def test_vms_block_meta_includes_pass_energy(tmp_path: Path) -> None:
     assert meta.get("pass_energy_eV") == 20.0
 
 
-def test_vms_n_corr_vars_gt_1_raises(tmp_path: Path) -> None:
+def test_vms_corrupt_multi_variable_block_raises(tmp_path: Path) -> None:
+    """IO1: n_corresponding_variables > 1 is supported (test_vamas_iso.py); a block that declares 2
+    but only lists one label/unit and one value per point must still fail loudly."""
     from tests.test_vms_loader import _legacy_block, _legacy_header
 
     y = [10.0, 20.0, 30.0]
@@ -185,7 +187,7 @@ def test_vms_n_corr_vars_gt_1_raises(tmp_path: Path) -> None:
     text = text.replace(needle, "\n2\ncounts\n", 1)
     p = tmp_path / "multi_chan.vms"
     p.write_text(text, encoding="utf-8")
-    with pytest.raises(VmsParseError, match="n_corresponding_variables=2"):
+    with pytest.raises(VmsParseError):
         read_vms_blocks(p)
 
 

@@ -399,6 +399,16 @@ def _assemble_lmfit_model(
 
 _GAUSS_K_EXPR = "1.0644670194312262"  # sqrt(pi / (4 ln 2)); area per unit height per unit FWHM (Gaussian)
 _LORENTZ_K_EXPR = "1.5707963267948966"  # pi / 2 (Lorentzian)
+_GL_PRODUCT_K_FN = "sf_gl_product_area_k"
+
+
+def _register_area_functions(params: Any) -> None:
+    """Expose area-per-height helpers to lmfit constraint expressions (product GL has no simple expr)."""
+    from sersflow.core.preprocess.fitting_models import gl_product_area_k
+
+    ev = getattr(params, "_asteval", None)
+    if ev is not None:
+        ev.symtable[_GL_PRODUCT_K_FN] = gl_product_area_k
 
 
 def _area_per_height_expr(
@@ -422,9 +432,12 @@ def _area_per_height_expr(
         return f"({nm('fwhm')}*{_GAUSS_K_EXPR})"
     if ct == "lorentzian":
         return f"({nm('fwhm')}*{_LORENTZ_K_EXPR})"
-    if ct == "gl":
+    if ct == "sgl":
         eta = f"(min(max({nm('m')}, 0.0), 100.0)/100.0)"
         return f"({nm('fwhm')}*({eta}*{_LORENTZ_K_EXPR}+(1.0-{eta})*{_GAUSS_K_EXPR}))"
+    if ct == "gl":
+        # Product GL(m): closed-form k(m) registered in the asteval symtable (see _register_area_functions).
+        return f"({nm('fwhm')}*{_GL_PRODUCT_K_FN}({nm('m')}))"
     if ct == "pseudo_voigt":
         eta = f"min(max({nm('eta')}, 0.0), 1.0)"
         return f"({nm('fwhm')}*({eta}*{_LORENTZ_K_EXPR}+(1.0-{eta})*{_GAUSS_K_EXPR}))"
@@ -436,6 +449,7 @@ def _apply_param_links(
     problem: FitProblem,
     name_by_comp_key: dict[tuple[str, str], str],
 ) -> None:
+    _register_area_functions(params)
     ctype_by_id = {c.component_id: c.component_type for c in problem.components}
     for link in problem.param_links or []:
         src = (str(link.get("source_component_id") or ""), str(link.get("source_key") or ""))

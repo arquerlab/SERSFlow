@@ -62,6 +62,17 @@ class DatasetsResource(_Base):
         )
         return dict(data) if isinstance(data, dict) else {}
 
+    def spectrum_acquisition(
+        self, dataset_id: str, spectrum_id: str, *, include_arrays: bool = True
+    ) -> dict[str, Any]:
+        data = request_json(
+            self._root.http,
+            "GET",
+            f"/datasets/{dataset_id}/spectra/{spectrum_id}/acquisition",
+            params={"include_arrays": include_arrays},
+        )
+        return dict(data) if isinstance(data, dict) else {}
+
     def filter_fields(self, dataset_id: str) -> dict[str, Any]:
         data = request_json(self._root.http, "GET", f"/datasets/{dataset_id}/filter-fields")
         return dict(data) if isinstance(data, dict) else {}

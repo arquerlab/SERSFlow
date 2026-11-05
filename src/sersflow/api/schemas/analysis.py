@@ -52,6 +52,27 @@ class AnalysisRunCreateResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class FitFailureItem(BaseModel):
+    spectrum_id: str
+    step_index: int | None = None
+    step_id: str | None = None
+    xps_region: str | None = None
+    status: Literal["failed", "not_converged"]
+    reason: str | None = None
+
+
+class FitFailureSummary(BaseModel):
+    """Per-run fitting outcome counts (K2). ``items`` lists failed / not-converged fits (capped)."""
+
+    n_fits: int = 0
+    n_ok: int = 0
+    n_failed: int = 0
+    n_not_converged: int = 0
+    n_not_applicable: int = 0
+    items: list[FitFailureItem] = Field(default_factory=list)
+    truncated: bool = False
+
+
 class AnalysisRunSummary(BaseModel):
     run_id: str
     dataset_id: str
@@ -69,6 +90,9 @@ class AnalysisRunSummary(BaseModel):
     label: str | None
     pinned: bool
     feature_columns: list[str] | None = None
+    warnings: list[str] = Field(default_factory=list)
+    """Run-level warnings, e.g. failed fits (K2). Empty for runs made before this field existed."""
+    fit_failures: FitFailureSummary | None = None
 
 
 class AnalysisRunDetailResponse(BaseModel):

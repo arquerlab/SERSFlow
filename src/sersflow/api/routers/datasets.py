@@ -18,6 +18,7 @@ from sersflow.api.schemas.datasets import (
 from sersflow.api.schemas.metrics import DatasetMetricsRequest, DatasetMetricsResponse
 from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.api.services.casa_fits import casa_fits_payload
+from sersflow.api.services.vamas_acquisition import vamas_acquisition_payload
 from sersflow.api.services.dataset_export import export_dataset_package, import_dataset_package
 from sersflow.api.services.dataset_restore import restore_dataset_uploads
 from sersflow.api.services.datasets_service import create_dataset_from_uploads
@@ -155,6 +156,29 @@ def list_dataset_casa_fits(
     if rec is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
     return casa_fits_payload(rec, region=region)
+
+
+@router.get("/{dataset_id}/spectra/{spectrum_id}/acquisition")
+def get_spectrum_acquisition(
+    dataset_id: str,
+    spectrum_id: str,
+    request: Request,
+    include_arrays: bool = Query(True, description="Include the x axis and auxiliary arrays (e.g. transmission)"),
+) -> dict[str, Any]:
+    """
+    VAMAS acquisition statistics for one spectrum: counts vs counts/s, dwell, scans, counts scale,
+    and the auxiliary corresponding variables (e.g. the transmission function) read from the file.
+    """
+    user_id = current_user_id(request)
+    rec = get_dataset(dataset_id, owner_user_id=user_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    try:
+        return vamas_acquisition_payload(rec, spectrum_id, include_arrays=include_arrays)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except (ValueError, OSError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/{dataset_id}/filter-fields")

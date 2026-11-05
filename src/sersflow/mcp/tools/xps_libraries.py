@@ -301,6 +301,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 "recipe_id": applied.get("recipe_id"),
                 "xps_region": applied.get("xps_region"),
                 "warnings": applied.get("warnings") or [],
+                "pass_energy_resolution": applied.get("pass_energy_resolution"),
                 "pipeline": merged.model_dump(),
                 "technique_family": "xps",
             }
@@ -346,6 +347,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 "recipe_id": applied.get("recipe_id"),
                 "xps_region": applied.get("xps_region"),
                 "warnings": applied.get("warnings") or [],
+                "pass_energy_resolution": applied.get("pass_energy_resolution"),
                 "pipeline_hash": resp.pipeline_hash,
                 "n_steps": len(resp.pipeline.steps),
                 "technique_family": getattr(resp.pipeline, "technique_family", "xps"),

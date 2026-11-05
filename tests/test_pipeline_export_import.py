@@ -23,7 +23,7 @@ def test_pipeline_export_import_roundtrip_preserves_step_wiring(tmp_path: Path, 
     )
     rec = create_pipeline(owner_user_id="dev", name="share me", pipeline=pipeline)
     pkg = export_pipeline_package(rec)
-    assert pkg.schema_version == "sersflow.pipeline.v1"
+    assert pkg.schema_version == "sersflow.pipeline.v2"  # K1: gl = product GL(m)
     assert pkg.pipeline.steps[1].input_from == "after_step"
     assert pkg.pipeline.steps[1].after_step_id == "1"
 

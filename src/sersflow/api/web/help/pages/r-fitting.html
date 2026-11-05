@@ -38,14 +38,26 @@
   <tr><td>Gaussian, Lorentzian</td><td><code>pos</code>, <code>amp</code>, <code>fwhm</code></td><td>Raman/SERS bands</td></tr>
   <tr><td>Pseudo-Voigt</td><td>+ <code>eta</code> (Lorentzian fraction 0–1)</td><td>Raman/SERS bands</td></tr>
   <tr><td>Voigt</td><td><code>fwhm_g</code>, <code>fwhm_l</code></td><td>When both widths matter</td></tr>
-  <tr><td>Gaussian–Lorentzian (GL)</td><td><code>fwhm</code>, <code>m</code> (% Lorentzian, 0–100, start 30)</td><td>XPS core levels</td></tr>
+  <tr><td>GL(m) product (<code>gl</code>)</td><td><code>fwhm</code> (true FWHM), <code>m</code> (% Lorentzian, 0–100, start 30)</td><td>XPS core levels; the CasaXPS GL(m) used by the Biesinger recipes</td></tr>
+  <tr><td>SGL(m) sum (<code>sgl</code>)</td><td><code>fwhm</code>, <code>m</code></td><td>CasaXPS SGL(m); what SpecFlow called “GL” before pipeline schema v2</td></tr>
+  <tr><td>GL(m,n) (<code>gl_gauss</code>)</td><td><code>fwhm</code> (GL core), <code>m</code>, <code>fwhm_g</code> (Gaussian FWHM n)</td><td>GL(m) convolved with an extra Gaussian</td></tr>
   <tr><td>Doniach–Šunjić (DS), Gaussian-convoluted DS (GDS)</td><td><code>gamma</code>, <code>alpha</code> (asymmetry), GDS also <code>sigma</code></td><td>Metals (asymmetric lines)</td></tr>
   <tr><td>Asymmetric Lorentzian (LA), Finite Lorentzian (LF)</td><td><code>fwhm</code>, <code>alpha</code>, <code>beta</code>, <code>fwhm_g</code>; LF adds <code>w</code></td><td>Asymmetric XPS lines</td></tr>
-  <tr><td>Asymmetric GL, APV, Asymmetric Voigt</td><td>left/right widths and mixing</td><td>Asymmetric lines</td></tr>
+  <tr><td>Asymmetric GL (<code>a_gl</code>, product base; <code>a_sgl</code>, legacy sum base), APV, Asymmetric Voigt</td><td>left/right widths and mixing</td><td>Asymmetric lines</td></tr>
   <tr><td>Polynomial</td><td>coefficients <code>c0</code>…, degree 0–12</td><td>Background only (no area)</td></tr>
   <tr><td>XPS only: Shirley / Tougaard / Slope background (active)</td><td>see <a href="#" data-help="r-xps">XPS specifics</a></td><td>Backgrounds fitted together with the peaks</td></tr>
   <tr><td>XPS only: Fermi edge (valence)</td><td><code>amplitude</code>, <code>center</code>, <code>sigma</code>, <code>temperature_K</code>, <code>const</code></td><td>Valence band / energy calibration</td></tr>
 </table>
+
+<h2>GL(m) product versus SGL(m) sum</h2>
+<p>CasaXPS has two Gaussian–Lorentzian line shapes (CasaXPS Cookbook 2026, p. 67). With <i>u</i> = (x − pos)/F and <i>p</i> = m/100:</p>
+<ul>
+  <li><b>GL(m), product:</b> exp(−(1 − p)·4 ln2·u²) / (1 + 4p·u²). This is what CasaXPS writes as <code>GL(30)</code> and what the Biesinger recipes were fitted with. SpecFlow component <code>gl</code>.</li>
+  <li><b>SGL(m), sum:</b> p·L + (1 − p)·G with a shared FWHM. SpecFlow component <code>sgl</code>.</li>
+  <li><b>GL(m,n):</b> GL(m) convolved with a Gaussian of FWHM n (<code>fwhm_g</code>, in eV). SpecFlow component <code>gl_gauss</code>.</li>
+</ul>
+<p>For the product form, CasaXPS's F is <i>not</i> the full width at half maximum: the true FWHM is slightly smaller (about 0.96·F at m = 30). SpecFlow's <code>fwhm</code> is always the <b>true FWHM</b>, the value Biesinger tabulates and CasaXPS shows in its component table. SpecFlow derives F internally. Areas use the closed form ∫ = (π/√b)·erfcx(√(a/b)) with a = 4 ln2 (1 − p), b = 4p, so <i>area ratio</i> links work for <code>gl</code> as well.</p>
+<div class="warn"><b>Pipeline schema v2.</b> Before v2, SpecFlow's <code>gl</code> was the <i>sum</i> form. On the first server start with v2, every stored pipeline, session and run snapshot is rewritten <code>gl</code> → <code>sgl</code> and <code>a_gl</code> → <code>a_sgl</code>, so old results reproduce exactly. Their pipeline hash changes; runs keep the hash they were made with. Pipeline packages exported as <code>sersflow.pipeline.v1</code> are converted the same way on import. A new <code>gl</code> anywhere (UI, MCP, v2 packages) means the product form. Re-applying a recipe gives the product form.</div>
 
 <h2>Model parameters on this server</h2>
 <p>Generated from the server, so names and start values are always current.</p>
@@ -59,8 +71,18 @@
 <div class="tip">Start with one peak on one spectrum, check the residual, then add peaks one at a time. Narrow the fit window rather than adding background peaks.</div>
 
 <h2>Fitting results</h2>
-<p>Per component: <code>fit_[region_]&lt;peak&gt;_&lt;param&gt;</code> and <code>…_area</code> (all peak types except DS and GDS). Per fit: <code>fit_[region_]gof_&lt;rmse|r2|r2_adj|aic|bic|aicc|chi2|redchi|…&gt;</code>. See <a href="#" data-help="r-exports">Exports and column names</a>. AIC and BIC assume unit variance, so compare models only on the same data. There are no per-parameter error columns, only <code>gof_median_rel_stderr</code>.</p>
+<p>Per component: <code>fit_[region_]&lt;peak&gt;_&lt;param&gt;</code> and <code>…_area</code> (all peak types except DS and GDS). Per fit: <code>fit_[region_]gof_&lt;rmse|r2|r2_adj|aic|bic|aicc|chi2|redchi|…&gt;</code>. See <a href="#" data-help="r-exports">Exports and column names</a>. AIC and BIC assume unit variance, so compare models only on the same data. There are no per-parameter error columns, only <code>gof_median_rel_stderr</code>. A failed fit has empty columns and <code>gof_success</code> = 0 (see Failed fits).</p>
 <h3>Fit health</h3>
+<h2>Failed fits</h2>
+<p>A fit that cannot run (invalid set-up, optimizer error, empty spectrum) is <b>recorded, not hidden</b>. The fitting step still passes the raw spectrum through, so later steps and plots keep working, but in an analysis run:</p>
+<ul>
+  <li>all of that fit's parameter and area columns are empty and <code>gof_success</code> = 0;</li>
+  <li>the run carries a warning and a <code>fit_failures</code> summary (counts plus the affected spectra and the reason). Analyze shows an amber <span class="ui">⚠ n fits</span> badge in the run list and the details under Overview;</li>
+  <li><code>fit_health.csv</code> in the fit-curve export lists the spectrum with <code>fit_status</code> = <code>failed</code> and the reason;</li>
+  <li>MCP <code>get_analysis_runs_by_id</code> and <code>post_analysis_jobs_wait</code> return the same warnings.</li>
+</ul>
+<p>A fit that ran but did not converge (<code>success</code> = 0 from the optimizer) is flagged as <i>not converged</i>; its parameters are kept so you can inspect them. A fitting step whose window does not overlap the spectrum (for example an O 1s recipe meeting a C 1s spectrum in a multi-region pipeline) is <i>not applicable</i>: it is skipped silently and is not a failure. Restrict steps with the region selector to keep this explicit.</p>
+
 <p>Every fit also reports <code>gof_n_at_bound</code> (free parameters sitting on a bound: the model is asking for more freedom than it has), <code>gof_bg_gt_data_frac</code> (fraction of points where the fitted background is above the data), <code>gof_resid_mean_edge_lo</code> / <code>gof_resid_mean_edge_hi</code> (mean residual over the outermost ~5% of the window at the low / high x end) and <code>gof_resid_lag1_autocorr</code> (≈0 for noise, close to 1 for a structured residual). The fit-diagnostics badge turns amber when a parameter is on a bound, the background is above the data in more than 10% of the points, or the residual autocorrelation exceeds 0.7. A background above the data at the window edge usually means the peaks are missing intensity (for example satellites that are too weak) and the background is compensating; fixing the background alone will not cure it. The fit-curve export zip also contains <code>fit_health.csv</code>.</p>
 <h3>Step numbers and column prefixes</h3>
 <p>The observation columns of a fitting step are prefixed <code>s{N}_</code> where <i>N</i> is the 0-based position of the step in the pipeline (<code>step_index</code>). The step number used by the fit-curve and preview endpoints (<code>fitting_step_num</code>) is 1-based. <code>GET /analysis/runs/{id}/fitting-steps</code> lists both and the <code>column_prefix</code>; the endpoints also accept <code>fitting_step_index</code> instead of <code>fitting_step_num</code>.</p>

@@ -29,6 +29,7 @@ from sersflow.core.preprocess.peak_area import (
     area_per_height,
     gaussian_area_per_height,
     gl_area_per_height,
+    sgl_area_per_height,
     lorentzian_area_per_height,
 )
 from sersflow.core.spectrum import XY
@@ -55,14 +56,21 @@ def pseudo_voigt_peak_area(amp: float, fwhm: float, eta: float) -> float:
     """Analytical area under fitting_models.pseudo_voigt."""
     if not math.isfinite(amp) or not math.isfinite(fwhm) or not math.isfinite(eta) or fwhm <= 0:
         return float("nan")
-    return float(amp * gl_area_per_height(fwhm, eta * 100.0))
+    return float(amp * sgl_area_per_height(fwhm, eta * 100.0))
 
 
 def gl_peak_area(amp: float, fwhm: float, m: float) -> float:
-    """Analytical area under fitting_models.gl (CasaXPS GL(m), m = % Lorentzian)."""
+    """Analytical area under fitting_models.gl (CasaXPS product GL(m), true FWHM, m = % Lorentzian)."""
     if not math.isfinite(amp) or not math.isfinite(fwhm) or not math.isfinite(m) or fwhm <= 0:
         return float("nan")
     return float(amp * gl_area_per_height(fwhm, m))
+
+
+def sgl_peak_area(amp: float, fwhm: float, m: float) -> float:
+    """Analytical area under fitting_models.sgl (CasaXPS SGL(m) sum form)."""
+    if not math.isfinite(amp) or not math.isfinite(fwhm) or not math.isfinite(m) or fwhm <= 0:
+        return float("nan")
+    return float(amp * sgl_area_per_height(fwhm, m))
 
 
 def voigt_peak_area(amp: float, fwhm_g: float, fwhm_l: float) -> float:
@@ -412,6 +420,7 @@ def collect_fitting_features_for_pipeline(
     *,
     per_step_input_xy: dict[int, XY] | None = None,
     spectrum_xps_region: str | None = None,
+    status_out: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], dict[str, float | None]]:
     """
     Re-fit using stored step params and export optimized parameters per component.
@@ -426,8 +435,28 @@ def collect_fitting_features_for_pipeline(
 
     spectrum_xps_region:
         When set, fitting steps whose ``xps_region`` does not match are skipped (null features).
+
+    status_out:
+        When provided, one entry per enabled fitting step is appended:
+        ``{"step_index", "step_id", "xps_region", "status", "reason"}`` with status
+        ``ok`` | ``not_applicable`` | ``failed`` | ``not_converged`` (K2). ``failed`` steps export
+        null parameters and ``success = 0``; ``not_converged`` keeps parameters with ``success = 0``.
     """
     from sersflow.core.pipeline.engine import fitting_region_applies
+    from sersflow.core.preprocess.fitting import fit_not_applicable_reason
+
+    def _status(i: int, step: Any, xps_region: str | None, status: str, reason: str | None) -> None:
+        if status_out is None:
+            return
+        status_out.append(
+            {
+                "step_index": i,
+                "step_id": getattr(step, "step_id", None),
+                "xps_region": xps_region,
+                "status": status,
+                "reason": reason,
+            }
+        )
 
     steps = getattr(pipeline, "steps", None) or []
     sns = assign_pipeline_step_nums(steps)
@@ -483,11 +512,22 @@ def collect_fitting_features_for_pipeline(
         xy_use = per_step_input_xy.get(sn, xy) if per_step_input_xy is not None else xy
 
         nulls = {k: None for k in step_final_keys}
+        failed = dict(nulls)
+        for fk, metric in zip(gof_final_keys, GOF_METRIC_KEYS):
+            if metric == "success":
+                failed[fk] = 0.0
         if not fitting_region_applies(step_params=dict(params), spectrum_xps_region=spectrum_xps_region):
             merged.update(nulls)
+            _status(i, step, xps_region, "not_applicable", "xps_region mismatch")
             continue
         if xy_use.x.size == 0 or xy_use.y.size == 0:
+            merged.update(failed)
+            _status(i, step, xps_region, "failed", "empty spectrum (earlier step or worker produced no points)")
+            continue
+        na_reason = fit_not_applicable_reason(xy_use, dict(params))
+        if na_reason is not None:
             merged.update(nulls)
+            _status(i, step, xps_region, "not_applicable", na_reason)
             continue
         try:
             fit_params = dict(params)
@@ -495,20 +535,19 @@ def collect_fitting_features_for_pipeline(
             if tech and "technique_family" not in fit_params:
                 fit_params["technique_family"] = tech
             prob = fit_problem_from_step_params(xy_use, fit_params)
-        except ValueError:
-            merged.update(nulls)
+        except ValueError as e:
+            merged.update(failed)
+            _status(i, step, xps_region, "failed", f"invalid fit setup: {e}")
             continue
         if prob is None:
             merged.update(nulls)
+            _status(i, step, xps_region, "not_applicable", "no fit problem")
             continue
         try:
             res = fit_curve(prob)
-        except (ValueError, RuntimeError):
-            failed = dict(nulls)
-            for fk, metric in zip(gof_final_keys, GOF_METRIC_KEYS):
-                if metric == "success":
-                    failed[fk] = 0.0
+        except (ValueError, RuntimeError) as e:
             merged.update(failed)
+            _status(i, step, xps_region, "failed", f"{type(e).__name__}: {e}")
             continue
 
         out = dict(nulls)
@@ -535,5 +574,10 @@ def collect_fitting_features_for_pipeline(
             out[fk] = gof_vals.get(metric)
 
         merged.update(out)
+        succ = gof_vals.get("success")
+        if succ is not None and float(succ) == 0.0:
+            _status(i, step, xps_region, "not_converged", "optimizer reported success=False")
+        else:
+            _status(i, step, xps_region, "ok", None)
 
     return ordered_keys, merged

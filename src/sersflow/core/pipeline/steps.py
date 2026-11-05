@@ -13,7 +13,12 @@ from sersflow.core.pipeline.hashing import canonical_json
 from sersflow.core.preprocess.baseline import baseline_kwargs, correct_baseline
 from sersflow.core.preprocess.cosmic_ray import remove_cosmic_rays
 from sersflow.core.metrics.intensity_probes import parse_probes
-from sersflow.core.preprocess.fitting import expand_fit_curves_to_full, fit_curve, fit_problem_from_step_params
+from sersflow.core.preprocess.fitting import (
+    expand_fit_curves_to_full,
+    fit_curve,
+    fit_not_applicable_reason,
+    fit_problem_from_step_params,
+)
 from sersflow.core.preprocess.noise import apply_savitzky_golay
 from sersflow.core.preprocess.x_axis_calibration import apply_x_axis_calibration
 from sersflow.core.preprocess.xas import normalize_edge_step, params_to_kwargs as xas_params_to_kwargs
@@ -225,6 +230,11 @@ def _fitting(xy: XY, params: dict[str, Any]) -> XY:
     - initial_guess_mode: "default" | "auto" (legacy; prefer per-peak amp ≤0 sentinel for Auto)
     - fit_min_x / fit_max_x: optional internal fit window (outside points keep original y)
     """
+    na = fit_not_applicable_reason(xy, params)
+    if na is not None:
+        # Mixed multi-region XPS pipelines may run an O1s recipe on a C1s spectrum (or vice versa).
+        logger.info("Fitting step not applicable (pass-through unchanged spectrum): %s", na)
+        return xy
     try:
         prob = fit_problem_from_step_params(xy, params)
         if prob is None:
@@ -232,9 +242,9 @@ def _fitting(xy: XY, params: dict[str, Any]) -> XY:
         res = fit_curve(prob)
         y_hat, _ = expand_fit_curves_to_full(xy, params, res.y_hat)
     except (ValueError, RuntimeError) as e:
-        # Mixed multi-region XPS pipelines may run an O1s recipe on a C1s spectrum (or vice versa).
-        # Do not fail the whole session run — pass the spectrum through unchanged.
-        logger.info("Fitting step skipped (pass-through unchanged spectrum): %s", e)
+        # Genuine failure: keep the raw spectrum so downstream steps still run, but it is NOT a fit.
+        # Analysis runs record it (fit_failures, NaN features, success=0) via fitting_features.
+        logger.warning("Fitting step FAILED (raw spectrum passed through, flagged in run): %s", e)
         return xy
     return XY(x=xy.x, y=y_hat)
 
@@ -454,7 +464,8 @@ DEFAULT_STEPS: dict[str, StepImpl] = {
     "cosmic_ray_removal": StepImpl(name="cosmic_ray_removal", impl_version="1", transform=_cosmic_ray_removal),
     "baseline": StepImpl(name="baseline", impl_version="1", transform=_baseline),
     "baseline_curve": StepImpl(name="baseline_curve", impl_version="1", transform=_baseline_curve),
-    "fitting": StepImpl(name="fitting", impl_version="3", transform=_fitting),
+    # 4: K1 — ``gl`` is the CasaXPS product GL(m); invalidates step caches computed with the sum form.
+    "fitting": StepImpl(name="fitting", impl_version="4", transform=_fitting),
     "spectral_intensities": StepImpl(name="spectral_intensities", impl_version="1", transform=_spectral_intensities),
     "spectral_integrations": StepImpl(name="spectral_integrations", impl_version="1", transform=_spectral_integrations),
     "feature_operations": StepImpl(name="feature_operations", impl_version="1", transform=_feature_operations),

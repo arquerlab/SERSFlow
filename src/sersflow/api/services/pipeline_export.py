@@ -4,9 +4,24 @@ from datetime import datetime, timezone
 
 from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.api.schemas.pipelines import PipelineExportPackage
+from sersflow.core.pipeline.lineshape_migration import (
+    PIPELINE_SCHEMA_V1,
+    PIPELINE_SCHEMA_V2,
+    migrate_legacy_gl,
+)
 from sersflow.infra.pipelines_store import PipelineLibraryRecord, create_pipeline
 
-PIPELINE_SCHEMA_VERSION = "sersflow.pipeline.v1"
+# v2 (K1): a fitting component ``gl`` is the CasaXPS PRODUCT GL(m); v1 ``gl`` was the sum (now ``sgl``).
+PIPELINE_SCHEMA_VERSION = PIPELINE_SCHEMA_V2
+
+
+def pipeline_for_schema(pipeline: Pipeline, schema_version: str) -> tuple[Pipeline, int]:
+    """Upgrade a packaged pipeline to the current schema. Returns (pipeline, n_components_renamed)."""
+    if schema_version != PIPELINE_SCHEMA_V1:
+        return pipeline, 0
+    data = pipeline.model_dump()
+    n = migrate_legacy_gl(data)
+    return (Pipeline.model_validate(data) if n else pipeline), n
 
 
 def _utc_now_iso() -> str:

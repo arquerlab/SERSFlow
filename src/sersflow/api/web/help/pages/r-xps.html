@@ -33,6 +33,7 @@
   <li>Choose the <b>Pass energy (eV)</b> that matches your measurement; widths come from the table for that pass energy.</li>
   <li>Pick a recipe. If the editor already has peaks, SpecFlow asks whether to <b>Add</b> (new peaks only, no extra background) or <b>Replace</b> (everything, including an active Shirley background).</li>
   <li>The recipe turns on amplitude Auto and fills “Initial area ratios”. Check <b>Warnings</b> under the picker for provenance notes.</li>
+  <li>If the recipe has no FWHM column for your pass energy (the dataset's, or the one you chose), an amber <b>Pass-energy fallback</b> notice names the pass energy you asked for and the column that was used instead (or 1.0 eV when a peak has no width at all). MCP recipe tools return the same information as <code>pass_energy_resolution</code>.</li>
   <li>Preview with View → After: fitting, then adjust positions, bounds and links.</li>
 </ol>
 <ul>

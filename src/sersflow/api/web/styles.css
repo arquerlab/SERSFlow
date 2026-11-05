@@ -8,6 +8,7 @@
   --muted: rgba(255, 255, 255, 0.72);
   --accent: #7c5cff;
   --danger: #ff4d6d;
+  --warn: #ffb547;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
     monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
@@ -792,6 +793,26 @@ select {
   white-space: pre-wrap;
   font-family: var(--mono);
   font-size: 12px;
+}
+
+/* Non-fatal but result-relevant notices (recipe PE fallback, failed fits). */
+.warn-note {
+  color: var(--warn);
+  border-left: 3px solid var(--warn);
+  padding: 4px 8px;
+  margin: 4px 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.badge-warn {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 9px;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 /* Preprocessing workspace (React shell). */

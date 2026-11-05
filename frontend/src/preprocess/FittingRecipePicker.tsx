@@ -7,6 +7,7 @@ import {
   listFittingRecipesCatalog,
   type FittingRecipeApplyResponse,
   type FittingRecipeIndexItem,
+  type PassEnergyResolution,
 } from "./api";
 import {
   applyPeakShiftEv,
@@ -289,6 +290,29 @@ export function removeRecipeFromEditor(
   };
 }
 
+/** Human notice when the recipe FWHM column did not match the requested / dataset pass energy. */
+export function passEnergyNotice(res: PassEnergyResolution | null | undefined): string | null {
+  if (!res || !res.fallback) return null;
+  const parts: string[] = [];
+  if (res.source === "acquisition_closest") {
+    parts.push(
+      `Dataset pass energy ${res.acquisition} eV has no FWHM column in this recipe; ` +
+        `widths taken from PE ${res.used} eV (available: ${res.available.join(", ")}).`
+    );
+  }
+  const fbs = res.fwhm_fallbacks ?? [];
+  if (fbs.length) {
+    const byCol = new Map<string, string[]>();
+    for (const f of fbs) {
+      const col = f.used_column ?? "1.0 eV default";
+      byCol.set(col, [...(byCol.get(col) ?? []), f.peak]);
+    }
+    const detail = [...byCol.entries()].map(([col, peaks]) => `${col} for ${peaks.join(", ")}`).join("; ");
+    parts.push(`No fwhm_${res.used} column for ${fbs.length} peak(s): used ${detail}.`);
+  }
+  return parts.length ? `Pass-energy fallback — ${parts.join(" ")}` : null;
+}
+
 type Props = {
   fittingParams: FittingEditorParams;
   fittingCatalog: FittingComponentSpecPublic[] | undefined;
@@ -310,6 +334,7 @@ export function FittingRecipePicker({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [peNotice, setPeNotice] = useState<string | null>(null);
   const [showMethods, setShowMethods] = useState(false);
   const blurTimer = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -428,10 +453,13 @@ export function FittingRecipePicker({
         resolved === "add"
           ? appendRecipeApplyIntoEditor(fittingParams, applied, fittingCatalog)
           : mergeRecipeApplyIntoEditor(fittingParams, applied, fittingCatalog);
-      const notes = [...(applied.warnings ?? [])];
+      const notice = passEnergyNotice(applied.pass_energy_resolution);
+      // The PE fallback gets its own highlighted notice; keep the rest in the plain list.
+      const notes = (applied.warnings ?? []).filter((w) => !(notice && w.startsWith("pass energy:")));
       if (resolved === "add") {
         notes.push(`Added peaks from ${id} (background skipped)`);
       }
+      setPeNotice(notice);
       setWarnings(notes);
       setQuery("");
       setOpen(false);
@@ -444,7 +472,10 @@ export function FittingRecipePicker({
   }
 
   function onPick(item: FittingRecipeIndexItem) {
-    void loadRecipe(item.id, defaultPassEnergy(item), "auto");
+    // With a dataset pass energy known, let the server resolve the column (it reports a fallback
+    // when the dataset PE has no FWHM column, K3). Without one, keep the local default.
+    const hasDatasetPe = preferredPassEnergy != null && Number.isFinite(preferredPassEnergy);
+    void loadRecipe(item.id, hasDatasetPe ? undefined : defaultPassEnergy(item), "auto");
   }
 
   function onPassEnergyChange(pe: number) {
@@ -731,6 +762,11 @@ export function FittingRecipePicker({
         <div className="err">Could not load recipe index: {String((indexQ.error as Error)?.message ?? indexQ.error)}</div>
       ) : null}
       {err ? <div className="err">{err}</div> : null}
+      {peNotice ? (
+        <div className="warn-note" role="status" data-testid="recipe-pe-notice">
+          {peNotice}
+        </div>
+      ) : null}
       {warnings.length ? <div className="hint">Warnings: {warnings.join("; ")}</div> : null}
     </div>
   );

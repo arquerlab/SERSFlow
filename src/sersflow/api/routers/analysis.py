@@ -223,7 +223,25 @@ def _run_to_summary(
         label=rec.label,
         pinned=rec.pinned,
         feature_columns=cols,
+        **_run_warning_fields(rec),
     )
+
+
+def _run_warning_fields(rec: Any) -> dict[str, Any]:
+    raw = getattr(rec, "warnings_json", None)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, Any] = {"warnings": [str(w) for w in data.get("warnings") or []]}
+    ff = data.get("fit_failures")
+    if isinstance(ff, dict):
+        out["fit_failures"] = ff
+    return out
 
 
 def _idempotent_response(existing: Any) -> JSONResponse:

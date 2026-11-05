@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendRecipeApplyIntoEditor,
   filterIndex,
+  passEnergyNotice,
   mergeRecipeApplyIntoEditor,
   removeRecipeFromEditor,
 } from "./FittingRecipePicker";
@@ -289,5 +290,27 @@ describe("recipe apply merge helpers", () => {
     expect(next.components).toHaveLength(1);
     expect(next.components[0]?.component_type).toBe("gaussian");
     expect(next.fit_min_x).toBe(280);
+  });
+});
+
+describe("passEnergyNotice", () => {
+  it("is null when the requested column was used", () => {
+    expect(
+      passEnergyNotice({ used: 20, source: "request", available: [10, 20], fallback: false, fwhm_fallbacks: [] })
+    ).toBeNull();
+  });
+
+  it("names the dataset PE and the column actually used", () => {
+    const msg = passEnergyNotice({
+      used: 20,
+      acquisition: 50,
+      source: "acquisition_closest",
+      available: [10, 20],
+      fallback: true,
+      fwhm_fallbacks: [{ peak: "B", requested_column: "fwhm_20", used_column: "fwhm_10" }],
+    });
+    expect(msg).toContain("50 eV");
+    expect(msg).toContain("PE 20 eV");
+    expect(msg).toContain("fwhm_10 for B");
   });
 });

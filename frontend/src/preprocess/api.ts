@@ -161,8 +161,12 @@ export type DatasetImportResponse = {
   imported_blobs: number;
   imported_labels: number;
 };
+/** v2 (K1): fitting `gl` = CasaXPS product GL(m). v1 packages are upgraded on import (`gl` → `sgl`). */
+export type PipelineSchemaVersion = "sersflow.pipeline.v1" | "sersflow.pipeline.v2";
+export const CURRENT_PIPELINE_SCHEMA: PipelineSchemaVersion = "sersflow.pipeline.v2";
+
 export type PipelineExportPackage = {
-  schema_version: "sersflow.pipeline.v1";
+  schema_version: PipelineSchemaVersion;
   created_by?: string;
   exported_at?: string;
   name: string;
@@ -437,7 +441,7 @@ export function importPipelineLibraryEntry(payload: PipelineExportPackage | { na
           technique_family,
         }
       : {
-          schema_version: "sersflow.pipeline.v1",
+          schema_version: CURRENT_PIPELINE_SCHEMA,
           name: payload.name ?? null,
           pipeline: payload.pipeline,
           technique_family,
@@ -578,9 +582,21 @@ export type FittingRecipesIndexResponse = {
   count: number;
 };
 
+export type PassEnergyResolution = {
+  recipe_id?: string | null;
+  requested?: number | null;
+  acquisition?: number | null;
+  used: number;
+  source: "request" | "acquisition" | "acquisition_closest" | "default";
+  available: number[];
+  fallback: boolean;
+  fwhm_fallbacks: Array<{ peak: string; requested_column: string; used_column?: string | null }>;
+};
+
 export type FittingRecipeApplyResponse = {
   recipe_id: string;
   recipe_pass_energy: number | null;
+  pass_energy_resolution?: PassEnergyResolution | null;
   xps_region: string;
   components: Array<{ component_id: string; component_type: string; degree?: number | null }>;
   p0: number[];

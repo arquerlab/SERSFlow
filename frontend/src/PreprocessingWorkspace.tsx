@@ -51,6 +51,7 @@ import {
   type BaselineParamSpecPublic,
   type FittingComponentSpecPublic,
   type Pipeline,
+  CURRENT_PIPELINE_SCHEMA,
   type PipelineExportPackage,
   type PipelineInputFrom,
   type SessionRunMetricsResponse,
@@ -100,6 +101,7 @@ import {
   type FittingEditorParams,
   type FittingParamLink,
 } from "./preprocess/fittingUtils";
+import { AcquisitionSummary, summarizeAcquisition } from "./preprocess/AcquisitionSummary";
 import { FittingRecipePicker } from "./preprocess/FittingRecipePicker";
 import { DEFAULT_GUARDRAILS, type Mode, type PlotView } from "./preprocess/runController";
 
@@ -488,6 +490,17 @@ export default function PreprocessingWorkspace() {
     }
     return null;
   }, [selectedUploads, uploadsMetaQ.data?.items, datasetQ.data?.dataset?.spectra]);
+
+  /** IO1: VAMAS ordinate statistics (counts vs cps, dwell, scans, transmission) for the open dataset. */
+  const datasetAcquisition = useMemo(() => {
+    const paths = new Set(
+      (datasetQ.data?.dataset?.spectra ?? [])
+        .map((s: { relative_path?: string }) => s.relative_path)
+        .filter((p): p is string => Boolean(p))
+    );
+    const items = (uploadsMetaQ.data?.items ?? []).filter((it) => paths.has(it.relative_path));
+    return summarizeAcquisition(items.map((it) => it.labels as Record<string, unknown> | null | undefined));
+  }, [datasetQ.data?.dataset?.spectra, uploadsMetaQ.data?.items]);
 
   /**
    * Techniques among the selected uploads: a multi-technique file (e.g. .sle) contributes the
@@ -918,7 +931,7 @@ export default function PreprocessingWorkspace() {
   async function exportEditorPipeline() {
     const name = libraryPipelineName.trim() || "current_pipeline";
     const pkg: PipelineExportPackage = {
-      schema_version: "sersflow.pipeline.v1",
+      schema_version: CURRENT_PIPELINE_SCHEMA,
       created_by: "SpecFlow",
       exported_at: new Date().toISOString(),
       name,
@@ -1569,6 +1582,7 @@ export default function PreprocessingWorkspace() {
             Dataset spectra: {datasetQ.data.dataset.spectra?.length ?? 0}
           </div>
         ) : null}
+        {datasetId && datasetQ.data?.dataset ? <AcquisitionSummary data={datasetAcquisition} /> : null}
       </div>
                 }
                 right={

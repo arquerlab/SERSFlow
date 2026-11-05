@@ -141,7 +141,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
             runs = ctx.get_client().analysis.list_runs(dataset_id, limit=limit)
             return {
                 "ok": True,
-                "items": [summarize.analysis_run_summary(r) for r in runs],
+                "items": [summarize.analysis_run_summary(r, compact=True) for r in runs],
                 "count": len(runs),
             }
 
@@ -174,7 +174,8 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         """Wait for an analysis job (timeout from TOML unless overridden)."""
 
         def _run():
-            job = ctx.get_client().analysis.wait_for_job(
+            client = ctx.get_client()
+            job = client.analysis.wait_for_job(
                 job_id,
                 timeout_s=timeout_s if timeout_s is not None else ctx.config.job_wait_timeout_s,
                 poll_interval_s=(
@@ -183,7 +184,15 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                     else ctx.config.job_poll_interval_s
                 ),
             )
-            return summarize.job_summary(job)
+            out = summarize.job_summary(job)
+            # Surface failed fits right away so agents do not read NaN features as data (K2).
+            if out.get("status") == "completed" and out.get("run_id"):
+                try:
+                    run = summarize._dump(client.analysis.get_run(str(out["run_id"])))
+                    out.update(summarize.run_fit_warning_fields(run.get("run") or run))
+                except Exception:
+                    pass
+            return out
 
         return await tool_call(
             ctx,

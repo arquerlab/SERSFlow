@@ -56,6 +56,35 @@ def fit_window_mask(x: np.ndarray, params: dict[str, Any]) -> np.ndarray:
     return mask
 
 
+MIN_FIT_WINDOW_POINTS = 3
+
+
+def fit_not_applicable_reason(xy: XY, params: dict[str, Any]) -> str | None:
+    """
+    Reason string when a fitting step legitimately does not apply to this spectrum, else None.
+
+    "Not applicable" (silent pass-through) is distinct from "failed" (recorded, K2): it covers a
+    fit window that does not overlap the spectrum's x range, as happens when a recipe for one XPS
+    region meets a spectrum of another region in a mixed pipeline. An EMPTY spectrum is not
+    "not applicable": it means an earlier step or worker produced nothing, which is a failure.
+    """
+    x = np.asarray(xy.x, dtype=float).ravel()
+    if x.size == 0 or np.asarray(xy.y).size == 0:
+        return None
+    try:
+        mask = fit_window_mask(x, params)
+    except ValueError:
+        return None  # invalid window = configuration error, reported as a failure
+    n_in = int(np.count_nonzero(mask & np.isfinite(x)))
+    if n_in < MIN_FIT_WINDOW_POINTS:
+        lo, hi = parse_fit_window(params)
+        return (
+            f"fit window [{lo}, {hi}] has {n_in} point(s) in spectrum range "
+            f"[{float(np.nanmin(x)):g}, {float(np.nanmax(x)):g}]"
+        )
+    return None
+
+
 def apply_fit_window_xy(xy: XY, params: dict[str, Any]) -> tuple[XY, np.ndarray]:
     """
     Crop ``xy`` to the optional fit window.

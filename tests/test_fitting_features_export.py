@@ -44,9 +44,13 @@ def test_pseudo_voigt_peak_area_matches_mix() -> None:
     assert pseudo_voigt_peak_area(amp, fwhm, eta) == pytest.approx(expected)
 
 
-def test_gl_peak_area_matches_casaxps_percent() -> None:
+def test_sgl_peak_area_matches_casaxps_percent() -> None:
+    # K1: the SUM form is SGL(m); GL(m) is the CasaXPS product (see test_gl_product.py).
+    from sersflow.core.metrics.fitting_features import sgl_peak_area
+
     amp, fwhm, m = 50.0, 15.0, 30.0
-    assert gl_peak_area(amp, fwhm, m) == pytest.approx(pseudo_voigt_peak_area(amp, fwhm, m / 100.0))
+    assert sgl_peak_area(amp, fwhm, m) == pytest.approx(pseudo_voigt_peak_area(amp, fwhm, m / 100.0))
+    assert gl_peak_area(amp, fwhm, m) < sgl_peak_area(amp, fwhm, m)  # product has lighter tails
 
 
 def test_voigt_peak_area_matches_numeric_integral() -> None:

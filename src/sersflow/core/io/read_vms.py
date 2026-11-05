@@ -37,6 +37,12 @@ class VamasHeader:
     experiment_variable_label: str | None = None
     experiment_variable_unit: str | None = None
     declared_n_blocks: int | None = None
+    experiment_mode: str = "NORM"
+    scan_mode: str = "REGULAR"
+    experiment_variable_labels: list[str] = field(default_factory=list)
+    experiment_variable_units: list[str] = field(default_factory=list)
+    n_future_block_entries: int = 0
+    map_info: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -60,6 +66,8 @@ class VamasBlock:
     y: np.ndarray
     x: np.ndarray
     extra_fields: dict[str, Any] = field(default_factory=dict)
+    aux: dict[str, np.ndarray] = field(default_factory=dict)
+    """Further ISO 14976 corresponding variables (e.g. ``transmission``), same length as ``y``."""
 
 
 def _is_float(s: str) -> bool:
@@ -82,6 +90,93 @@ _SPECTRUM_AVG_RE = re.compile(r"^(?P<prefix>.*)_spectrum$", re.IGNORECASE)
 _SPECTRUM_IND_RE = re.compile(r"^(?P<prefix>.*)_spectrum_(?P<idx>\d+)$", re.IGNORECASE)
 
 VmsSpectrumMode = Literal["averages", "individuals", "all"]
+
+# ISO 14976 experiment modes that change the header / block layout.
+_ISO_EXPERIMENT_MODES = frozenset({"MAP", "MAPDP", "MAPSV", "MAPSVDP", "NORM", "SDP", "SDPSV", "SEM", "NOEXP"})
+_MODES_WITH_REGION_COUNT = frozenset({"MAP", "MAPDP", "NORM", "SDP"})
+_MODES_WITH_MAP_POSITIONS = frozenset({"MAP", "MAPDP"})
+_MODES_WITH_DEPTH_PROFILE = frozenset({"MAPDP", "MAPSVDP", "SDP", "SDPSV"})
+_MODES_WITH_FIELD_OF_VIEW = frozenset({"MAP", "MAPDP", "MAPSV", "MAPSVDP", "SEM"})
+_MODES_WITH_LINESCAN = frozenset({"MAPSV", "MAPSVDP", "SEM"})
+_SPUTTER_ION_TECHNIQUES = frozenset(
+    {"FABMS", "FABMS ENERGY SPEC", "ISS", "SIMS", "SIMS ENERGY SPEC", "SNMS", "SNMS ENERGY SPEC"}
+)
+_SPUTTER_SOURCE_TECHNIQUES = frozenset({"AES DIFF", "AES DIR", "EDX", "ELS", "UPS", "XPS", "XRF"})
+
+YUnit = Literal["counts", "cps", "unknown"]
+
+
+def _aux_name(label: str, used: set[str]) -> str:
+    """Stable snake_case name for a corresponding variable (``Transmission`` -> ``transmission``)."""
+    base = re.sub(r"[^a-z0-9]+", "_", str(label or "").strip().lower()).strip("_") or "aux"
+    if "transmission" in base:
+        base = "transmission"
+    name = base
+    n = 2
+    while name in used:
+        name = f"{base}_{n}"
+        n += 1
+    used.add(name)
+    return name
+
+
+def classify_y_unit(corr_var_label: str | None, corr_var_unit: str | None, signal_mode: str | None) -> YUnit:
+    """
+    Whether the primary corresponding variable holds counts per channel or counts per second.
+
+    ISO 14976 / CasaXPS: unit ``d`` (dimensionless) with label ``counts`` = counts per channel;
+    ``c/s`` / ``cps`` / ``counts per second`` = rate. Anything else (e.g. normalised synchrotron
+    intensity, ``arb. units``) is ``unknown`` so no Poisson statistics are assumed.
+    """
+    lab = str(corr_var_label or "").strip().lower()
+    unit = str(corr_var_unit or "").strip().lower().replace(" ", "")
+    mode = str(signal_mode or "").strip().lower()
+    if unit in {"c/s", "cps", "counts/s", "count/s", "s-1", "1/s"} or "per second" in lab or lab in {"cps", "c/s"}:
+        return "cps"
+    if unit in {"d", "counts", "count", "cts", ""} and lab in {"counts", "count", "intensity", "cts"}:
+        if mode and "pulse" not in mode and "count" not in mode:
+            return "unknown"  # e.g. analogue detection: arbitrary units, not counts
+        return "counts"
+    return "unknown"
+
+
+def _positive_float(raw: Any) -> float | None:
+    v = _as_optional_float(raw)
+    return v if v is not None and math.isfinite(v) and v > 0 else None
+
+
+def count_statistics(meta: dict[str, Any]) -> dict[str, Any]:
+    """``{"y_unit", "dwell_time_s", "n_scans", "counts_scale"}``; counts = y * counts_scale (None = unknown)."""
+    unit = str(meta.get("y_unit") or "unknown")
+    dwell = _positive_float(meta.get("dwell_time_s"))
+    scans = _positive_float(meta.get("n_scans"))
+    scale: float | None
+    if unit == "counts":
+        scale = 1.0
+    elif unit == "cps" and dwell is not None and scans is not None:
+        scale = dwell * scans
+    else:
+        scale = None
+    return {"y_unit": unit, "dwell_time_s": dwell, "n_scans": scans, "counts_scale": scale}
+
+
+def counts_per_channel(y: np.ndarray, meta: dict[str, Any]) -> np.ndarray | None:
+    """Total counts per channel (for Poisson weights, F1), or None when y is not count-based."""
+    scale = count_statistics(meta)["counts_scale"]
+    if scale is None:
+        return None
+    return np.asarray(y, dtype=float) * float(scale)
+
+
+def cps(y: np.ndarray, meta: dict[str, Any]) -> np.ndarray | None:
+    """Counts per second (for quantification, Q1), or None when the rate cannot be derived."""
+    st = count_statistics(meta)
+    yy = np.asarray(y, dtype=float)
+    if st["y_unit"] == "cps":
+        return yy
+    if st["y_unit"] == "counts" and st["dwell_time_s"] is not None and st["n_scans"] is not None:
+        return yy / (float(st["dwell_time_s"]) * float(st["n_scans"]))
+    return None
 
 
 def classify_block_role(block_name: str) -> dict[str, Any]:
@@ -193,6 +288,22 @@ def block_meta_dict(block: VamasBlock) -> dict[str, Any]:
     converted_from = (block.extra_fields or {}).get("x_axis_converted_from")
     if converted_from:
         out["x_axis_converted_from"] = converted_from
+    ef = block.extra_fields or {}
+    # IO1: what the ordinate is, so F1 (Poisson weights) and Q1 (CPS) can use it.
+    out["y_unit"] = ef.get("y_unit") or "unknown"
+    out["y_label"] = ef.get("corr_var_label")
+    dwell = _positive_float(ef.get("dwell_time"))
+    if dwell is not None:
+        out["dwell_time_s"] = dwell
+    scans = _positive_float(ef.get("n_scans"))
+    if scans is not None:
+        out["n_scans"] = int(scans) if float(scans).is_integer() else scans
+    if ef.get("signal_mode"):
+        out["signal_mode"] = ef.get("signal_mode")
+    if block.aux:
+        out["aux_arrays"] = sorted(block.aux)
+    if ef.get("x_from_corresponding_variable"):
+        out["x_irregular"] = True
     return out
 
 
@@ -367,35 +478,65 @@ def _parse_header(r: _LineReader) -> VamasHeader:
     experiment_mode = r.next_raw().strip()
     scan_mode = r.next_raw().strip()
     raw.extend([experiment_mode + "\n", scan_mode + "\n"])
+    mode_u = experiment_mode.upper()
+    scan_u = scan_mode.upper()
+    if scan_u == "MAPPING":
+        raise VmsParseError(
+            "VAMAS scan mode MAPPING (image data) is not supported yet.", line_no=r.line_no, path=r.path
+        )
 
-    n_regions_s = r.next_raw().strip()
+    # ISO 14976: the region count is present for MAP, MAPDP, NORM, SDP. Legacy writers that put a
+    # non-ISO token here (e.g. "REGULAR") always wrote it, so keep reading it for unknown modes.
+    n_regions: int | None = None
+    if mode_u in _MODES_WITH_REGION_COUNT or mode_u not in _ISO_EXPERIMENT_MODES:
+        n_regions_s = r.next_raw().strip()
+        raw.append(n_regions_s + "\n")
+        n_regions = int(n_regions_s) if _is_int(n_regions_s) else None
+    map_info: dict[str, int] = {}
+    if mode_u in _MODES_WITH_MAP_POSITIONS:
+        for key in ("n_analysis_positions", "n_x_coordinates", "n_y_coordinates"):
+            v = r.next_raw().strip()
+            raw.append(v + "\n")
+            if _is_int(v):
+                map_info[key] = int(v)
+
     n_exp_vars_s = r.next_raw().strip()
-    raw.extend([n_regions_s + "\n", n_exp_vars_s + "\n"])
-
-    n_regions = int(n_regions_s) if _is_int(n_regions_s) else None
+    raw.append(n_exp_vars_s + "\n")
     n_exp_vars = int(n_exp_vars_s) if _is_int(n_exp_vars_s) else 0
+    exp_labels: list[str] = []
+    exp_units: list[str] = []
+    for _ in range(max(0, n_exp_vars)):
+        lab = r.next_raw().strip()
+        unit = r.next_raw().strip()
+        raw.extend([lab + "\n", unit + "\n"])
+        exp_labels.append(lab)
+        exp_units.append(unit)
+    exp_var_label = exp_labels[0] if exp_labels else None
+    exp_var_unit = exp_units[0] if exp_units else None
 
-    exp_var_label = None
-    exp_var_unit = None
-    if n_exp_vars > 0:
-        exp_var_label = r.next_raw().strip()
-        exp_var_unit = r.next_raw().strip()
-        raw.extend([exp_var_label + "\n", exp_var_unit + "\n"])
-
-    n_param_exclusions = r.next_raw().strip()
-    n_manual_items = r.next_raw().strip()
-    n_future_experiment_items = r.next_raw().strip()
-    n_future_block_entries = r.next_raw().strip()
+    # Parameter inclusion (+n) / exclusion (-n) list, then the listed prefix numbers.
+    n_incl_s = r.next_raw().strip()
+    raw.append(n_incl_s + "\n")
+    n_incl = int(n_incl_s) if _is_int(n_incl_s) else 0
+    if n_incl != 0:
+        raise VmsParseError(
+            f"VAMAS parameter inclusion/exclusion list (n={n_incl}) is not supported: blocks after the "
+            "first would omit fields. Re-export the file with full blocks (e.g. from CasaXPS).",
+            line_no=r.line_no,
+            path=r.path,
+        )
+    n_manual_s = r.next_raw().strip()
+    raw.append(n_manual_s + "\n")
+    for _ in range(max(0, int(n_manual_s) if _is_int(n_manual_s) else 0)):
+        raw.append(r.next_raw().strip() + "\n")
+    n_future_exp_s = r.next_raw().strip()
+    n_future_block_s = r.next_raw().strip()
+    raw.extend([n_future_exp_s + "\n", n_future_block_s + "\n"])
+    for _ in range(max(0, int(n_future_exp_s) if _is_int(n_future_exp_s) else 0)):
+        raw.append(r.next_raw().strip() + "\n")
+    n_future_block_entries = int(n_future_block_s) if _is_int(n_future_block_s) else 0
     n_blocks_s = r.next_raw().strip()
-    raw.extend(
-        [
-            n_param_exclusions + "\n",
-            n_manual_items + "\n",
-            n_future_experiment_items + "\n",
-            n_future_block_entries + "\n",
-            n_blocks_s + "\n",
-        ]
-    )
+    raw.append(n_blocks_s + "\n")
 
     declared_n_blocks = int(n_blocks_s) if _is_int(n_blocks_s) else None
     format_flags = {"experiment_mode": experiment_mode, "scan_mode": scan_mode}
@@ -413,6 +554,12 @@ def _parse_header(r: _LineReader) -> VamasHeader:
         experiment_variable_label=exp_var_label or None,
         experiment_variable_unit=exp_var_unit or None,
         declared_n_blocks=declared_n_blocks,
+        experiment_mode=mode_u or "NORM",
+        scan_mode=scan_u or "REGULAR",
+        experiment_variable_labels=exp_labels,
+        experiment_variable_units=exp_units,
+        n_future_block_entries=max(0, n_future_block_entries),
+        map_info=map_info,
     )
 
 
@@ -439,7 +586,12 @@ def _parse_block(
     header_experiment_id: str | None,
     *,
     n_experiment_variables: int = 0,
+    experiment_mode: str = "NORM",
+    scan_mode: str = "REGULAR",
+    n_future_block_entries: int = 0,
 ) -> VamasBlock | None:
+    mode_u = str(experiment_mode or "NORM").upper()
+    irregular = str(scan_mode or "").upper() == "IRREGULAR"
     # Skip blank lines between blocks
     while True:
         nxt = r.try_peek()
@@ -470,6 +622,10 @@ def _parse_block(
         block_comments.append(_read_expected(r))
 
     technique = _read_expected(r)
+    tech_u = (technique or "").strip().upper()
+    map_xy: tuple[str, str] | None = None
+    if mode_u in _MODES_WITH_MAP_POSITIONS:
+        map_xy = (_read_expected(r), _read_expected(r))
     # ISO 14976 / CasaXPS: after technique, one value per declared experiment variable.
     # Example (Casa file): XPS → 24 → source label → source energy (hν).
     exp_var_values: list[str] = []
@@ -479,6 +635,9 @@ def _parse_block(
     exp_var_value = exp_var_values[0] if len(exp_var_values) == 1 else (exp_var_values or None)
 
     source_label = _read_expected(r)
+    sputter_ion: list[str] = []
+    if mode_u in _MODES_WITH_DEPTH_PROFILE or tech_u in _SPUTTER_ION_TECHNIQUES:
+        sputter_ion = [_read_expected(r) for _ in range(3)]  # atomic number, n atoms, charge
     source_energy_s = _read_expected(r)
     excitation_energy_eV = float(source_energy_s) if _is_float(source_energy_s) else None
 
@@ -488,11 +647,19 @@ def _parse_block(
     _source_strength = _read_expected(r)
     _source_width_x = _read_expected(r)
     _source_width_y = _read_expected(r)
+    field_of_view: list[str] = []
+    if mode_u in _MODES_WITH_FIELD_OF_VIEW:
+        field_of_view = [_read_expected(r), _read_expected(r)]
+    if mode_u in _MODES_WITH_LINESCAN:
+        for _ in range(6):
+            _read_expected(r)
     _source_polar = _read_expected(r)
     _source_azimuth = _read_expected(r)
 
     analyser_mode = _read_expected(r)
     analyser_resolution = _read_expected(r)
+    if tech_u == "AES DIFF":
+        _read_expected(r)  # differential width
     analyser_magnification = _read_expected(r)
     analyser_work_function = _read_expected(r)
     # Next five lines: target bias + analysis widths + analyser axis angles (ISO),
@@ -507,25 +674,40 @@ def _parse_block(
     transition = _read_expected(r)  # could be blank in some files
 
     charge = _read_expected(r)
-    x_label = _read_expected(r)  # abscissa label (Binding Energy / kinetic energy)
-    x_unit = _read_expected(r)
-    x_start_s = _read_expected(r)
-    x_step_s = _read_expected(r)
-    x_start = float(x_start_s) if _is_float(x_start_s) else None
-    x_step = float(x_step_s) if _is_float(x_step_s) else None
+    x_label: str | None = None
+    x_unit: str | None = None
+    x_start: float | None = None
+    x_step: float | None = None
+    if not irregular:
+        x_label = _read_expected(r)  # abscissa label (Binding Energy / kinetic energy)
+        x_unit = _read_expected(r)
+        x_start_s = _read_expected(r)
+        x_step_s = _read_expected(r)
+        x_start = float(x_start_s) if _is_float(x_start_s) else None
+        x_step = float(x_step_s) if _is_float(x_step_s) else None
 
-    # Corresponding variables + acquisition (shared by legacy and ISO layouts).
+    # Corresponding variables: label/unit per variable; data are interleaved (ISO 14976).
     n_corr_vars_s = _read_expected(r)
     n_corr_vars = int(n_corr_vars_s) if _is_int(n_corr_vars_s) else 1
-    if n_corr_vars > 1:
+    if n_corr_vars < 1:
         raise VmsParseError(
-            f"VAMAS block has n_corresponding_variables={n_corr_vars}; "
-            "only single-channel (n=1) blocks are supported.",
+            f"VAMAS block has n_corresponding_variables={n_corr_vars}; expected >= 1.",
             line_no=r.line_no,
             path=r.path,
         )
-    corr_var_label = _read_expected(r)
-    corr_var_unit = _read_expected(r)
+    corr_vars: list[tuple[str, str]] = [(_read_expected(r), _read_expected(r)) for _ in range(n_corr_vars)]
+    if irregular:
+        # IRREGULAR scan mode has no start/increment: the abscissa is carried as the FIRST
+        # corresponding variable and the spectrum follows it.
+        if n_corr_vars < 2:
+            raise VmsParseError(
+                "IRREGULAR VAMAS block needs >= 2 corresponding variables (abscissa + signal).",
+                line_no=r.line_no,
+                path=r.path,
+            )
+        x_label, x_unit = corr_vars[0]
+    signal_var = 1 if irregular else 0
+    corr_var_label, corr_var_unit = corr_vars[signal_var]
     signal_mode = _read_expected(r)
     dwell_time = _read_expected(r)
     n_scans = _read_expected(r)
@@ -535,6 +717,10 @@ def _parse_block(
     # CasaXPS often sets n_additional_params > 0 with label/unit/value triplets
     # (e.g. PROPAGATION_CONVERGED) that must be consumed before m.
     signal_time_correction = _read_expected(r)
+    sputter_source: list[str] = []
+    if tech_u in _SPUTTER_SOURCE_TECHNIQUES and mode_u in _MODES_WITH_DEPTH_PROFILE:
+        # energy, beam current, width x, width y, polar angle, azimuth, sputtering mode
+        sputter_source = [_read_expected(r) for _ in range(7)]
     sample_tilt = _read_expected(r)
     sample_azimuth = _read_expected(r)
     sample_rotation = _read_expected(r)
@@ -550,17 +736,26 @@ def _parse_block(
             }
         )
 
+    future_block_values = [_read_expected(r) for _ in range(max(0, int(n_future_block_entries)))]
+
     m_s = _read_expected(r, allow_empty=False)
     if not _is_int(m_s):
         raise VmsParseError(f"Expected integer m (#points) but got {m_s!r}.", line_no=r.line_no, path=r.path)
-    m = int(m_s)
+    m = int(m_s)  # total ordinate values = points x corresponding variables
+    if m % n_corr_vars != 0:
+        raise VmsParseError(
+            f"Ordinate count {m} is not a multiple of {n_corr_vars} corresponding variables.",
+            line_no=r.line_no,
+            path=r.path,
+        )
 
-    y_min_s = _read_expected(r)
-    y_max_s = _read_expected(r)
-    y_min_declared = float(y_min_s) if _is_float(y_min_s) else None
-    y_max_declared = float(y_max_s) if _is_float(y_max_s) else None
+    minmax: list[tuple[float | None, float | None]] = []
+    for _ in range(n_corr_vars):
+        lo_s = _read_expected(r)
+        hi_s = _read_expected(r)
+        minmax.append((float(lo_s) if _is_float(lo_s) else None, float(hi_s) if _is_float(hi_s) else None))
+    y_min_declared, y_max_declared = minmax[signal_var]
 
-    # Payload: your writer is 1 value per line (y). For broader variants, we can detect x,y pairs.
     payload: list[float] = []
     for _ in range(m):
         val_s = _read_expected(r, allow_empty=False)
@@ -572,8 +767,19 @@ def _parse_block(
             )
         payload.append(float(val_s))
 
-    y = np.asarray(payload, dtype=float)
-    if x_start is None or x_step is None:
+    data = np.asarray(payload, dtype=float).reshape(-1, n_corr_vars)  # interleaved by point
+    y = data[:, signal_var].copy()
+    aux: dict[str, np.ndarray] = {}
+    used_names: set[str] = set()
+    for j, (lab, _unit) in enumerate(corr_vars):
+        if j == signal_var or (irregular and j == 0):
+            continue
+        aux[_aux_name(lab, used_names)] = data[:, j].copy()
+    if irregular:
+        x = data[:, 0].copy()
+        x_start = float(x[0]) if x.size else None
+        x_step = None
+    elif x_start is None or x_step is None:
         x = np.arange(len(y), dtype=float)
     else:
         x = x_start + x_step * np.arange(len(y), dtype=float)
@@ -599,7 +805,9 @@ def _parse_block(
             photon_energy_eV=float(excitation_energy_eV),
             analyser_work_function_eV=float(analyser_work_function_eV),
         )
-        if x_start is not None and x_step is not None:
+        if irregular and x_start is not None:
+            x_start = float(x[0])
+        elif x_start is not None and x_step is not None:
             x_start = float(excitation_energy_eV) - float(x_start) - float(analyser_work_function_eV)
             x_step = -float(x_step)
         x_label = "Binding Energy"
@@ -640,6 +848,7 @@ def _parse_block(
         y_max_declared=y_max_declared,
         y=y,
         x=x,
+        aux=aux,
         extra_fields={
             "gmt_offset": gmt_offset,
             "declared_experiment_id": header_experiment_id,
@@ -665,6 +874,16 @@ def _parse_block(
             "n_corresponding_variables": n_corr_vars,
             "corr_var_label": corr_var_label,
             "corr_var_unit": corr_var_unit,
+            "corresponding_variables": [{"label": lab, "unit": unit} for lab, unit in corr_vars],
+            "corr_var_min_max": minmax,
+            "y_unit": classify_y_unit(corr_var_label, corr_var_unit, signal_mode),
+            "x_from_corresponding_variable": irregular,
+            "experiment_mode": mode_u,
+            "map_xy": list(map_xy) if map_xy else None,
+            "field_of_view": field_of_view or None,
+            "sputter_ion": sputter_ion or None,
+            "sputter_source": sputter_source or None,
+            "future_block_values": future_block_values or None,
             "signal_mode": signal_mode,
             "dwell_time": dwell_time,
             "n_scans": n_scans,
@@ -699,6 +918,9 @@ def read_vms_blocks(path: str | Path) -> tuple[VamasHeader, list[VamasBlock]]:
             r,
             header.experiment_id,
             n_experiment_variables=int(header.declared_n_experiment_variables or 0),
+            experiment_mode=header.experiment_mode,
+            scan_mode=header.scan_mode,
+            n_future_block_entries=header.n_future_block_entries,
         )
         if b is None:
             break

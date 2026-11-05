@@ -17,12 +17,15 @@ PEAK_COMPONENT_TYPES = frozenset(
         "lorentzian",
         "pseudo_voigt",
         "gl",
+        "sgl",
+        "gl_gauss",
         "voigt",
         "ds",
         "gds",
         "la",
         "lf",
         "a_gl",
+        "a_sgl",
         "apv",
         "asymmetric_voigt",
     }
@@ -160,21 +163,57 @@ def _pseudo_voigt_spec() -> ComponentSpec:
     )
 
 
+def _gl_m_param(label: str = "Lorentzian % (m), CasaXPS GL(m)") -> ParamSpec:
+    return ParamSpec(
+        key="m",
+        label=label,
+        default=30.0,
+        lower_default=0.0,
+        upper_default=100.0,
+        unit="%",
+        ui={"step": 1.0, "min": 0.0, "max": 100.0},
+    )
+
+
 def _gl_spec() -> ComponentSpec:
     return ComponentSpec(
         component_type="gl",
-        display_name="Gaussian–Lorentzian sum (GL)",
+        display_name="GL(m) Gaussian×Lorentzian product (CasaXPS)",
+        params=[
+            *_peak_pos_amp_params(),
+            _fwhm_param(label="FWHM (true)"),
+            _gl_m_param(),
+        ],
+    )
+
+
+def _sgl_spec() -> ComponentSpec:
+    return ComponentSpec(
+        component_type="sgl",
+        display_name="SGL(m) Gaussian+Lorentzian sum (CasaXPS SGL)",
         params=[
             *_peak_pos_amp_params(),
             _fwhm_param(),
+            _gl_m_param("Lorentzian % (m), CasaXPS SGL(m)"),
+        ],
+    )
+
+
+def _gl_gauss_spec() -> ComponentSpec:
+    return ComponentSpec(
+        component_type="gl_gauss",
+        display_name="GL(m,n) product GL convolved with Gaussian (CasaXPS)",
+        params=[
+            *_peak_pos_amp_params(),
+            _fwhm_param(label="FWHM of GL(m) core (true)"),
+            _gl_m_param(),
             ParamSpec(
-                key="m",
-                label="Lorentzian % (m), CasaXPS GL(m)",
-                default=30.0,
+                key="fwhm_g",
+                label="Gaussian FWHM n (convolution)",
+                default=0.3,
                 lower_default=0.0,
-                upper_default=100.0,
-                unit="%",
-                ui={"step": 1.0, "min": 0.0, "max": 100.0},
+                upper_default=None,
+                ui={"step": 0.05, "min": 0.0},
             ),
         ],
     )
@@ -372,10 +411,15 @@ def _apv_spec() -> ComponentSpec:
     )
 
 
-def _a_gl_spec() -> ComponentSpec:
+def _a_gl_spec(component_type: str = "a_gl") -> ComponentSpec:
+    display = (
+        "Asymmetric GL A(a,n,m)GL(m) (product base)"
+        if component_type == "a_gl"
+        else "Asymmetric SGL A(a,n,m)SGL(m) (legacy sum base)"
+    )
     return ComponentSpec(
-        component_type="a_gl",
-        display_name="Asymmetric GL A(a,n,m)GL(m)",
+        component_type=component_type,
+        display_name=display,
         params=[
             *_peak_pos_amp_params(),
             _fwhm_param(default=1.0),
@@ -556,12 +600,15 @@ def list_component_types() -> list[ComponentSpec]:
         _lorentzian_spec(),
         _pseudo_voigt_spec(),
         _gl_spec(),
+        _sgl_spec(),
+        _gl_gauss_spec(),
         _voigt_spec(),
         _ds_spec(),
         _gds_spec(),
         _la_spec(),
         _lf_spec(),
         _a_gl_spec(),
+        _a_gl_spec("a_sgl"),
         _apv_spec(),
         _asymmetric_voigt_spec(),
     ]
@@ -575,12 +622,15 @@ _BUILDERS: dict[str, Callable[[], tuple[Callable[..., np.ndarray], list[ParamSpe
     "lorentzian": lambda: (fitting_models.lorentzian, _lorentzian_spec().params),
     "pseudo_voigt": lambda: (fitting_models.pseudo_voigt, _pseudo_voigt_spec().params),
     "gl": lambda: (fitting_models.gl, _gl_spec().params),
+    "sgl": lambda: (fitting_models.sgl, _sgl_spec().params),
+    "gl_gauss": lambda: (fitting_models.gl_gauss, _gl_gauss_spec().params),
     "voigt": lambda: (fitting_models.voigt, _voigt_spec().params),
     "ds": lambda: (fitting_models.ds, _ds_spec().params),
     "gds": lambda: (fitting_models.gds, _gds_spec().params),
     "la": lambda: (fitting_models.la, _la_spec().params),
     "lf": lambda: (fitting_models.lf, _lf_spec().params),
     "a_gl": lambda: (fitting_models.a_gl, _a_gl_spec().params),
+    "a_sgl": lambda: (fitting_models.a_sgl, _a_gl_spec("a_sgl").params),
     "apv": lambda: (fitting_models.apv, _apv_spec().params),
     "asymmetric_voigt": lambda: (fitting_models.asymmetric_voigt, _asymmetric_voigt_spec().params),
 }

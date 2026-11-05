@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 import os
 import zipfile
@@ -83,6 +84,8 @@ def _csv_bytes(
 
 _HEALTH_COLUMNS = (
     "spectrum_id",
+    "fit_status",
+    "fit_failure_reason",
     "rmse",
     "n_at_bound",
     "bg_gt_data_frac",
@@ -105,7 +108,14 @@ def _health_row(sid, xy, y_hat_arr, stored_diag, mapping, comps_full) -> dict[st
     health = fit_health_metrics(
         xy.y.astype(float)[mask], y_hat_arr[mask], x=xy.x.astype(float)[mask], bg_curve=bg
     )
-    row: dict[str, Any] = {"spectrum_id": sid, "rmse": getattr(stored_diag, "rmse", None)}
+    succ = getattr(stored_diag, "success", None)
+    status = "not_converged" if succ is not None and float(succ) == 0.0 else "ok"
+    row: dict[str, Any] = {
+        "spectrum_id": sid,
+        "fit_status": status,
+        "fit_failure_reason": "optimizer reported success=False" if status == "not_converged" else None,
+        "rmse": getattr(stored_diag, "rmse", None),
+    }
     row["n_at_bound"] = getattr(stored_diag, "n_at_bound", None)
     row.update(health)
     return row
@@ -123,6 +133,29 @@ def _health_csv_bytes(rows: list[dict[str, Any]]) -> bytes:
             ]
         )
     return buf.getvalue().encode("utf-8")
+
+
+def _failures_for_step(run: Any, step: Any, step_index: int) -> dict[str, str | None]:
+    """spectrum_id -> reason for fits recorded as failed in the run (K2), for this fitting step."""
+    raw = getattr(run, "warnings_json", None)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    items = ((data or {}).get("fit_failures") or {}).get("items") or []
+    step_id = getattr(step, "step_id", None)
+    out: dict[str, str | None] = {}
+    for it in items:
+        if not isinstance(it, dict) or it.get("status") != "failed":
+            continue
+        same = (step_id and it.get("step_id") == step_id) or (
+            not step_id and it.get("step_index") == step_index
+        )
+        if same:
+            out[str(it.get("spectrum_id"))] = it.get("reason")
+    return out
 
 
 def execute_fit_curve_job(job_id: str) -> None:
@@ -143,6 +176,7 @@ def execute_fit_curve_job(job_id: str) -> None:
             raise ValueError(f"too many spectra (max {_max_spectra()})")
 
         fitting_idx, fitting_step = _find_fitting_step(effective_pipeline, rec.fitting_step_num)
+        failures_by_sid = _failures_for_step(run, fitting_step, fitting_idx)
         step_params = dict(fitting_step.params or {})
         tech = getattr(effective_pipeline, "technique_family", None)
         if tech and "technique_family" not in step_params:
@@ -209,6 +243,16 @@ def execute_fit_curve_job(job_id: str) -> None:
                 )
                 if p_opt is None:
                     logger.debug("skip %s: %s", sid, err)
+                    succ = getattr(stored_diag, "success", None)
+                    if sid in failures_by_sid or (succ is not None and float(succ) == 0.0):
+                        # Failed fit: no curves, but it must appear in fit_health.csv (K2).
+                        health_rows.append(
+                            {
+                                "spectrum_id": sid,
+                                "fit_status": "failed",
+                                "fit_failure_reason": failures_by_sid.get(sid) or err,
+                            }
+                        )
                     if done % 25 == 0 or done == total:
                         update_fit_curve_job(job_id=job_id, progress_done=done, progress_total=total)
                     continue

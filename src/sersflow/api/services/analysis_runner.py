@@ -31,6 +31,7 @@ from sersflow.core.metrics.intensity_probes import (
     preview_feature_keys_for_pipeline,
     spectral_intensity_feature_key_groups_for_pipeline,
 )
+from sersflow.core.preprocess.fit_status import fit_summary_warnings, summarize_fit_statuses
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline, run_pipeline_parallel_no_cache
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 from sersflow.api.services.observation_export import _labels_for_spectrum
@@ -39,6 +40,7 @@ from sersflow.infra.analysis_store import (
     insert_spectrum_rows_batch,
     prune_unpinned_runs,
     update_job_progress,
+    set_run_warnings,
     update_run_status,
 )
 from sersflow.infra.analysis_store import get_run as store_get_run
@@ -145,6 +147,7 @@ def _collect_feature_row(
     per_step_input_xy: dict[int, Any],
     null_row: dict[str, Any],
     spectrum_xps_region: str | None = None,
+    fit_status_out: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     feats = dict(null_row)
     accumulated: dict[str, Any] = {}
@@ -156,7 +159,11 @@ def _collect_feature_row(
     operation_groups = operation_feature_key_groups_for_pipeline(pipeline)
 
     _, fitting_values = collect_fitting_features_for_pipeline(
-        xy, pipeline, per_step_input_xy=per_step_input_xy, spectrum_xps_region=spectrum_xps_region
+        xy,
+        pipeline,
+        per_step_input_xy=per_step_input_xy,
+        spectrum_xps_region=spectrum_xps_region,
+        status_out=fit_status_out,
     )
     _, intensity_values = collect_spectral_intensity_features_for_pipeline(xy, pipeline, per_step_input_xy=per_step_input_xy)
     _, integration_values = collect_integration_features_for_pipeline(xy, pipeline, per_step_input_xy=per_step_input_xy)
@@ -380,8 +387,11 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
         buffer: list[tuple[str, dict[str, Any]]] = []
         done = 0
         null_row = {k: None for k in keys}
+        fit_statuses: dict[str, list[dict[str, Any]]] = {}
+        extraction_errors: list[str] = []
         for sid, xy in final.items():
             pin = per_inputs.get(sid) or {}
+            st_list: list[dict[str, Any]] = []
             try:
                 feats = _collect_feature_row(
                     xy,
@@ -389,10 +399,13 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
                     per_step_input_xy=pin,
                     null_row=null_row,
                     spectrum_xps_region=region_by_sid.get(sid),
+                    fit_status_out=st_list,
                 )
             except Exception as e:
                 logger.warning("feature extraction failed for spectrum %s (skipped): %s", sid, e)
                 feats = dict(null_row)
+                extraction_errors.append(f"{sid}: {e}")
+            fit_statuses[str(sid)] = st_list
             buffer.append((sid, feats))
             done += 1
             if len(buffer) >= COMMIT_BATCH:
@@ -408,6 +421,23 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
 
         if buffer:
             insert_spectrum_rows_batch(run_id=run_id, rows=buffer)
+
+        fit_summary = summarize_fit_statuses(fit_statuses)
+        run_warnings = fit_summary_warnings(fit_summary)
+        if extraction_errors:
+            run_warnings.append(
+                f"feature extraction failed for {len(extraction_errors)} spectrum(s): "
+                + "; ".join(extraction_errors[:5])
+            )
+        # Always written (None clears a stale value if a run id is re-executed).
+        set_run_warnings(
+            run_id=run_id,
+            warnings=(
+                {"warnings": run_warnings, "fit_failures": fit_summary}
+                if (fit_summary["n_fits"] or run_warnings)
+                else None
+            ),
+        )
 
         update_run_status(
             run_id=run_id,

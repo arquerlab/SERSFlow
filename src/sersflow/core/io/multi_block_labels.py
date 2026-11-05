@@ -55,6 +55,13 @@ _LOADER_ONLY_STRUCTURAL_KEYS = frozenset(
         "xas_edge",
         "xas_i0_normalized",
         "y_label",
+        # IO1 (VAMAS): ordinate statistics + auxiliary corresponding variables
+        "y_unit",
+        "dwell_time_s",
+        "n_scans",
+        "signal_mode",
+        "aux_arrays",
+        "x_irregular",
     }
 )
 

@@ -18,6 +18,7 @@ import { downloadBlob, downloadCsv, plotlyDivToPngBytes, plotlyDivToSvgText, row
 import { buildFitResidualFigure } from "./preprocess/fitResidualPlot";
 import { fitHealthSummary } from "./preprocess/fitHealth";
 import type { ClusterResult, PcaLikeResult, PcaScaler, PlotCardModel } from "./analyze/types";
+import { FitFailureBadge, FitFailurePanel } from "./analyze/FitFailures";
 import {
   buildCumulativeEvr,
   buildLoadingsHeatmap,
@@ -2245,7 +2246,10 @@ export default function AnalyzeWorkspace() {
                         onClick={() => setRunId(r.run_id)}
                       >
                         <td title={r.label ?? r.run_id}>{(r.label ?? r.run_id).slice(0, 26)}{(r.label ?? r.run_id).length > 26 ? "…" : ""}</td>
-                        <td>{r.status}</td>
+                        <td>
+                          {r.status}
+                          <FitFailureBadge run={r} />
+                        </td>
                         <td>{r.dataset_name ?? "—"}</td>
                         <td>{r.pipeline_name ?? "—"}</td>
                         <td title={r.pipeline_hash ?? ""} style={{ fontFamily: "monospace" }}>
@@ -2316,6 +2320,7 @@ export default function AnalyzeWorkspace() {
                 <div>
                   <b>Finished:</b> {selectedRun.finished_at ?? "—"}
                 </div>
+                <FitFailurePanel run={selectedRun} />
               </div>
             ) : (
               <div className="hint" style={{ marginTop: "10px" }}>

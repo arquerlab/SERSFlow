@@ -24,6 +24,7 @@
 </ul></div>
 
 <h2>XPS files</h2>
+<p>VAMAS blocks also record what the intensity is: <code>y_unit</code> (<code>counts</code>, <code>cps</code> = counts per second, or <code>unknown</code> for normalised or analogue data), <code>dwell_time_s</code>, <code>n_scans</code> and <code>aux_arrays</code> (for example <code>transmission</code>). Counts per channel = y × dwell × scans for cps data. Prepare shows a summary under the dataset. Files imported before this change get these labels when they are re-imported.</p>
 <p>For VAMAS and NeXus files, every region (block) gets its own structural information (region name, average or individual, pass energy, excitation energy, replicate number) <b>plus</b> experiment labels read from the path and from the block name and comments. For VAMAS, the block's sample identifier string is kept as <code>sample</code> and is also searched for gas, pH, current, potential and electrolyte. Block labels take priority over labels from the path.</p>
 
 <h2>Editing labels by hand</h2>

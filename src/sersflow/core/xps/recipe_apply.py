@@ -61,22 +61,50 @@ def _prefer_pass_energy(
     *,
     preferred_from_acquisition: int | None = None,
 ) -> int:
-    pes = list(fit.pass_energies) if fit.pass_energies else [10, 20]
+    return _resolve_pass_energy(fit, requested, preferred_from_acquisition)[0]
+
+
+def _resolve_pass_energy(
+    fit: CompoundFit,
+    requested: int | None,
+    preferred_from_acquisition: int | None,
+) -> tuple[int, dict[str, Any]]:
+    """
+    Pick the recipe pass energy (PE) and describe how it was chosen.
+
+    ``source`` is one of: ``request`` (explicit pass_energy), ``acquisition`` (dataset PE has a
+    column), ``acquisition_closest`` (dataset PE has no column; nearest recipe PE used),
+    ``default`` (no hint; 20 eV or the first recipe PE).
+    """
+    pes = [int(x) for x in (fit.pass_energies or [])] or [10, 20]
+    info: dict[str, Any] = {
+        "requested": int(requested) if requested is not None else None,
+        "acquisition": int(preferred_from_acquisition) if preferred_from_acquisition is not None else None,
+        "available": list(pes),
+    }
     if requested is not None:
-        return int(requested)
-    if preferred_from_acquisition is not None:
+        pe, source = int(requested), "request"
+    elif preferred_from_acquisition is not None:
         pref = int(preferred_from_acquisition)
         if pref in pes:
-            return pref
-        # Closest available PE
-        return min(pes, key=lambda x: abs(int(x) - pref))
-    if 20 in pes:
-        return 20
-    return int(pes[0]) if pes else 10
+            pe, source = pref, "acquisition"
+        else:
+            pe, source = min(pes, key=lambda x: abs(int(x) - pref)), "acquisition_closest"
+    elif 20 in pes:
+        pe, source = 20, "default"
+    else:
+        pe, source = int(pes[0]), "default"
+    info["used"] = pe
+    info["source"] = source
+    return pe, info
 
 
-def _fwhm_for_peak(peak: dict[str, Any], pe: int, warnings: list[str]) -> float:
+def _fwhm_for_peak(
+    peak: dict[str, Any], pe: int, fallbacks: list[dict[str, Any]] | None = None
+) -> float:
+    """FWHM from the ``fwhm_<pe>`` column; records any fallback column in ``fallbacks``."""
     key = f"fwhm_{pe}"
+    label = str(peak.get("label") or peak.get("index") or "?")
     raw = peak.get(key)
     if isinstance(raw, (int, float)) and math.isfinite(float(raw)) and float(raw) > 0:
         return float(raw)
@@ -86,10 +114,35 @@ def _fwhm_for_peak(peak: dict[str, Any], pe: int, warnings: list[str]) -> float:
         alt_key = f"fwhm_{alt}"
         v = peak.get(alt_key)
         if isinstance(v, (int, float)) and math.isfinite(float(v)) and float(v) > 0:
-            warnings.append(f"missing {key}; used {alt_key}")
+            if fallbacks is not None:
+                fallbacks.append({"peak": label, "requested_column": key, "used_column": alt_key})
             return float(v)
-    warnings.append(f"missing FWHM for pass energy {pe}; using 1.0")
+    if fallbacks is not None:
+        fallbacks.append({"peak": label, "requested_column": key, "used_column": None})
     return 1.0
+
+
+def pass_energy_warning(info: dict[str, Any]) -> str | None:
+    """One human-readable warning summarising a pass-energy fallback (None when exact)."""
+    if not info.get("fallback"):
+        return None
+    parts: list[str] = []
+    if info.get("source") == "acquisition_closest":
+        parts.append(
+            f"dataset pass energy {info.get('acquisition')} eV has no FWHM column in this recipe; "
+            f"used {info.get('used')} eV (available: {', '.join(str(x) for x in info.get('available') or [])})"
+        )
+    fbs = info.get("fwhm_fallbacks") or []
+    if fbs:
+        used_cols = sorted({str(f.get("used_column")) for f in fbs if f.get("used_column")})
+        n_default = sum(1 for f in fbs if not f.get("used_column"))
+        msg = f"{len(fbs)} peak(s) lack fwhm_{info.get('used')}"
+        if used_cols:
+            msg += f"; used {', '.join(used_cols)}"
+        if n_default:
+            msg += f"; {n_default} set to 1.0 eV"
+        parts.append(msg)
+    return "pass energy: " + "; ".join(parts) if parts else None
 
 
 def _pos_bounds(be: float, be_std: float | None) -> tuple[float, float]:
@@ -213,10 +266,14 @@ def _peak_param_values(
     values["amp"] = float(amp)
     if "fwhm" in values:
         values["fwhm"] = fwhm
-    if ctype == "gl":
+    if ctype in ("gl", "sgl", "gl_gauss"):
         m = ls_params.get("m")
         if isinstance(m, (int, float)) and math.isfinite(float(m)):
             values["m"] = float(np_clip_m(m))
+    if ctype == "gl_gauss":
+        n = ls_params.get("fwhm_g", ls_params.get("n"))
+        if isinstance(n, (int, float)) and math.isfinite(float(n)):
+            values["fwhm_g"] = max(0.0, float(n))
     if ctype == "la":
         for k in ("alpha", "beta"):
             v = ls_params.get(k)
@@ -233,7 +290,7 @@ def _peak_param_values(
             v = ls_params.get(k)
             if isinstance(v, (int, float)) and math.isfinite(float(v)):
                 values[k] = float(v)
-    if ctype == "a_gl":
+    if ctype in ("a_gl", "a_sgl"):
         m = ls_params.get("m")
         if isinstance(m, (int, float)) and math.isfinite(float(m)):
             values["m"] = float(np_clip_m(m))
@@ -332,7 +389,7 @@ def _apply_fermi_edge_recipe(
 
 
 # Component types whose area/height ratio area_ratio links can evaluate (see fitting_lmfit).
-_AREA_RATIO_TYPES = frozenset({"gl", "gaussian", "lorentzian", "pseudo_voigt"})
+_AREA_RATIO_TYPES = frozenset({"gl", "sgl", "gaussian", "lorentzian", "pseudo_voigt"})
 
 
 def apply_compound_fit_to_fitting_params(
@@ -358,9 +415,8 @@ def apply_compound_fit_to_fitting_params(
     if _is_fermi_edge_recipe(peaks):
         return _apply_fermi_edge_recipe(fit, peaks, warnings)
 
-    pe = _prefer_pass_energy(
-        fit, pass_energy, preferred_from_acquisition=preferred_pass_energy
-    )
+    pe, pe_info = _resolve_pass_energy(fit, pass_energy, preferred_pass_energy)
+    fwhm_fallbacks: list[dict[str, Any]] = []
     if fit.pass_energies and pe not in fit.pass_energies:
         allowed = ", ".join(str(x) for x in fit.pass_energies)
         raise ValueError(f"pass_energy {pe} not in recipe pass_energies [{allowed}]")
@@ -404,7 +460,7 @@ def apply_compound_fit_to_fitting_params(
         ctype = _lineshape_kind(peak, warnings)
         ls_params = _lineshape_params(peak)
         be = float(peak.get("be_eV") or 0.0)
-        fwhm = _fwhm_for_peak(peak, pe, warnings)
+        fwhm = _fwhm_for_peak(peak, pe, fwhm_fallbacks)
         fwhm_vals.append(fwhm)
         values = _peak_param_values(
             ctype=ctype, ls_params=ls_params, be=be, fwhm=fwhm, amp=1.0
@@ -694,9 +750,17 @@ def apply_compound_fit_to_fitting_params(
     ):
         warnings.append("peak lineshape mix parameters are fixed (vary=false) from the recipe")
 
+    pe_info["fwhm_fallbacks"] = fwhm_fallbacks
+    pe_info["fallback"] = bool(fwhm_fallbacks) or pe_info.get("source") == "acquisition_closest"
+    pe_info["recipe_id"] = fit.id
+    pe_warn = pass_energy_warning(pe_info)
+    if pe_warn:
+        warnings.insert(0, pe_warn)
+
     out: dict[str, Any] = {
         "recipe_id": fit.id,
         "recipe_pass_energy": pe,
+        "pass_energy_resolution": pe_info,
         "xps_region": _normalize_region(fit.region),
         "components": components,
         "p0": p0,
@@ -959,6 +1023,9 @@ def merge_fitting_recipe_params(
     if pe is None:
         pe = base.get("recipe_pass_energy")
     out["recipe_pass_energy"] = pe
+    pe_res = added.get("pass_energy_resolution") or base.get("pass_energy_resolution")
+    if isinstance(pe_res, dict):
+        out["pass_energy_resolution"] = pe_res
     region = str(base.get("xps_region") or "").strip() or str(added.get("xps_region") or "").strip()
     if region:
         out["xps_region"] = region

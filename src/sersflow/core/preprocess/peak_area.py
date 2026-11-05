@@ -14,7 +14,9 @@ from typing import Any
 
 import numpy as np
 
-from sersflow.core.preprocess.fitting_models import _la0, la, lf
+from functools import lru_cache
+
+from sersflow.core.preprocess.fitting_models import _la0, gl_gauss, gl_product_area_k, la, lf
 
 _LN2 = math.log(2.0)
 # Area = height * FWHM * k for unit-height G / L
@@ -31,11 +33,42 @@ def lorentzian_area_per_height(fwhm: float) -> float:
     return max(float(fwhm), 1e-12) * _LORENTZ_K
 
 
-def gl_area_per_height(fwhm: float, m: float) -> float:
-    """CasaXPS GL(m): linear mix of Lorentzian (m%) and Gaussian ((100-m)%)."""
+def sgl_area_per_height(fwhm: float, m: float) -> float:
+    """CasaXPS SGL(m) (sum form): linear mix of Lorentzian (m%) and Gaussian ((100-m)%)."""
     eta = max(0.0, min(100.0, float(m))) / 100.0
     w = max(float(fwhm), 1e-12)
     return w * (eta * _LORENTZ_K + (1.0 - eta) * _GAUSS_K)
+
+
+def gl_area_per_height(fwhm: float, m: float) -> float:
+    """CasaXPS GL(m) (product form, true FWHM): closed form, see ``fitting_models.gl_product_area_k``."""
+    return max(float(fwhm), 1e-12) * gl_product_area_k(m)
+
+
+@lru_cache(maxsize=2048)
+def _gl_gauss_area_per_height_cached(fwhm: float, m: float, fwhm_g: float) -> float:
+    # Convolution preserves area: area(GL ⊗ G) = area(GL core). Height changes, so divide the core
+    # area by the convolved peak height (relative to the unit-height core).
+    from sersflow.core.preprocess.fitting_models import _unit_height_gl_product
+
+    trap = getattr(np, "trapezoid", None) or np.trapz
+    core_area = gl_area_per_height(fwhm, m)
+    # Height of (unit-height core ⊗ normalised Gaussian) at the centre: ∫ core(u) kern(u) du.
+    sigma = fwhm_g / (2.0 * math.sqrt(2.0 * _LN2))
+    u = np.linspace(-8.0 * sigma, 8.0 * sigma, 4001)
+    kern = np.exp(-0.5 * (u / sigma) ** 2)
+    kern /= float(trap(kern, u))
+    h = float(trap(_unit_height_gl_product(u, fwhm, m) * kern, u))
+    return max(core_area / max(h, 1e-300), 1e-12)
+
+
+def gl_gauss_area_per_height(fwhm: float, m: float, fwhm_g: float) -> float:
+    """Area / height of GL(m, n) = GL(m) ⊗ G(fwhm_g), numeric (cached)."""
+    w = max(float(fwhm), 1e-12)
+    fg = max(float(fwhm_g), 0.0)
+    if fg <= 0:
+        return gl_area_per_height(w, m)
+    return _gl_gauss_area_per_height_cached(round(w, 9), round(float(m), 9), round(fg, 9))
 
 
 def voigt_area_per_height(fwhm_g: float, fwhm_l: float) -> float:
@@ -151,24 +184,33 @@ def lf_area_per_height(
 
 def apv_area_per_height(fwhm_l: float, fwhm_r: float, eta_l: float, eta_r: float) -> float:
     """Split pseudo-Voigt: integrate left/right half analytically via GL factors / 2."""
-    left = 0.5 * gl_area_per_height(fwhm_l, max(0.0, min(1.0, float(eta_l))) * 100.0)
-    right = 0.5 * gl_area_per_height(fwhm_r, max(0.0, min(1.0, float(eta_r))) * 100.0)
+    left = 0.5 * sgl_area_per_height(fwhm_l, max(0.0, min(1.0, float(eta_l))) * 100.0)
+    right = 0.5 * sgl_area_per_height(fwhm_r, max(0.0, min(1.0, float(eta_r))) * 100.0)
     return max(left + right, 1e-12)
 
 
 def a_gl_area_per_height(fwhm: float, m: float, a: float, n: float, m_asym: float = 0.0) -> float:
     """
-    Approximate Area/amp for CasaXPS A(a,n,m_asym)GL(m).
+    Approximate Area/amp for CasaXPS A(a,n,m_asym)GL(m) on the PRODUCT GL(m) base.
 
     Maps to an effective LA-like / split-GL factor: stretch high-BE FWHM by ``(1+a)``
     and mix with GL(m); optional ``m_asym`` adds Gaussian width like LA ``m``.
     """
+    return _a_gl_area(fwhm, m, a, n, m_asym, gl_area_per_height)
+
+
+def a_sgl_area_per_height(fwhm: float, m: float, a: float, n: float, m_asym: float = 0.0) -> float:
+    """Legacy ``a_sgl`` (pre-K1 ``a_gl``): same approximation on the SUM SGL(m) base."""
+    return _a_gl_area(fwhm, m, a, n, m_asym, sgl_area_per_height)
+
+
+def _a_gl_area(fwhm: float, m: float, a: float, n: float, m_asym: float, base) -> float:
     w = max(float(fwhm), 1e-12)
     a = max(float(a), 0.0)
     w_high = w * (1.0 + a)
     w_low = w * (1.0 + 0.5 * max(float(n), 0.0))  # mild low-side sensitivity to n
     # Average of GL areas on each half
-    f = 0.5 * gl_area_per_height(w_low, m) + 0.5 * gl_area_per_height(w_high, m)
+    f = 0.5 * base(w_low, m) + 0.5 * base(w_high, m)
     fg = casaxps_la_m_to_fwhm_g(m_asym, w) if float(m_asym) > 0 else 0.0
     if fg > 0:
         # Inflate effective width slightly when asymmetric Gaussian convolution is present
@@ -193,9 +235,15 @@ def area_per_height(
         return lorentzian_area_per_height(fwhm)
     if ct == "gl":
         return gl_area_per_height(fwhm, float(values.get("m") or 30.0))
+    if ct == "sgl":
+        return sgl_area_per_height(fwhm, float(values.get("m") or 30.0))
+    if ct == "gl_gauss":
+        return gl_gauss_area_per_height(
+            fwhm, float(values.get("m") or 30.0), float(values.get("fwhm_g") or 0.0)
+        )
     if ct == "pseudo_voigt":
         eta = float(values.get("eta") or 0.3)
-        return gl_area_per_height(fwhm, eta * 100.0)
+        return sgl_area_per_height(fwhm, eta * 100.0)
     if ct == "voigt":
         return voigt_area_per_height(
             float(values.get("fwhm_g") or fwhm),
@@ -216,6 +264,14 @@ def area_per_height(
             float(values.get("beta") or 1.0),
             float(w) if w is not None else 20.0,
             float(values.get("fwhm_g") or 0.0),
+        )
+    if ct == "a_sgl":
+        return a_sgl_area_per_height(
+            fwhm,
+            float(values.get("m") or 30.0),
+            float(values.get("a") or 0.4),
+            float(values.get("n") or 0.55),
+            float(values.get("m_asym") or 0.0),
         )
     if ct in ("a_gl", "agl"):
         return a_gl_area_per_height(

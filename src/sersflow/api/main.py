@@ -46,6 +46,17 @@ logger = logging.getLogger(__name__)
 
 
 @app.on_event("startup")
+def _migrate_legacy_gl_lineshapes() -> None:
+    # K1: stored ``gl`` (sum form) -> ``sgl`` once, so ``gl`` can mean the CasaXPS product GL(m).
+    from sersflow.infra.lineshape_db_migration import migrate_gl_to_sgl
+
+    try:
+        migrate_gl_to_sgl()
+    except Exception:
+        logger.exception("K1 gl->sgl migration failed; stored pipelines may still use legacy 'gl'")
+
+
+@app.on_event("startup")
 def _warn_if_auth_disabled() -> None:
     if auth_disabled():
         logger.warning(

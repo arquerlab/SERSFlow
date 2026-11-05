@@ -5,10 +5,13 @@ from __future__ import annotations
 # Kinds that map onto registered fitting components (apply path).
 SUPPORTED_COMPONENT_KINDS = frozenset(
     {
-        "gl",
+        "gl",  # CasaXPS GL(m), product form (K1)
+        "sgl",  # CasaXPS SGL(m), sum form
+        "gl_gauss",  # CasaXPS GL(m,n)
         "la",
         "lf",
         "a_gl",
+        "a_sgl",
         "gaussian",
         "lorentzian",
         "pseudo_voigt",
