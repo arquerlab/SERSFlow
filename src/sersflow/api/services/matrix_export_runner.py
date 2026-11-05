@@ -118,7 +118,13 @@ def execute_matrix_export_job(matrix_job_id: str) -> None:
         x0: np.ndarray | None = None
         rows: list[np.ndarray] = []
         sids: list[str] = []
+        n_masked = 0
         for sid, xy in final.items():
+            # metadata_filter (and failed spectra) yield EMPTY_XY: they are excluded from the matrix,
+            # not a grid mismatch.
+            if xy is None or xy.x.size == 0 or xy.y.size == 0:
+                n_masked += 1
+                continue
             xf = xy.x.astype(float, copy=False)
             yf = xy.y.astype(float, copy=False)
             if x0 is None:
@@ -137,7 +143,10 @@ def execute_matrix_export_job(matrix_job_id: str) -> None:
             sids.append(sid)
 
         if not rows:
-            raise ValueError("no spectra in matrix export result")
+            raise ValueError(
+                "no spectra in matrix export result"
+                + (f" ({n_masked} empty after pipeline, e.g. excluded by a metadata_filter)" if n_masked else "")
+            )
 
         Y = np.stack(rows, axis=0)
         root = artifacts_root()
@@ -160,6 +169,7 @@ def execute_matrix_export_job(matrix_job_id: str) -> None:
             "up_to_step": rec.up_to_step,
             "shape": [int(Y.shape[0]), int(Y.shape[1])],
             "x_len": int(x0.shape[0]),
+            "n_masked": int(n_masked),
             "npz_path": npz_path,
         }
         manifest_json = json.dumps(manifest, separators=(",", ":"), ensure_ascii=False)

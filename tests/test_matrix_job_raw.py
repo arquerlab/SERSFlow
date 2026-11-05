@@ -108,3 +108,44 @@ def test_matrix_job_raw_skips_xy_pipeline_steps(client, tmp_path: Path) -> None:
     )
     assert r.status_code == 200, r.text
     assert r.json()["status"] in ("completed", "queued", "running")
+
+def test_matrix_job_skips_spectra_masked_by_metadata_filter(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    """metadata_filter turns non-matching spectra into empty XY; they must be dropped, not fail the job."""
+    from sersflow.api.services import matrix_export_runner as mer
+    from sersflow.core.spectrum import EMPTY_XY, XY
+
+    _api, upload_root = client
+    batch = "maskmx"
+    (upload_root / batch).mkdir(parents=True, exist_ok=True)
+    _spectrum_txt(upload_root / batch / "a.txt", scale=1.0)
+    _spectrum_txt(upload_root / batch / "b.txt", scale=2.0)
+    rec, _ = create_dataset_from_uploads(
+        DatasetCreateRequest(
+            relative_paths=[f"{batch}/a.txt", f"{batch}/b.txt"],
+            metadata=DatasetMetadata(name="mask-matrix"),
+        ),
+        owner_user_id="dev",
+    )
+    sids = [s.spectrum_id for s in rec.spectra]
+    x = np.array([100.0, 200.0, 300.0])
+
+    def fake_run(**_kw):
+        return {sids[0]: XY(x=x, y=np.array([1.0, 2.0, 3.0])), sids[1]: EMPTY_XY}
+
+    monkeypatch.setattr(mer, "run_pipeline_parallel_no_cache", fake_run)
+    pipe = Pipeline(steps=[PipelineStep(name="normalize", params={"method": "max"}, enabled=True)])
+    jid = create_matrix_job_pending(
+        dataset_id=rec.dataset_id,
+        session_id=None,
+        pipeline_hash="phm",
+        pipeline_json=pipe.model_dump_json(),
+        subset_hash="sh",
+        up_to_step=None,
+    )
+    execute_matrix_export_job(jid)
+    job = get_matrix_job(jid)
+    assert job is not None and job.status == "completed", job.error if job else None
+    data = np.load(job.npz_path, allow_pickle=True)
+    assert np.asarray(data["Y"]).shape == (1, 3)
+    assert list(data["spectrum_ids"]) == [sids[0]]
+
