@@ -86,6 +86,33 @@ Default responses: the area share of every peak.
 
 The design is the **full factorial**. `max_cells` (number or `null` = no cap) refuses oversized designs instead of
 thinning them; `subsample: {"n": N, "seed": S}` is an explicit opt-in that draws N cells (ANOVA then approximate).
+### Exclusion rules (`constraints`)
+
+A full factorial spends fits on combinations nobody would choose (e.g. a 3.0 eV Co3+ width with a 1.2 width ratio gives
+a 3.6 eV Co2+ width). `constraints` removes such cells BEFORE anything is fitted; the cap, the cost estimate and the
+subsample all count the cells that remain. Two rule kinds, each with an optional `name`:
+
+* `{"exclude_when": {"<factor>": ["<level>", ...], ...}}` drops a cell when, for EVERY listed factor, its level is one
+  of the listed ones.
+* `{"require": "<expression>"}` keeps a cell only when the expression holds. Names come from `values` on the levels
+  (`{"name": "1.8", "values": {"w3": 1.8}, "patches": [...]}`, numbers only, ignored by the fit). A value name must be
+  given on every level of its factor and belongs to one factor. Allowed: numbers, value names, `+ - * /`, comparisons,
+  `and` / `or` / `not`, `abs` / `min` / `max`. Comparisons tolerate 1e-9, so `3.0 * 1.0 <= 3.0` holds.
+
+```json
+"factors": [
+  {"name": "fwhm_co3", "levels": [{"name": "2.6", "values": {"w3": 2.6}, "patches": [...]}, ...]},
+  {"name": "relation", "levels": [{"name": "current", "values": {"rel": 1.0, "extra": 0.4}, "patches": [...]}, ...]}
+],
+"constraints": [{"name": "co2 width", "require": "w3 * rel + extra <= 3.2 and w3 >= 1.8"}]
+```
+
+Rules must keep the nominal cell (first level of every factor), which is the reference for the noise study; otherwise the
+design is refused. Once a rule removes a cell the design is **unbalanced**: `exact` is false and the ANOVA uses the
+sequential least-squares decomposition, so shares depend on the order of the factors and are approximate (the same as for
+a subsample or missing fits). The plan's `design` block reports `n_excluded` and `excluded_by_rule`. The rules and level
+values enter the design hash. Rules cannot be changed in `reanalyse` (the stored cells are fixed).
+
 `interaction_order`: 1 = main effects, 2 = pairwise, ..., `null` / `"all"`. Higher orders are pooled into
 `higher-order`. Cost = cells x spectra x `n_starts` (+ `noise.n_replicates` x spectra). The server refuses studies above
 `SERSFLOW_ROBUSTNESS_MAX_FITS` (default 20000) unless `allow_large: true`; the MCP tool asks for `confirm` above

@@ -369,3 +369,137 @@ def test_filter_modes_and_noise_comparison():
     out = summarize_study(d, recs, RESPONSES, x_by_spectrum=x_by, noise=noise)
     nc = out["responses"]["B_frac"]["noise_comparison"]
     assert nc["n_spectra"] == 2 and nc["ratio_var_median"] is not None and math.isfinite(nc["ratio_var_median"])
+
+
+# ------------------------------------------------------------------ constraints (exclusion rules)
+
+
+WIDTH_FACTORS = [
+    {"name": "fwhm_co3", "levels": [
+        {"name": "2.6", "values": {"w3": 2.6}}, {"name": "1.8", "values": {"w3": 1.8}},
+        {"name": "2.2", "values": {"w3": 2.2}}, {"name": "3.0", "values": {"w3": 3.0}},
+    ]},
+    {"name": "relation", "levels": [
+        {"name": "current", "values": {"rel": 1.0, "extra": 0.4}},
+        {"name": "1:1:1", "values": {"rel": 1.0, "extra": 0.0}},
+        {"name": "1:1.1:1.1", "values": {"rel": 1.1, "extra": 0.0}},
+        {"name": "1:1.2:1.2", "values": {"rel": 1.2, "extra": 0.0}},
+    ]},
+]
+
+
+def test_constraint_exclude_when_drops_matching_cells_only():
+    d = build_design(FACTORS, constraints=[{"name": "no narrow linear", "exclude_when": {"background": ["linear"], "window": ["narrow"]}}])
+    assert len(d.cells) == 6 and d.n_full == 8 and d.n_excluded == 2
+    assert d.excluded_by == {"no narrow linear": 2}
+    assert not d.exact and any("unbalanced" in n for n in d.notes)
+    assert ("linear", "narrow", "free") not in {c.levels for c in d.cells}
+    assert d.cells[0].levels == tuple(f["levels"][0]["name"] for f in FACTORS)  # nominal stays first
+    pub = d.to_public_dict()
+    assert pub["n_excluded"] == 2 and pub["excluded_by_rule"] == {"no narrow linear": 2}
+
+
+def test_constraint_that_removes_nothing_keeps_design_exact():
+    d = build_design(FACTORS, constraints=[{"require": "1 <= 2"}])
+    assert len(d.cells) == 8 and d.exact and d.n_excluded == 0
+
+
+def test_constraint_require_expression_on_level_values():
+    # Co2+ width = w3 * rel + extra must stay <= 3.2 eV and the Co3+ width >= 1.8 eV
+    rule = [{"name": "co2 width", "require": "w3 * rel + extra <= 3.2 and w3 >= 1.8"}]
+    d = build_design(WIDTH_FACTORS, constraints=rule)
+    kept = {c.levels for c in d.cells}
+    assert ("3.0", "1:1:1") in kept  # 3.0 * 1.0 = 3.0, within the 1e-9 tolerance logic
+    assert ("3.0", "current") not in kept  # 3.4
+    assert ("3.0", "1:1.2:1.2") not in kept  # 3.6
+    assert ("2.6", "1:1.2:1.2") in kept  # 3.12
+    assert ("1.8", "current") in kept
+    assert len(d.cells) + d.n_excluded == 16 == d.n_full
+    # exact boundary: 2.0 * 1.6 = 3.2 is kept (tolerance), 2.0 * 1.6 + 0.01 is not
+    edge = build_design(
+        [{"name": "a", "levels": [{"name": "n", "values": {"x": 2.0}}, {"name": "m", "values": {"x": 2.0}}]},
+         {"name": "b", "levels": [{"name": "p", "values": {"y": 1.6}}, {"name": "q", "values": {"y": 1.61}}]}],
+        constraints=[{"require": "x * y <= 3.2"}],
+    )
+    assert {c.levels for c in edge.cells} == {("n", "p"), ("m", "p")}
+
+
+def test_constraint_cap_counts_cells_after_exclusion_and_subsample_draws_from_pool():
+    rule = [{"require": "w3 * rel + extra <= 3.2 and w3 >= 1.8"}]
+    n_kept = len(build_design(WIDTH_FACTORS, constraints=rule).cells)
+    assert len(build_design(WIDTH_FACTORS, constraints=rule, max_cells=n_kept).cells) == n_kept
+    with pytest.raises(DesignError, match="max_cells"):
+        build_design(WIDTH_FACTORS, constraints=rule, max_cells=n_kept - 1)
+    allowed = {c.level_index for c in build_design(WIDTH_FACTORS, constraints=rule).cells}
+    sub = build_design(WIDTH_FACTORS, constraints=rule, subsample={"n": 5, "seed": 3})
+    assert len(sub.cells) == 5 and {c.level_index for c in sub.cells} <= allowed
+    sub2 = build_design(WIDTH_FACTORS, constraints=rule, subsample={"n": 5, "seed": 3})
+    assert [c.level_index for c in sub.cells] == [c.level_index for c in sub2.cells]
+
+
+def test_constraint_hash_depends_on_rules_and_is_stable():
+    r1 = [{"exclude_when": {"background": ["linear"], "window": ["narrow"]}}]
+    r2 = [{"exclude_when": {"background": ["linear"], "fwhm": ["tied"]}}]
+    h1 = build_design(FACTORS, constraints=r1).design_hash()
+    assert h1 == build_design(FACTORS, constraints=r1).design_hash()
+    assert h1 != build_design(FACTORS, constraints=r2).design_hash()
+    assert h1 != build_design(FACTORS).design_hash()
+
+
+@pytest.mark.parametrize(
+    "rules, match",
+    [
+        ([{"exclude_when": {"nope": ["a"]}}], "unknown factor"),
+        ([{"exclude_when": {"background": ["zzz"]}}], "no level"),
+        ([{"exclude_when": {"background": ["linear"]}, "require": "1 < 2"}], "exactly one"),
+        ([{"name": "x"}], "exactly one"),
+        ([{"require": "__import__('os').system('x')"}], "only abs / min / max|not allowed"),
+        ([{"require": "w3.real > 1"}], "not allowed"),
+        ([{"require": "undefined_name > 1"}], "unknown name"),
+        ([{"require": "1 <"}], "not valid"),
+        ([{"require": "'a' == 'a'"}], "only numbers"),
+        ([{"name": "d", "require": "1 < 2"}, {"name": "d", "require": "1 < 3"}], "duplicate constraint"),
+        ("not a list", "list of rules"),
+    ],
+)
+def test_constraint_rejects_bad_rules(rules, match):
+    with pytest.raises(DesignError, match=match):
+        build_design(FACTORS, constraints=rules)
+
+
+def test_constraint_cannot_remove_the_nominal_cell_or_leave_nothing():
+    with pytest.raises(DesignError, match="nominal"):
+        build_design(FACTORS, constraints=[{"exclude_when": {"background": ["shirley"]}}])
+    with pytest.raises(DesignError, match="nominal|fewer than 2"):
+        build_design(FACTORS, constraints=[{"require": "1 > 2"}])
+
+
+def test_level_values_are_validated():
+    with pytest.raises(DesignError, match="every level"):
+        build_design([{"name": "a", "levels": [{"name": "x", "values": {"v": 1}}, {"name": "y"}]}, FACTORS[1]])
+    with pytest.raises(DesignError, match="used by factors"):
+        build_design([
+            {"name": "a", "levels": [{"name": "x", "values": {"v": 1}}, {"name": "y", "values": {"v": 2}}]},
+            {"name": "b", "levels": [{"name": "x", "values": {"v": 1}}, {"name": "y", "values": {"v": 2}}]},
+        ])
+    with pytest.raises(DesignError, match="finite number"):
+        build_design([{"name": "a", "levels": [{"name": "x", "values": {"v": "high"}}, {"name": "y", "values": {"v": 2}}]}])
+    with pytest.raises(DesignError, match="usable value name"):
+        build_design([{"name": "a", "levels": [{"name": "x", "values": {"min": 1}}, {"name": "y", "values": {"min": 2}}]}])
+
+
+def test_constrained_study_runs_end_to_end_with_sequential_anova():
+    d = build_design(FACTORS, constraints=[{"exclude_when": {"background": ["linear"], "window": ["narrow"]}}])
+    base = _base_params()
+    win = common_window(base, [c.fit_patches for c in d.cells])
+    recs = []
+    for i in range(2):
+        xy = _spectrum(seed=i, frac2=0.2 + 0.1 * i, noise=15.0)
+        for c in d.cells:
+            recs.append(fit_cell(xy, base, list(c.fit_patches), spectrum_id=f"s{i}", cell_id=c.cell_id, responses=RESPONSES, window=win))
+    out = summarize_study(d, recs, RESPONSES)
+    anova_block = out["responses"]["B_frac"]["anova"]
+    assert anova_block["n_spectra"] == 2
+    assert out["design"]["n_excluded"] == 2 and not out["design"]["exact"]
+    assert {t["term"] for t in anova_block["terms"]} >= {"background", "window", "fwhm"}
+    assert anova_block["exact"] is False and anova_block["n_spectra_exact"] == 0

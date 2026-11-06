@@ -98,6 +98,7 @@ def parse_options(opts: dict[str, Any]) -> dict[str, Any]:
             max_cells=opts.get("max_cells"),
             interaction_order=opts.get("interaction_order"),
             subsample=opts.get("subsample"),
+            constraints=opts.get("constraints"),
         )
     except DesignError as e:
         raise ValueError(str(e)) from e

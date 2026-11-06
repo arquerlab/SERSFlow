@@ -524,6 +524,8 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         responses: list[dict[str, Any]] | None = None,
         max_cells: int | None = None,
         interaction_order: int | str | None = None,
+        subsample: dict[str, Any] | None = None,
+        constraints: list[dict[str, Any]] | None = None,
         n_starts: int = 1,
         noise: dict[str, Any] | None = None,
         spectrum_ids: list[str] | None = None,
@@ -536,6 +538,11 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         baseline_method = upstream baseline algorithm), notes, and the cost estimate (cells x spectra x starts,
         upstream groups, server limit). Edit the returned factors/responses and pass them to
         post_analysis_robustness_jobs. See docs/ROBUSTNESS.md for the patch operations and response kinds.
+
+        `constraints` drop implausible cells before fitting: {"exclude_when": {factor: [levels]}} removes the
+        cells whose levels match for every listed factor; {"require": "fwhm_co3 * rel <= 3.2"} keeps only the
+        cells where the expression over the levels' `values` ({"name": .., "values": {"fwhm_co3": 2.6}}) holds.
+        The estimate's design block reports n_excluded and the cells removed per rule.
         """
 
         def _run():
@@ -550,6 +557,8 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 responses=responses,
                 max_cells=max_cells,
                 interaction_order=interaction_order,
+                subsample=subsample,
+                constraints=constraints,
                 n_starts=n_starts,
                 noise=noise,
                 spectrum_ids=spectrum_ids,
@@ -571,6 +580,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         max_cells: int | None = None,
         interaction_order: int | str | None = None,
         subsample: dict[str, Any] | None = None,
+        constraints: list[dict[str, Any]] | None = None,
         n_starts: int = 1,
         seed: int = 0,
         filter: dict[str, Any] | None = None,
@@ -592,7 +602,9 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         The result gives ANOVA variance shares per factor and interaction (exact on a full factorial), trend
         preservation across variants, analyst-choice vs noise variance ratio, and a fit-quality filter report
         (filter mode delta_bic_common compares on the window shared by all cells; native BIC is never compared
-        across different data windows). Run post_analysis_robustness_plan first to see the cost. Studies above
+        across different data windows). `constraints` exclude implausible cells before fitting (see the plan
+        tool); the design is then unbalanced and the ANOVA shares are sequential, flagged exact=false.
+        Run post_analysis_robustness_plan first to see the cost. Studies above
         robustness_confirm_max_fits need confirm=true; above the server limit also allow_large=true.
 
         Poll/wait with the fit-curve job tools; read results with get_analysis_robustness_summary, or download
@@ -613,6 +625,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 max_cells=max_cells,
                 interaction_order=interaction_order,
                 subsample=subsample,
+                constraints=constraints,
                 n_starts=n_starts,
                 seed=seed,
                 filter=filter,

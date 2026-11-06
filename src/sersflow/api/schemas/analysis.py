@@ -244,6 +244,13 @@ class RobustnessJobCreateRequest(BaseModel):
     max_cells: int | None = Field(default=None, ge=1, description="Refuse designs above this many cells; null = no cap.")
     interaction_order: int | Literal["all"] | None = Field(default=None, description="1 = main effects; null/'all' = every order.")
     subsample: dict[str, Any] | None = Field(default=None, description="{n, seed}: opt-in random subset of cells (inexact ANOVA).")
+    constraints: list[dict[str, Any]] | None = Field(
+        default=None,
+        description=(
+            "Exclusion rules that drop implausible cells before fitting: {exclude_when: {factor: [levels]}} or "
+            "{require: \"expr over level values\"}, optional name. Makes the design unbalanced (sequential ANOVA)."
+        ),
+    )
     n_starts: int = Field(default=1, ge=1, le=50, description="Multi-start per cell; flags degenerate cells.")
     seed: int = Field(default=0, ge=0)
     jitter_frac: float | None = Field(default=None, gt=0)
