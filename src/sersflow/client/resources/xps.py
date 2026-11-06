@@ -15,6 +15,32 @@ class XpsResource(_Base):
     def __init__(self, root: SersflowClient):
         super().__init__(root)
 
+    # ---- identification (X2) ----
+    def line_markers(self, **params: Any) -> dict[str, Any]:
+        clean = {k: v for k, v in params.items() if v is not None}
+        return dict(request_json(self._root.http, "GET", "/xps/line-markers", params=clean))
+
+    def reference_markers(self, element: str, line: str | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {"element": element}
+        if line:
+            params["line"] = line
+        return dict(request_json(self._root.http, "GET", "/xps/reference-markers", params=params))
+
+    def survey_detect(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return dict(request_json(self._root.http, "POST", "/xps/survey/detect", json_body=payload))
+
+    def list_region_sets(self) -> dict[str, Any]:
+        return dict(request_json(self._root.http, "GET", "/xps/region-sets"))
+
+    def get_region_set(self, set_id: str) -> dict[str, Any]:
+        return dict(request_json(self._root.http, "GET", f"/xps/region-sets/{set_id}"))
+
+    def create_region_set(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return dict(request_json(self._root.http, "POST", "/xps/region-sets", json_body=payload))
+
+    def delete_region_set(self, set_id: str) -> dict[str, Any]:
+        return dict(request_json(self._root.http, "DELETE", f"/xps/region-sets/{set_id}"))
+
     def chemical_states(
         self,
         *,

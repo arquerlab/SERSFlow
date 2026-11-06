@@ -53,7 +53,7 @@ OpenAPI / MCP version: **0.2.0**.
 
 ### Safety / v1 non-goals (writes)
 
-- No delete of datasets or pipelines via MCP tools (for now).
+- Deleting or overwriting (X3) exists only as explicit tools that REFUSE until `confirm=true` and then report what goes: `delete_datasets_by_id`, `delete_analysis_runs_by_id`, `delete_analysis_runs`, `delete_explore_matrix_jobs`, `delete_pipelines_by_id`, `put_pipelines_by_id`, `delete_fitting_history`, `delete_xps_region_sets`. Do not call them unless the user asked for that removal, and fork with `post_pipelines` when the old version might still be needed.
 - No edit of other users’ pipelines or datasets.
 - No in-place mutation of existing shared pipelines when a change is required — always fork to a new name.
 
@@ -74,9 +74,9 @@ OpenAPI / MCP version: **0.2.0**.
 **In scope (agent path + post-run explore + XPS libraries):**
 
 - `io` — upload / unload / purge (confirm) / labels
-- `datasets` — create (technique + VAMAS options), list, get, package import/export (no delete via MCP)
+- `datasets` — create (technique + VAMAS options), list, get, package import/export (`delete_datasets_by_id` needs `confirm=true`)
 - `sessions` — create/bind, pipeline/subset, QC preview, run
-- `pipelines` — list/create/import/export (no in-place overwrite/delete via MCP)
+- `pipelines` — list/create/import/export (`post_pipelines` never overwrites; `put_pipelines_by_id` / `delete_pipelines_by_id` need `confirm=true`)
 - `fitting` — catalog + interactive fit
 - `xps` — chemical-states + fitting-recipes index/catalog/apply + apply-to-session
 - `analysis` — runs, wait/status, observation schema/columns, feature/observation/bundle export, fit-curve jobs
@@ -86,7 +86,6 @@ OpenAPI / MCP version: **0.2.0**.
 
 **Still out of MCP:**
 
-- Delete tools (datasets, pipelines, matrix jobs, analysis runs)
 - Dumping full Plotly / chemical-states catalogs into model context
 
 ### Tool style: hybrid
@@ -168,8 +167,8 @@ OpenAPI / MCP version: **0.2.0**.
 ### Write model: create and reuse
 
 - Allow **create** and **reuse** of datasets, sessions, and pipelines (and runs/exports as needed).
-- **No delete** tools in MCP for now.
-- **No in-place edit** of existing pipelines when a change is required — create a new named pipeline instead.
+- Delete tools exist but are **confirm-gated** (`confirm=true`, the refusal lists what would be removed).
+- **Prefer a new named pipeline** over editing an existing one; `put_pipelines_by_id` replaces in place only with `confirm=true`.
 - Never edit or delete other users’ assets.
 
 ### Confirmation required
@@ -254,7 +253,7 @@ OpenAPI / MCP version: **0.2.0**.
 
 ### Session vs library pipelines
 
-- **Library pipelines:** create new / reuse; never in-place edit or delete via MCP.
+- **Library pipelines:** create new / reuse; in-place edit or delete only through the confirm-gated `put_pipelines_by_id` / `delete_pipelines_by_id`.
 - **Session working pipeline:** **allowed** to update (`sessions.update_pipeline`) while building or iterating in a session.
 
 ### v1 tool style
@@ -276,7 +275,7 @@ OpenAPI / MCP version: **0.2.0**.
 | `post_sessions` / list / get / `put_sessions_pipeline` / `put_sessions_subset` / `post_sessions_qc_preview` / `post_sessions_run` | Sessions |
 | `get_pipelines` (+ technique filter) / get / `post_pipelines` / export / import | Library pipelines |
 | `get_fitting_models` / `post_fitting_fit` | Fitting |
-| `get_xps_chemical_states` / `get_xps_fitting_recipes_index` / `get_xps_fitting_recipes` / `apply_xps_fitting_recipe` / `post_xps_apply_recipe_to_session` / `post_xps_apply_recipe_to_pipeline_draft` / `post_fitting_test_peak_model` (S1 scan / noise replicates on one spectrum) / `get_references` + `post_references` + `delete_references` (M1 reference-spectrum library for `reference_spectrum` components) / `get_analysis_sweep_summary` / `post_fitting_validate_links` (F4: check `param_links`, incl. `mode: "expr"` with `{peak.param}` references) / `post_xps_add_spin_orbit_partner` (F3 doublet partner; recipe tools also take `lock_spin_orbit`, `spin_orbit_partner_splitting_eV`) | XPS libraries |
+| `get_xps_chemical_states` / `get_xps_fitting_recipes_index` / `get_xps_fitting_recipes` / `apply_xps_fitting_recipe` / `post_xps_apply_recipe_to_session` / `post_xps_apply_recipe_to_pipeline_draft` / `get_fitting_history` / `post_fitting_history` / `get_fitting_history_compare` / `delete_fitting_history` (X1: STORE / RECALL / compare / RESET of fitting-step model states; `post_fitting_fit` also takes `fit: false` to evaluate the given parameters without optimising) / `get_xps_line_markers` / `get_xps_reference_markers` / `post_xps_survey_detect` / `get_xps_region_sets` + `post_xps_region_sets` + `delete_xps_region_sets` (X2: survey labels derived from the chemical-state library — handbook lines only; position-only peak matching; region windows, no quantification yet) / `get_analysis_runs_spectrum` / `get_analysis_runs_pipeline_steps` / `post_analysis_step_outputs_jobs` (X3; recipe tools take `dataset_id` + `spectrum_id` to read the acquisition pass energy) / `post_fitting_test_peak_model` (S1 scan / noise replicates on one spectrum) / `get_references` + `post_references` + `delete_references` (M1 reference-spectrum library for `reference_spectrum` components) / `get_analysis_sweep_summary` / `post_fitting_validate_links` (F4: check `param_links`, incl. `mode: "expr"` with `{peak.param}` references) / `post_xps_add_spin_orbit_partner` (F3 doublet partner; recipe tools also take `lock_spin_orbit`, `spin_orbit_partner_splitting_eV`) | XPS libraries |
 | Analysis runs / jobs / observation schema+columns / exports / fit-curve jobs / `get_analysis_runs_pipeline` (pipeline snapshot of a run) / `post_analysis_sweep_jobs` (parameter sweep over one fitting step; results via the fit-curve job tools) / `post_analysis_report_jobs` + `get_analysis_report_json` (R1 publication fit report: HTML/Markdown/JSON zip) / `post_analysis_monte_carlo_jobs` + `get_analysis_monte_carlo_summary` (F2 Monte Carlo uncertainties; covariance 1σ errors are already observation columns `*_stderr`, `*_area_pct`, `*_area_stderr`, `*_area_pct_stderr`). Run with `session_id` OR an inline pipeline, never both. Fitting step args accept `fitting_step_num` (1-based) or `fitting_step_index` (the N of `s{N}_` columns). | Analysis |
 | Explore correlation/VIF/PCA/fpca/cluster/matrix (+ list/import) | Explore |
 | Plot kinds/info/points/heatmap/map-preview/`get_plot_series_value` (paths under export_dir) | Plot |

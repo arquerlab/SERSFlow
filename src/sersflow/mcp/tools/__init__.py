@@ -8,13 +8,16 @@ from sersflow.mcp.tools import (
     analysis,
     datasets,
     explore,
+    fit_history,
     fitting,
     io_tools,
     meta,
+    parity,
     pipelines,
     plot as plot_tools,
     sessions,
     tabular,
+    xps_identify,
     xps_libraries,
 )
 
@@ -36,3 +39,6 @@ def register_all(mcp: FastMCP, ctx: RuntimeContext) -> None:
     explore.register(mcp, ctx)
     plot_tools.register(mcp, ctx)
     tabular.register(mcp, ctx)
+    parity.register(mcp, ctx)
+    xps_identify.register(mcp, ctx)
+    fit_history.register(mcp, ctx)

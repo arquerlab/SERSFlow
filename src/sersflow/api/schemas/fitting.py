@@ -98,6 +98,8 @@ class FitRequest(BaseModel):
     """Optional Area1:Area2:... string for chord-based amplitude auto-guess."""
     weighting: Literal["auto", "poisson", "poisson_relative", "none"] | None = None
     """F1: auto (default; Poisson for XPS when counting variance is known), poisson, poisson_relative, none."""
+    fit: bool = True
+    """X1: false = evaluate the model at the given parameters (links applied, Auto amplitudes resolved) without optimising."""
 
 
 class FitComponentResult(BaseModel):

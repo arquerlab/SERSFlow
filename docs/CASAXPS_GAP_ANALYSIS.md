@@ -1,6 +1,6 @@
 # CasaXPS → SpecFlow feature gap analysis
 
-Status: written 2026-11-05 against `main` @ `b845749`. **Implemented since:** K1, K2, K3, IO1, F1, F2, F3, F4, R1, B1, L1, M1, S1 (see "Implementation notes" under each).
+Status: written 2026-11-05 against `main` @ `b845749`. **Implemented since:** K1, K2, K3, IO1, F1, F2, F3, F4, R1, B1, L1, M1, S1, X1, X2 (without quantification), X3 (see "Implementation notes" under each).
 
 ## 0. How to use this document (for a planning / implementing agent)
 
@@ -561,6 +561,17 @@ Suggested order of work, in phases (each phase can ship on its own):
   - Brush to set the fit window or region.
   - An "Add peak at max residual" button.
   - A fit history (stack of parameter snapshots per session step) with recall and compare.
+- **Implementation notes (done 2026-11-06):** `frontend/src/preprocess/interactiveFit.ts` (pure logic, unit-tested),
+  `InteractiveFitFigure.tsx` (SVG handle layer over the Plotly fit figure; axes frozen during a drag), `FitHistoryPanel.tsx`.
+  User decisions: handles = position + height at the maximum and width at the half-maximum; Prepare preview only;
+  constraints respected (fixed / follower parameters have no handle, values clipped to their bounds); window = draggable
+  edges + box selection (persisted as `fit_min_x` / `fit_max_x`); "Add peak at max residual" asks for a new shape or a
+  copy of any current peak. `POST /fitting/fit` takes `fit: false` (evaluate at the given parameters, links applied, Auto
+  amplitudes resolved by `resolve_initial_vector`) so dragging redraws without an optimiser; the first edit after a fit
+  adopts the fitted values of all rows. History: `infra/fit_history_store.py`, `/fitting/history` (per user and scope key
+  `dataset|region|fittingN`; every preview fit stored as its fitted state, de-duplicated by a hash of the model state, newest
+  50 unpinned kept, named = pinned; compare = parameter table + stats + curve overlay). MCP: `get/post/delete_fitting_history`,
+  `get_fitting_history_compare`. Tests: `tests/test_x1_x2.py`, `interactiveFit.test.ts`.
 - **Done when:** A full Co 2p model can be set up and adjusted without typing positions, and the previous fit states can be recalled.
 
 #### X2. Element and chemical-state identification UI
@@ -572,6 +583,17 @@ Suggested order of work, in phases (each phase can ship on its own):
 - **Build:**
   - Survey view with element-line markers from the Q1 library; a periodic-table picker; auto-detect peaks; create quantification regions from the markers.
   - Narrow-scan view: chemical-state reference markers from the chemical-state library, with BE ± spread, shown on the fit plot.
+- **Implementation notes (done 2026-11-06, quantification excluded):** `core/xps/line_markers.py`, `survey_peaks.py`,
+  `infra/xps_region_set_store.py`, `frontend/src/preprocess/IdentificationPanel.tsx` + `identification.ts`. User decisions:
+  survey line markers are DERIVED from the chemical-state library (elemental entries, else the median of the compounds,
+  flagged `compounds_median` with its min-max range; Auger only with a photon energy), so only lines the handbook
+  tabulates exist (there is no element-line table until Q1); peak detection = smoothed local maxima matched by position to the
+  library lines (inside the tabulated range or within a tolerance) with alternatives; "create regions" = named, per-user
+  region sets of windows (CSV/JSON export, MCP) without sensitivity factors; narrow-scan reference markers = selected
+  compounds only (median line + min-max band, display only, element/line preset from the fitting region); plus a library
+  browser. REST: `/xps/line-markers`, `/xps/reference-markers`, `/xps/survey/detect`, `/xps/region-sets`; MCP tools
+  `get_xps_line_markers`, `get_xps_reference_markers`, `post_xps_survey_detect`, `get/post/delete_xps_region_sets`.
+  Open: quantifying a surveyed region set (Q1), a full element-line table (user-importable) if the derived markers prove too sparse.
 - **Done when:** A survey can be labelled and quantified from the UI, and the Co 2p view shows Co⁰/Co²⁺/Co³⁺ reference markers.
 
 #### X3. UI and MCP parity fixes (existing backend features)
@@ -585,6 +607,13 @@ Suggested order of work, in phases (each phase can ship on its own):
 | `PUT /pipelines/{id}`, the delete endpoints | MCP tools, behind the confirmation gate in `sf/mcp/confirm.py` |
 | Recipe MCP tools | Should read the dataset pass energy (deferred item from `CLAUDE.md`) |
 
+**Implementation notes (done 2026-11-06):** new MCP tools in `mcp/tools/parity.py`: `get_analysis_runs_spectrum`,
+`get_analysis_runs_pipeline_steps`, `post_analysis_step_outputs_jobs`, and (user decision: all, behind `confirm=true` via
+`confirm.require_destructive_confirm`, which names what would be removed) `put_pipelines_by_id`, `delete_pipelines_by_id`,
+`delete_datasets_by_id`, `delete_analysis_runs_by_id`, `delete_analysis_runs`, `delete_explore_matrix_jobs`. Recipe tools
+(`apply_xps_fitting_recipe`, `post_xps_apply_recipe_to_session`, `post_xps_apply_recipe_to_pipeline_draft`) take
+`dataset_id` + `spectrum_id` and read the acquisition pass energy when no pass energy is given. Chemical-states UI = X2,
+sweep UI = S1; the casa-fits viewer stays with IO3 (user decision). Tests: `tests/sersflow_mcp/test_tool_handlers.py`.
 **Done when:** each row is reachable from both the UI and MCP; tests are added to the MCP tool tests.
 
 #### IO2. Generic ASCII and SPECS `.xy`
@@ -718,7 +747,7 @@ For non-monochromatic Mg/Al sources: subtract Kα3/4 (and Kβ) satellites using 
   - content-addressed blobs;
   - import/export of pipeline packages.
 - **Fitting recipes:** 133 Biesinger compound fits plus method defaults (`core/xps/data/fitting_recipes.json`). CasaXPS has no equivalent curated recipe library.
-- **Chemical-state library:** 141 element/line sections with provenance (UI still missing, see X2).
+- **Chemical-state library:** 141 element/line sections with provenance (browser, reference markers and derived survey markers in Prepare, see X2).
 - **Active backgrounds:** Shirley, Tougaard and slope backgrounds fitted together with the peaks (lmfitxps).
 - **Fit statistics:** information criteria (AIC, BIC, AICc) and fit-health metrics (bounds, residual autocorrelation).
 - **Cohort tools:** QC and outlier detection, low-signal filter, group averaging, filename label extraction (pH, potential, current density, …).

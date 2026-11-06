@@ -172,6 +172,25 @@ class AnalysisResource(_Base):
         )
         return FitCurveJobCreateResponse.model_validate(data)
 
+    def get_spectrum(self, run_id: str, spectrum_id: str) -> dict[str, Any]:
+        data = request_json(self._root.http, "GET", f"/analysis/runs/{run_id}/spectra/{spectrum_id}")
+        return dict(data) if isinstance(data, dict) else {}
+
+    def get_pipeline_steps(self, run_id: str) -> dict[str, Any]:
+        data = request_json(self._root.http, "GET", f"/analysis/runs/{run_id}/pipeline-steps")
+        return dict(data) if isinstance(data, dict) else {}
+
+    def create_step_outputs_job(
+        self, run_id: str, step_nums: list[int], spectrum_ids: list[str] | None = None
+    ) -> FitCurveJobCreateResponse:
+        data = request_json(
+            self._root.http,
+            "POST",
+            f"/analysis/runs/{run_id}/step-outputs-jobs",
+            json_body={"step_nums": list(step_nums), "spectrum_ids": spectrum_ids},
+        )
+        return FitCurveJobCreateResponse.model_validate(data)
+
     def get_report_json(self, job_id: str) -> dict[str, Any]:
         return request_json(self._root.http, "GET", f"/analysis/report-jobs/{job_id}/json")
 

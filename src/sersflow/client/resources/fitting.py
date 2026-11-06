@@ -50,6 +50,35 @@ class FittingResource(_Base):
     def delete_reference(self, reference_id: str) -> dict[str, Any]:
         return dict(request_json(self._root.http, "DELETE", f"/references/{reference_id}"))
 
+    # ---- fit history (X1) ----
+    def list_history(self, scope_key: str, *, include_params: bool = True, limit: int = 100) -> dict[str, Any]:
+        return dict(
+            request_json(
+                self._root.http,
+                "GET",
+                "/fitting/history",
+                params={"scope_key": scope_key, "include_params": include_params, "limit": limit},
+            )
+        )
+
+    def add_history(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return dict(request_json(self._root.http, "POST", "/fitting/history", json_body=payload))
+
+    def get_history(self, history_id: str) -> dict[str, Any]:
+        return dict(request_json(self._root.http, "GET", f"/fitting/history/{history_id}"))
+
+    def compare_history(self, a: str, b: str) -> dict[str, Any]:
+        return dict(request_json(self._root.http, "GET", "/fitting/history/compare", params={"a": a, "b": b}))
+
+    def update_history(self, history_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return dict(request_json(self._root.http, "PATCH", f"/fitting/history/{history_id}", json_body=payload))
+
+    def delete_history(self, history_id: str) -> dict[str, Any]:
+        return dict(request_json(self._root.http, "DELETE", f"/fitting/history/{history_id}"))
+
+    def clear_history(self, scope_key: str) -> dict[str, Any]:
+        return dict(request_json(self._root.http, "DELETE", "/fitting/history", params={"scope_key": scope_key}))
+
     def fit(self, payload: FitRequest) -> FitResponse:
         data = request_json(self._root.http, "POST", "/fitting/fit", json_body=dump_json(payload))
         return FitResponse.model_validate(data)

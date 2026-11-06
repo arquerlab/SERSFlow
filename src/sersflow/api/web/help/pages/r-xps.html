@@ -58,6 +58,15 @@
 </ul>
 <p><span class="ui">Spin-orbit partner…</span> under a peak in the component list does what CasaXPS <i>Create x 2</i> does: choose the subshell, the splitting and optionally a FWHM ratio, then <span class="ui">Add partner</span>. It adds the low-j member with these links: pos <i>offset</i>, FWHM <i>equal</i> (or <i>scale</i>), line-shape parameters <i>equal</i> and amp <i>area ratio</i>. Each link stays editable. API: <code>POST /xps/spin-orbit-partner</code>; MCP: <code>post_xps_add_spin_orbit_partner</code>.</p>
 
+<h2>Identifying elements and chemical states</h2>
+<p>The <span class="ui">Identification</span> panel above the Prepare plot has three tabs. Markers are drawn on the plot only; they never change a fit.</p>
+<ul>
+  <li><b>Survey</b>: tick <span class="ui">Show element lines</span> for line markers in the plotted range (the periodic table restricts the elements; the photon energy places Auger lines). <span class="ui">Detect peaks</span> finds maxima (smoothed, prominence threshold) and matches each to a library line by <b>position only</b>; choose among the alternatives, untick wrong ones, then <span class="ui">Create region set from included peaks</span> (windows centred on the measured peak, ± half width) and download it as CSV. Quantification (sensitivity factors, atomic %) is not built yet, so a region set holds windows only.</li>
+  <li><b>Chemical states</b>: the element and line are preset from the fitting step's region (Co2pspectrum1 gives Co 2p). Tick the compounds to show: a line at the median binding energy and a shaded min–max band over the library entries (for example Co, CoO, Co<sub>3</sub>O<sub>4</sub>).</li>
+  <li><b>Library</b>: search the chemical-state library by element, compound or source and mark single entries.</li>
+</ul>
+<div class="warn"><b>Limits.</b> All energies come from the chemical-state library (PHI Handbook Appendix B and Biesinger), not from a line table. Only the lines tabulated there exist (Fe 2p but not Fe 3p), so a missing marker does not rule an element out. For elements without an elemental entry (C, O, N, …) the marker is the median over compounds and is flagged approximate; peaks are matched against the whole tabulated range of a line. Position alone is ambiguous (Ba 3d<sub>5/2</sub> at 780.0 eV and Co 2p share a window): restrict the elements with the periodic table and check the doublets and satellites.</div>
+
 <h2>XPS safeguards</h2>
 <p>Widths without an upper bound are limited automatically, and if all peak amplitudes look tiny compared to the data (as with seeds near 1) they are rescaled. You still must place peak centres sensibly: they start at 1000 unless a recipe sets them.</p>
 

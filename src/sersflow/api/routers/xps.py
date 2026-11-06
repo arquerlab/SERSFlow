@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from sersflow.api.schemas.xps import (
     ChemicalStatesResponse,
@@ -22,10 +23,56 @@ from sersflow.core.xps.fitting_recipes import (
     list_method_defaults,
     load_fitting_recipes_catalog,
 )
+from sersflow.core.xps.line_markers import element_line_markers, reference_markers
 from sersflow.core.xps.recipe_apply import apply_recipe_id
+from sersflow.core.xps.survey_peaks import detect_survey_peaks
 from sersflow.core.xps.spin_orbit import add_spin_orbit_partner
 
 router = APIRouter(prefix="/xps", tags=["XPS"])
+
+
+class SurveyDetectRequest(BaseModel):
+    x: list[float] = Field(min_length=10, description="Binding energy axis (eV), either direction.")
+    y: list[float] = Field(min_length=10)
+    prominence_pct: float = Field(default=2.0, gt=0, le=100, description="Minimum prominence, % of the smoothed range.")
+    smooth_eV: float = Field(default=0.8, ge=0, le=10)
+    tolerance_eV: float = Field(default=2.0, gt=0, le=20, description="Match window around a library line.")
+    photon_energy_eV: float | None = Field(default=None, gt=0, description="Needed to place Auger lines on the BE axis.")
+
+
+@router.get("/line-markers", response_model=None)
+def get_line_markers(
+    element: str | None = Query(default=None),
+    be_min: float | None = Query(default=None),
+    be_max: float | None = Query(default=None),
+    photon_energy_eV: float | None = Query(default=None, gt=0),
+    include_auger: bool = Query(default=True),
+) -> dict[str, Any]:
+    """Element-line markers derived from the chemical-state library (handbook lines only), optional BE window."""
+    return element_line_markers(
+        element=element, be_min=be_min, be_max=be_max, photon_energy_eV=photon_energy_eV, include_auger=include_auger
+    )
+
+
+@router.get("/reference-markers", response_model=None)
+def get_reference_markers(element: str = Query(min_length=1), line: str | None = Query(default=None)) -> dict[str, Any]:
+    """Chemical-state reference energies of one element/line, grouped by compound (median, min-max, provenance)."""
+    return reference_markers(element, line)
+
+
+@router.post("/survey/detect", response_model=None)
+def post_survey_detect(payload: SurveyDetectRequest) -> dict[str, Any]:
+    try:
+        return detect_survey_peaks(
+            payload.x,
+            payload.y,
+            prominence_pct=payload.prominence_pct,
+            smooth_eV=payload.smooth_eV,
+            tolerance_eV=payload.tolerance_eV,
+            photon_energy_eV=payload.photon_energy_eV,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/chemical-states", response_model=ChemicalStatesResponse)

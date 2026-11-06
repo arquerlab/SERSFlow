@@ -102,6 +102,7 @@ import {
   xpsBgTypeLabel,
   xpsSpecialComponentTypesFromCatalog,
   xpsSpecialTypeLabel,
+  flattenFittingForPipeline,
   type FittingEditorParams,
   type FittingParamLink,
 } from "./preprocess/fittingUtils";
@@ -113,6 +114,13 @@ import { LinkValidationNotice } from "./preprocess/LinkValidationNotice";
 import { ComponentOptionsEditor } from "./preprocess/ComponentOptionsEditor";
 import { ReferenceLibraryPanel } from "./preprocess/ReferenceLibraryPanel";
 import { TestPeakModelPanel } from "./preprocess/TestPeakModelPanel";
+import { InteractiveFitFigure, evaluateFitEntry } from "./preprocess/InteractiveFitFigure";
+import { FitHistoryPanel } from "./preprocess/FitHistoryPanel";
+import { IdentificationPanel } from "./preprocess/IdentificationPanel";
+import { applyMarkers, type PlotMarker } from "./preprocess/identification";
+import { adoptDisplayedParams } from "./preprocess/interactiveFit";
+import type { FitDoneInfo } from "./preprocess/explorePlotRunner";
+import { postFitHistory } from "./preprocess/api";
 import type { FitPreviewInput } from "./preprocess/fitInputs";
 import { linkColor } from "./preprocess/paramExpressions";
 import { peakColorMap } from "./preprocess/fitResidualPlot";
@@ -718,6 +726,78 @@ export default function PreprocessingWorkspace() {
   /** S1 / M1: spectra the fitting preview last fitted. */
   const [fitPreviewInputs, setFitPreviewInputs] = useState<FitPreviewInput[]>([]);
 
+  /** X1: the fitting step the preview edits (the selected one, else the last enabled one) and its editor params. */
+  const previewFittingStep = useMemo(() => {
+    if (selectedStep?.name === "fitting") return selectedStep;
+    for (let i = steps.length - 1; i >= 0; i--) if (steps[i]!.enabled !== false && steps[i]!.name === "fitting") return steps[i]!;
+    return null;
+  }, [steps, selectedStep]);
+  const previewFp = useMemo(
+    () => (previewFittingStep ? migrateFittingParamsToEditor(previewFittingStep.params ?? {}, fittingCatalog) : null),
+    [previewFittingStep, fittingCatalog]
+  );
+  const historyScopeKey = useMemo(() => {
+    const ord = previewFittingStep ? steps.filter((s) => s.name === "fitting").findIndex((s) => s.id === previewFittingStep.id) + 1 : 0;
+    return `${datasetId ?? "nodata"}|${previewFp?.xps_region ?? ""}|fitting${ord}`;
+  }, [datasetId, previewFp, previewFittingStep, steps]);
+  const [historyTick, setHistoryTick] = useState(0);
+  /** Drag edits show the model without refitting: skip the debounced auto-run for a moment after a commit. */
+  const skipAutoRunUntil = useRef(0);
+
+  function updateFittingStepParams(stepId: string, next: FittingEditorParams) {
+    setSteps((prev) => prev.map((p) => (p.id === stepId ? { ...p, params: next as unknown as Record<string, any> } : p)));
+    setPipelineVersion((vv) => vv + 1);
+  }
+
+  /** Redraw one previewed spectrum for edited params (evaluation only, no optimiser). */
+  async function evaluateFitFigure(spectrumId: string | undefined, next: FittingEditorParams) {
+    const input = fitPreviewInputs.find((i) => i.spectrum_id === spectrumId);
+    const cur = (currentFigure as any)?.figures?.find((f: any) => f.spectrum_id === spectrumId);
+    if (!input || !cur?.fit_meta) return;
+    const entry = await evaluateFitEntry(next, input, cur.fit_meta, effectiveTechniqueFamily);
+    setCurrentFigure((prev: any) =>
+      prev?.kind === "fit_stack"
+        ? { ...prev, figures: prev.figures.map((f: any) => (f.spectrum_id === spectrumId ? entry : f)) }
+        : prev
+    );
+  }
+
+  /** X1 history: every finished preview fit is stored automatically as the fitted model state. */
+  function handleFitDone(info: FitDoneInfo) {
+    try {
+      const adopted = adoptDisplayedParams(migrateFittingParamsToEditor(info.flat, fittingCatalog), info.meta);
+      const d = info.diagnostics;
+      void postFitHistory({
+        scope_key: historyScopeKey,
+        params: flattenFittingForPipeline(adopted),
+        summary: {
+          fitted: true,
+          redchi: d?.redchi ?? null,
+          chi2: d?.chi2 ?? null,
+          rmse: d?.rmse ?? null,
+          bic: d?.bic ?? null,
+          r2: d?.r2 ?? null,
+          n_vary: d?.n_vary ?? null,
+          area_pct: info.areaPct,
+          spectrum_id: info.spectrum_id,
+        },
+      })
+        .then(() => setHistoryTick((t) => t + 1))
+        .catch(() => undefined);
+    } catch {
+      // history is a convenience; never break the preview
+    }
+  }
+
+  /** X1 RECALL: put a stored model back into the fitting step and redraw the previewed spectra without refitting. */
+  function recallSnapshot(params: Record<string, any>) {
+    if (!previewFittingStep || !previewFp) return;
+    const next = { ...previewFp, ...migrateFittingParamsToEditor(params, fittingCatalog) };
+    skipAutoRunUntil.current = Date.now() + 1500;
+    updateFittingStepParams(previewFittingStep.id, next);
+    for (const f of (currentFigure as any)?.figures ?? []) void evaluateFitFigure(f.spectrum_id, next).catch(() => undefined);
+  }
+
   function updateSelectedFittingParams(next: FittingEditorParams) {
     if (!selectedStep || selectedStep.name !== "fitting") return;
     setSteps((prev) =>
@@ -1021,6 +1101,7 @@ export default function PreprocessingWorkspace() {
       formatPlotMode: selectedFormatUi.plot_mode,
       defaultXLabel: selectedFormatUi.default_x_label,
       onFitInputs: setFitPreviewInputs,
+      onFitDone: handleFitDone,
     });
   }
 
@@ -1039,6 +1120,9 @@ export default function PreprocessingWorkspace() {
   // Auto-run in Explore when pipeline changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const fig = useMemo(() => currentFigure, [currentFigure]);
+  /** X2: element-line / chemical-state markers drawn on the figure (display only). */
+  const [plotMarkers, setPlotMarkers] = useState<PlotMarker[]>([]);
+  const shownFig = useMemo(() => applyMarkers(fig, plotMarkers), [fig, plotMarkers]);
 
   // For "After: <step>" plot views, do not tie auto-run to pipelineVersion — editing step params
   // would queue many expensive runs (especially fitting). Refresh those views via plot/subset changes or Run.
@@ -1050,6 +1134,7 @@ export default function PreprocessingWorkspace() {
     if (mode !== "explore") return;
     if (!sessionId) return;
     if (!subsetIndices.length) return;
+    if (Date.now() < skipAutoRunUntil.current) return;
     const t = setTimeout(() => {
       runExplorePlot().catch((e) => setLastError(String(e?.message ?? e)));
     }, plotView.startsWith("after:") ? 500 : 300);
@@ -1664,26 +1749,48 @@ export default function PreprocessingWorkspace() {
             </label>
           ) : null}
         </div>
-        {fig && typeof fig === "object" && (fig as { kind?: string }).kind === "fit_stack" ? (
+        <IdentificationPanel
+          fig={fig}
+          region={previewFp?.xps_region ?? null}
+          datasetId={datasetId}
+          onMarkers={setPlotMarkers}
+        />
+        {shownFig && typeof shownFig === "object" && (shownFig as { kind?: string }).kind === "fit_stack" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "16px", width: "100%" }}>
-            {((fig as { figures?: unknown[] }).figures ?? []).map((f, i) => (
-              <div
-                key={(f as { spectrum_id?: string })?.spectrum_id ?? i}
-                style={{ width: "100%", height: 520, minHeight: 520 }}
-              >
-                <PlotlyWrapper
-                  figure={f as any}
-                  previousFigure={null}
-                  plotStyle={{ mode: "overlay", stackSep: 0 }}
-                  ghostOverlayEnabled={false}
-                  className="plot"
+            {((shownFig as { figures?: unknown[] }).figures ?? []).map((f, i) => (
+              (f as { fit_meta?: unknown }).fit_meta && previewFp && previewFittingStep ? (
+                <InteractiveFitFigure
+                  key={(f as { spectrum_id?: string })?.spectrum_id ?? i}
+                  entry={f as any}
+                  fp={previewFp}
+                  catalog={fittingCatalog}
+                  technique={effectiveTechniqueFamily}
+                  onCommit={(n) => {
+                    skipAutoRunUntil.current = Date.now() + 1500;
+                    updateFittingStepParams(previewFittingStep.id, n);
+                  }}
+                  onEvaluate={(n) => evaluateFitFigure((f as { spectrum_id?: string }).spectrum_id, n)}
+                  onRefit={() => runExplorePlot().catch((e) => setLastError(String((e as Error)?.message ?? e)))}
                 />
-              </div>
+              ) : (
+                <div
+                  key={(f as { spectrum_id?: string })?.spectrum_id ?? i}
+                  style={{ width: "100%", height: 520, minHeight: 520 }}
+                >
+                  <PlotlyWrapper
+                    figure={f as any}
+                    previousFigure={null}
+                    plotStyle={{ mode: "overlay", stackSep: 0 }}
+                    ghostOverlayEnabled={false}
+                    className="plot"
+                  />
+                </div>
+              )
             ))}
           </div>
         ) : (
           <PlotlyWrapper
-            figure={fig}
+            figure={shownFig}
             previousFigure={previousFigure}
             plotStyle={{ mode: plotMode, stackSep: sep }}
             ghostOverlayEnabled={ghost}
@@ -2251,6 +2358,18 @@ export default function PreprocessingWorkspace() {
                         <div className="err">Could not load /fitting/models: {String((fittingModelsQ.error as Error)?.message ?? fittingModelsQ.error)}</div>
                       ) : null}
                       {isXpsPipeline ? <LinkValidationNotice fp={fp} /> : null}
+                      <FitHistoryPanel
+                        scopeKey={historyScopeKey}
+                        technique={effectiveTechniqueFamily}
+                        input={fitPreviewInputs[0]}
+                        current={() => {
+                          const meta = (currentFigure as any)?.figures?.[0]?.fit_meta;
+                          const cur = meta ? adoptDisplayedParams(fp, meta) : fp;
+                          return { params: flattenFittingForPipeline(cur), summary: { fitted: meta?.fitted ?? false } };
+                        }}
+                        onRecall={recallSnapshot}
+                        refreshToken={historyTick}
+                      />
                       {isXpsPipeline ? (
                         <div style={{ display: "grid", gap: 6 }}>
                           <TestPeakModelPanel fp={fp} inputs={fitPreviewInputs} technique={effectiveTechniqueFamily} />

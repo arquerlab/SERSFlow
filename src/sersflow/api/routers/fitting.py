@@ -182,6 +182,20 @@ def _step_params_from_request(payload: FitRequest) -> dict[str, Any]:
     return step_params
 
 
+def _evaluate_only(prob: Any) -> Any:
+    """X1: model curves at the request's parameters, no optimiser (see ``FitRequest.fit``)."""
+    import numpy as _np
+
+    from sersflow.core.preprocess.fitting import evaluate_fit_curves
+
+    p = _np.asarray(prob.p0, dtype=float)
+    if str(prob.technique_family or "").strip().lower() in ("xps", "xas"):
+        from sersflow.core.preprocess.fitting_lmfit import resolve_initial_vector
+
+        p = resolve_initial_vector(prob)
+    return evaluate_fit_curves(prob, p)
+
+
 @router.post("/fit", response_model=FitResponse)
 def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
@@ -225,7 +239,10 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
         prob = fit_problem_from_step_params(xy, step_params)
         if prob is None:
             raise ValueError("empty spectrum (or empty fit window)")
-        res = fit_curve(prob)
+        if payload.fit:
+            res = fit_curve(prob)
+        else:
+            res = _evaluate_only(prob)
 
         y_hat_full, comps_full = expand_fit_curves_to_full(
             xy, step_params, res.y_hat, res.component_y_hat, outside="nan"

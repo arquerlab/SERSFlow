@@ -756,3 +756,180 @@ def test_reference_and_test_peak_model_tools(tmp_path: Path) -> None:
     sw = _tool_fn(mcp, "get_analysis_sweep_summary")
     data = json.loads(asyncio.run(sw(job_id="fcjob_s")))["data"]
     assert data["axes"] == ["a.pos"] and "points" not in data
+
+
+_PIPE_ITEM = {
+    "pipeline_id": "p1",
+    "name": "Co2p",
+    "pipeline": {"steps": [{"name": "fitting", "enabled": True, "params": {}}], "technique_family": "xps"},
+    "technique_family": "xps",
+    "created_at": "2026-01-01T00:00:00",
+    "updated_at": "2026-01-01T00:00:00",
+}
+_RUN = {
+    "run_id": "r1",
+    "dataset_id": "ds",
+    "session_id": None,
+    "pipeline_hash": "h",
+    "subset_hash": "s",
+    "status": "completed",
+    "error": None,
+    "created_at": "t",
+    "finished_at": None,
+    "label": None,
+    "pinned": False,
+}
+
+
+def test_x3_read_tools_spectrum_steps_and_step_outputs(tmp_path: Path) -> None:
+    seen: list[tuple[str, str, object]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        seen.append((request.method, request.url.path, body))
+        if request.url.path == "/analysis/runs/r1/spectra/sp1":
+            return httpx.Response(200, json={"spectrum_id": "sp1", "x": list(range(100)), "y": list(range(100))})
+        if request.url.path == "/analysis/runs/r1/pipeline-steps":
+            return httpx.Response(200, json={"items": [{"step_num": 2, "name": "fitting"}]})
+        if request.url.path == "/analysis/runs/r1/step-outputs-jobs":
+            return httpx.Response(202, json={"job_id": "fcjob_so", "status": "queued"})
+        return httpx.Response(404, json={"detail": request.url.path})
+
+    mcp = create_server(_ready_ctx(tmp_path, httpx.MockTransport(handle)))
+    sp = json.loads(asyncio.run(_tool_fn(mcp, "get_analysis_runs_spectrum")(run_id="r1", spectrum_id="sp1", max_points=10)))
+    assert sp["ok"] and len(sp["x"]) == 10 and sp["x"][0] == 0 and sp["x"][-1] == 99 and sp["thinned_from"] == 100
+    st = json.loads(asyncio.run(_tool_fn(mcp, "get_analysis_runs_pipeline_steps")(run_id="r1")))
+    assert st["items"][0]["name"] == "fitting"
+    so = json.loads(asyncio.run(_tool_fn(mcp, "post_analysis_step_outputs_jobs")(run_id="r1", step_nums=[1, 2])))
+    assert so["ok"] and so["job_id"] == "fcjob_so"
+    assert seen[-1][2] == {"step_nums": [1, 2], "spectrum_ids": None}
+
+
+def test_x3_destructive_tools_need_confirm(tmp_path: Path) -> None:
+    seen: list[tuple[str, str]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        path, m = request.url.path, request.method
+        if path == "/pipelines/p1" and m == "GET":
+            return httpx.Response(200, json={"item": _PIPE_ITEM})
+        if path == "/pipelines/p1" and m == "PUT":
+            return httpx.Response(200, json={"item": {**_PIPE_ITEM, "name": "renamed"}})
+        if path == "/pipelines/p1" and m == "DELETE":
+            return httpx.Response(200, json={"deleted": True})
+        if path == "/datasets/ds" and m == "GET":
+            return httpx.Response(200, json={"dataset": {"dataset_id": "ds", "spectra": [], "metadata": {"name": "D"}}})
+        if path == "/datasets/ds" and m == "DELETE":
+            return httpx.Response(200, json={"deleted": True, "sessions_deleted": 0})
+        if path == "/analysis/runs" and m == "GET":
+            return httpx.Response(200, json=[_RUN])
+        if path == "/analysis/runs" and m == "DELETE":
+            return httpx.Response(200, json={"deleted": True, "runs_deleted": 1})
+        if path == "/analysis/runs/r1" and m == "GET":
+            return httpx.Response(200, json={"run": _RUN})
+        if path == "/analysis/runs/r1" and m == "DELETE":
+            return httpx.Response(200, json={"deleted": True})
+        if path == "/explore/matrix-jobs/mj1" and m == "GET":
+            return httpx.Response(200, json={"dataset_id": "ds", "status": "completed"})
+        if path == "/explore/matrix-jobs/mj1" and m == "DELETE":
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(404, json={"detail": path})
+
+    mcp = create_server(_ready_ctx(tmp_path, httpx.MockTransport(handle)))
+    cases = [
+        ("delete_pipelines_by_id", {"pipeline_id": "p1"}, ("DELETE", "/pipelines/p1")),
+        ("put_pipelines_by_id", {"pipeline_id": "p1", "name": "renamed"}, ("PUT", "/pipelines/p1")),
+        ("delete_datasets_by_id", {"dataset_id": "ds"}, ("DELETE", "/datasets/ds")),
+        ("delete_analysis_runs_by_id", {"run_id": "r1"}, ("DELETE", "/analysis/runs/r1")),
+        ("delete_analysis_runs", {"dataset_id": "ds"}, ("DELETE", "/analysis/runs")),
+        ("delete_explore_matrix_jobs", {"matrix_job_id": "mj1"}, ("DELETE", "/explore/matrix-jobs/mj1")),
+    ]
+    for name, kwargs, mutation in cases:
+        fn = _tool_fn(mcp, name)
+        seen.clear()
+        refused = json.loads(asyncio.run(fn(**kwargs)))
+        assert refused["ok"] is False and refused["needs_confirm"] is True, (name, refused)
+        assert refused["reason"] == "destructive_action" and refused["details"], name
+        assert mutation not in seen, f"{name} mutated without confirm"
+        done = json.loads(asyncio.run(fn(**kwargs, confirm=True)))
+        assert done["ok"] is True, (name, done)
+        assert mutation in seen, name
+    # details tell what would go
+    refused = json.loads(asyncio.run(_tool_fn(mcp, "delete_analysis_runs")(dataset_id="ds")))
+    assert refused["details"]["run_count"] == 1 and refused["details"]["run_ids"] == ["r1"]
+
+
+def test_x3_recipe_tool_reads_dataset_pass_energy(tmp_path: Path) -> None:
+    seen: list[dict] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/datasets/ds/spectra/sp1/acquisition":
+            return httpx.Response(200, json={"pass_energy_eV": 40.0})
+        if request.url.path.startswith("/xps/fitting-recipes/") and request.url.path.endswith("/apply"):
+            seen.append(dict(request.url.params))
+            return httpx.Response(200, json={"recipe_id": "x", "params": {}})
+        return httpx.Response(404, json={"detail": request.url.path})
+
+    mcp = create_server(_ready_ctx(tmp_path, httpx.MockTransport(handle)))
+    fn = _tool_fn(mcp, "apply_xps_fitting_recipe")
+    out = json.loads(asyncio.run(fn(recipe_id="Co_metal", dataset_id="ds", spectrum_id="sp1")))
+    assert out["ok"] is True, out
+    assert seen[-1].get("preferred_pass_energy") == "40"
+    # an explicit pass energy wins and no acquisition lookup is needed
+    out = json.loads(asyncio.run(fn(recipe_id="Co_metal", pass_energy=20, dataset_id="ds", spectrum_id="sp1")))
+    assert seen[-1].get("pass_energy") == "20" and "preferred_pass_energy" not in seen[-1]
+    bad = json.loads(asyncio.run(fn(recipe_id="Co_metal", dataset_id="ds")))
+    assert bad["ok"] is False
+
+
+def test_x1_x2_mcp_tools(tmp_path: Path) -> None:
+    seen: list[tuple[str, str, object]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        seen.append((request.method, request.url.path, body))
+        path, m = request.url.path, request.method
+        if path == "/fitting/history" and m == "GET":
+            return httpx.Response(200, json={"scope_key": "s", "count": 0, "items": []})
+        if path == "/fitting/history" and m == "POST":
+            return httpx.Response(200, json={"history_id": "fh_1", "created": True, "label": body["label"], "params": {}})
+        if path == "/fitting/history/compare":
+            return httpx.Response(200, json={"rows": [], "stats": []})
+        if path == "/fitting/history/fh_1" and m == "DELETE":
+            return httpx.Response(200, json={"deleted": True})
+        if path == "/fitting/history" and m == "DELETE":
+            return httpx.Response(200, json={"deleted": 3})
+        if path == "/xps/line-markers":
+            return httpx.Response(200, json={"markers": [{"label": "Co 2p"}], "count": 1})
+        if path == "/xps/reference-markers":
+            return httpx.Response(200, json={"compounds": [], "count": 0})
+        if path == "/xps/survey/detect":
+            return httpx.Response(200, json={"peaks": [], "count": 0})
+        if path == "/xps/region-sets" and m == "POST":
+            return httpx.Response(200, json={"set_id": "rs_1", "name": body["name"], "n_regions": len(body["regions"])})
+        if path == "/xps/region-sets/rs_1" and m == "GET":
+            return httpx.Response(200, json={"set_id": "rs_1", "name": "A", "n_regions": 1})
+        if path == "/xps/region-sets/rs_1" and m == "DELETE":
+            return httpx.Response(200, json={"deleted": True})
+        return httpx.Response(404, json={"detail": path})
+
+    mcp = create_server(_ready_ctx(tmp_path, httpx.MockTransport(handle)))
+    run = lambda _tool, **kw: json.loads(asyncio.run(_tool_fn(mcp, _tool)(**kw)))  # noqa: E731
+    assert run("get_fitting_history", scope_key="s")["ok"] is True
+    stored = run("post_fitting_history", scope_key="s", params={"components": [1]}, label="keep")
+    assert stored["history_id"] == "fh_1" and seen[-1][2]["label"] == "keep"
+    assert run("get_fitting_history_compare", history_id_a="a", history_id_b="b")["ok"] is True
+    both = run("delete_fitting_history", history_id="fh_1", scope_key="s")
+    assert both["ok"] is False  # exactly one of the two is required
+    needs = run("delete_fitting_history", scope_key="s")
+    assert needs["needs_confirm"] is True and ("DELETE", "/fitting/history", None) not in seen
+    assert run("delete_fitting_history", scope_key="s", confirm=True)["deleted"] == 3
+    assert run("delete_fitting_history", history_id="fh_1", confirm=True)["deleted"] is True
+    assert run("get_xps_line_markers", element="Co", be_min=770.0)["count"] == 1
+    assert run("get_xps_reference_markers", element="Co", line="2p")["ok"] is True
+    assert run("post_xps_survey_detect", x=[1.0] * 10, y=[1.0] * 10)["ok"] is True
+    assert run("post_xps_region_sets", name="A", regions=[{"be_min_eV": 1.0, "be_max_eV": 2.0}])["n_regions"] == 1
+    assert run("get_xps_region_sets", set_id="rs_1")["name"] == "A"
+    gate = run("delete_xps_region_sets", set_id="rs_1")
+    assert gate["needs_confirm"] is True and gate["details"]["name"] == "A"
+    assert run("delete_xps_region_sets", set_id="rs_1", confirm=True)["deleted"] is True

@@ -21,7 +21,9 @@ from sersflow.api.routers.fitting import router as fitting_router
 from sersflow.api.routers.analysis import router as analysis_router
 from sersflow.api.routers.explore import router as explore_router
 from sersflow.api.routers.xps import router as xps_router
+from sersflow.api.routers.fit_history import router as fit_history_router
 from sersflow.api.routers.references import router as references_router
+from sersflow.api.routers.xps_region_sets import router as xps_region_sets_router
 
 
 app = FastAPI(title="SpecFlow API", version="0.2.0")
@@ -43,6 +45,8 @@ app.include_router(analysis_router)
 app.include_router(explore_router)
 app.include_router(xps_router)
 app.include_router(references_router)
+app.include_router(xps_region_sets_router)
+app.include_router(fit_history_router)
 
 logger = logging.getLogger(__name__)
 

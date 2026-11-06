@@ -39,6 +39,10 @@ class ExploreResource(_Base):
         data = request_json(self._root.http, "GET", f"/explore/matrix-jobs/{matrix_job_id}")
         return dict(data) if isinstance(data, dict) else {}
 
+    def delete_matrix_job(self, matrix_job_id: str) -> dict[str, Any]:
+        data = request_json(self._root.http, "DELETE", f"/explore/matrix-jobs/{matrix_job_id}")
+        return dict(data) if isinstance(data, dict) else {}
+
     def list_matrix_jobs(
         self,
         dataset_id: str,

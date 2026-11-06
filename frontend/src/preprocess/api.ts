@@ -533,6 +533,8 @@ export type FitRequest = {
   initial_area_ratios?: string | null;
   /** F1 weighting request; omitted = auto (Poisson for XPS when counts are known). */
   weighting?: FittingWeighting;
+  /** X1: false = evaluate the model at the given parameters (links applied) without optimising. */
+  fit?: boolean;
 };
 
 export type FittingWeighting = "auto" | "poisson" | "poisson_relative" | "none";
@@ -802,3 +804,188 @@ export function listFittingRecipesCatalog(opts?: { include_methods?: boolean; ch
   return fetchJson<FittingRecipesCatalogResponse>(`/xps/fitting-recipes${qs ? `?${qs}` : ""}`);
 }
 
+// ------------------------------------------------------------------------------------------------ X1 fit history
+
+export type FitHistorySummary = {
+  fitted?: boolean;
+  redchi?: number | null;
+  chi2?: number | null;
+  rmse?: number | null;
+  bic?: number | null;
+  r2?: number | null;
+  n_vary?: number | null;
+  area_pct?: Record<string, number | null>;
+  spectrum_id?: string | null;
+};
+
+export type FitHistoryItem = {
+  history_id: string;
+  scope_key: string;
+  label: string;
+  pinned: boolean;
+  summary: FitHistorySummary;
+  params_hash: string;
+  created_at: string;
+  params?: Record<string, any>;
+  created?: boolean;
+};
+
+export function getFitHistory(scopeKey: string, includeParams = true) {
+  return fetchJson<{ scope_key: string; count: number; items: FitHistoryItem[] }>(
+    `/fitting/history?scope_key=${encodeURIComponent(scopeKey)}&include_params=${includeParams}`
+  );
+}
+
+export function postFitHistory(body: { scope_key: string; params: Record<string, unknown>; summary?: FitHistorySummary; label?: string; pinned?: boolean }) {
+  return fetchJson<FitHistoryItem>(`/fitting/history`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
+
+export function patchFitHistory(historyId: string, body: { label?: string | null; pinned?: boolean | null }) {
+  return fetchJson<FitHistoryItem>(`/fitting/history/${encodeURIComponent(historyId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteFitHistory(historyId: string) {
+  return fetchJson<{ deleted: boolean }>(`/fitting/history/${encodeURIComponent(historyId)}`, { method: "DELETE" });
+}
+
+export function clearFitHistory(scopeKey: string) {
+  return fetchJson<{ deleted: number }>(`/fitting/history?scope_key=${encodeURIComponent(scopeKey)}`, { method: "DELETE" });
+}
+
+export type FitHistoryCompare = {
+  a: { history_id: string; label: string; created_at: string };
+  b: { history_id: string; label: string; created_at: string };
+  rows: Array<{
+    component_id: string;
+    component_type: string;
+    key: string;
+    a: number | null;
+    b: number | null;
+    delta: number | null;
+    vary_a: boolean | null;
+    vary_b: boolean | null;
+    only_in: "a" | "b" | null;
+  }>;
+  components_only_in_a: string[];
+  components_only_in_b: string[];
+  window_a: [number | null, number | null];
+  window_b: [number | null, number | null];
+  stats: Array<{ name: string; a: number | null; b: number | null }>;
+};
+
+export function getFitHistoryCompare(a: string, b: string) {
+  return fetchJson<FitHistoryCompare>(`/fitting/history/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`);
+}
+
+// ------------------------------------------------------------------------------------------------ X2 identification
+
+export type LineMarker = {
+  element: string;
+  line: string;
+  label: string;
+  section_id: string;
+  kind: "core" | "auger";
+  be_eV: number;
+  be_min_eV: number;
+  be_max_eV: number;
+  ke_eV: number | null;
+  basis: "elemental" | "compounds_median";
+  n_entries: number;
+};
+
+export function getLineMarkers(params: { element?: string; be_min?: number; be_max?: number; photon_energy_eV?: number; include_auger?: boolean } = {}) {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) q.set(k, String(v));
+  return fetchJson<{ markers: LineMarker[]; count: number; auger_skipped_no_photon_energy: number; note: string }>(`/xps/line-markers?${q.toString()}`);
+}
+
+export type ReferenceMarkerGroup = {
+  compound: string;
+  line: string;
+  energy_kind: "binding" | "kinetic";
+  median_eV: number;
+  min_eV: number;
+  max_eV: number;
+  n_entries: number;
+  distinct_values_eV: number[];
+  phases: string[];
+  provenance: string[];
+  elemental: boolean;
+};
+
+export function getReferenceMarkers(element: string, line?: string) {
+  const q = new URLSearchParams({ element });
+  if (line) q.set("line", line);
+  return fetchJson<{ element: string; line: string | null; sections: string[]; compounds: ReferenceMarkerGroup[]; count: number }>(
+    `/xps/reference-markers?${q.toString()}`
+  );
+}
+
+export type SurveyPeak = {
+  be_eV: number;
+  height: number;
+  prominence: number;
+  prominence_pct: number;
+  match: SurveyMatch | null;
+  alternatives: SurveyMatch[];
+};
+export type SurveyMatch = {
+  label: string;
+  element: string;
+  line: string;
+  kind: string;
+  be_eV: number;
+  delta_eV: number;
+  range_distance_eV: number;
+  in_library_range: boolean;
+  basis: string;
+};
+
+export function postSurveyDetect(body: { x: number[]; y: number[]; prominence_pct?: number; smooth_eV?: number; tolerance_eV?: number; photon_energy_eV?: number | null }) {
+  return fetchJson<{ peaks: SurveyPeak[]; count: number; step_eV: number }>(`/xps/survey/detect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export type RegionWindow = { label?: string; element?: string | null; line?: string | null; be_eV?: number; be_min_eV: number; be_max_eV: number };
+export type RegionSet = { set_id: string; name: string; notes: string; regions: Required<RegionWindow>[]; n_regions: number; source: Record<string, unknown>; created_at: string };
+
+export function listRegionSets() {
+  return fetchJson<{ count: number; items: RegionSet[] }>(`/xps/region-sets`);
+}
+export function createRegionSet(body: { name: string; regions: RegionWindow[]; notes?: string; source?: Record<string, unknown> }) {
+  return fetchJson<RegionSet>(`/xps/region-sets`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
+export function deleteRegionSet(setId: string) {
+  return fetchJson<{ deleted: boolean }>(`/xps/region-sets/${encodeURIComponent(setId)}`, { method: "DELETE" });
+}
+export function regionSetCsvUrl(setId: string) {
+  return `/xps/region-sets/${encodeURIComponent(setId)}?format=csv`;
+}
+
+export type ChemicalStateEntry = {
+  section_id: string;
+  element: string;
+  line: string;
+  energy_kind: string;
+  compound: string;
+  phase: string | null;
+  value_eV: number;
+  references: string[];
+  page: number | null;
+  provenance: string | null;
+  source_detail: string | null;
+  fwhm_eV: number | null;
+};
+
+export function getChemicalStates(params: { element?: string; line?: string; q?: string; provenance?: string }) {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v) q.set(k, String(v));
+  return fetchJson<{ entries: ChemicalStateEntry[]; entry_count: number }>(`/xps/chemical-states?${q.toString()}`);
+}

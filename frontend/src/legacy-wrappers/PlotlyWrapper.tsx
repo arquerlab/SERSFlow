@@ -16,6 +16,11 @@ type PlotlyWrapperProps = {
   className?: string;
   onPlotClick?: (event: any) => void;
   onPlotHover?: (event: any) => void;
+  /**
+   * X1 interactive editing: redraw with Plotly.react and a fixed uirevision so zoom/pan survive each re-evaluation
+   * (falls back to a full redraw when the trace count changes).
+   */
+  preserveView?: boolean;
 };
 
 function applyStacking(data: any[], stackSep: number) {
@@ -60,7 +65,7 @@ function constrainPlotDom(el: HTMLDivElement) {
 }
 
 export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
-  ({ figure, previousFigure, plotStyle, ghostOverlayEnabled, className, onPlotClick, onPlotHover }, ref) => {
+  ({ figure, previousFigure, plotStyle, ghostOverlayEnabled, className, onPlotClick, onPlotHover, preserveView }, ref) => {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const divRef = useRef<HTMLDivElement | null>(null);
   /** Monotonic id so only the latest draw applies post-await DOM work. */
@@ -205,7 +210,7 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
     } as const;
 
     const drawId = ++drawIdRef.current;
-    const payload = themed;
+    const payload = preserveView ? { ...themed, layout: { ...themed.layout, uirevision: "fit-edit" } } : themed;
     // Always newPlot — Plotly.react blanks when trace count is unchanged (same-size subset switch).
 
     drawChainRef.current = drawChainRef.current
@@ -215,9 +220,14 @@ export const PlotlyWrapper = forwardRef<HTMLDivElement, PlotlyWrapperProps>(
         if (drawId !== drawIdRef.current) return;
         drawingRef.current = true;
         try {
-          // Purge+newPlot must be atomic: never return between purge and newPlot or the DOM stays blank.
-          Plotly.purge(el);
-          await Plotly.newPlot(el, payload.data, payload.layout, opts);
+          const live = el as any;
+          if (preserveView && live._fullLayout && Array.isArray(live.data) && live.data.length === payload.data.length) {
+            await Plotly.react(el, payload.data, payload.layout, opts);
+          } else {
+            // Purge+newPlot must be atomic: never return between purge and newPlot or the DOM stays blank.
+            Plotly.purge(el);
+            await Plotly.newPlot(el, payload.data, payload.layout, opts);
+          }
         } catch {
           if (drawId !== drawIdRef.current) return;
           try {

@@ -1,11 +1,12 @@
 import type { FitPreviewInput } from "./fitInputs";
+import { buildFitRequest, type FitMeta } from "./interactiveFit";
+import type { FitDiagnostics } from "./api";
 import type { MutableRefObject } from "react";
 import {
   postFittingFit,
   runPipeline,
   runSession,
   type FittingComponentSpecPublic,
-  type FitRequest,
   type Pipeline,
   type SessionRunFinalResponse,
   type SessionRunIntermediatesResponse,
@@ -76,7 +77,24 @@ function resolveEnabledStepIndex(
 
 export type FitStackFigure = {
   kind: "fit_stack";
-  figures: Array<{ data: Record<string, unknown>[]; layout: Record<string, unknown>; spectrum_id?: string }>;
+  figures: Array<{
+    data: Record<string, unknown>[];
+    layout: Record<string, unknown>;
+    spectrum_id?: string;
+    /** X1: what the figure draws (for drag handles); absent in figures made before this field existed. */
+    fit_meta?: FitMeta;
+  }>;
+};
+
+/** X1: a fitting preview that just finished (every spectrum fitted); used for the fit history. */
+export type FitDoneInfo = {
+  /** Fitting-step params in pipeline format as they were sent. */
+  flat: Record<string, unknown>;
+  /** The first spectrum's drawn model (parameters per component after the fit). */
+  meta: FitMeta;
+  spectrum_id: string;
+  diagnostics: FitDiagnostics | null | undefined;
+  areaPct: Record<string, number | null>;
 };
 
 export type ExplorePlotRunnerDeps = {
@@ -103,6 +121,8 @@ export type ExplorePlotRunnerDeps = {
   defaultXLabel?: string | null;
   /** S1 / M1: the spectra the fitting preview just fitted (input of the fitting step). */
   onFitInputs?: (items: FitPreviewInput[]) => void;
+  /** X1: called once after a fitting preview finished, with the first spectrum's fitted state. */
+  onFitDone?: (info: FitDoneInfo) => void;
 };
 
 /**
@@ -132,6 +152,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
     formatPlotMode = "xy",
     defaultXLabel = null,
     onFitInputs,
+    onFitDone,
   } = deps;
   // Format plot_mode is a format hint (map markers etc.); overlay/stack + subset size remain user prefs.
   const xAxisTitle =
@@ -479,6 +500,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       );
 
       const figures: FitStackFigure["figures"] = [];
+      let fitDone: FitDoneInfo | null = null;
       const appliedCounts = new Map<string, number>();
       for (let si = 0; si < rawItems.length; si++) {
         const it = rawItems[si]!;
@@ -486,37 +508,14 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         setExplorePlotStatus(`Fitting: spectrum ${si + 1}/${nSpectra} (${it.spectrum_id.slice(0, 14)}…) — calling /fitting/fit`);
         let fitResp;
         try {
+          // F1 counting variance travels with the target; component options (avg_width, of, reference_id, ...) with
+          // each component (see buildFitRequest).
           fitResp = await postFittingFit(
-            {
-              target: {
-                kind: "inline",
-                x: it.x,
-                y: it.y,
-                // F1: counting variance carried through the prior steps (absent when a step broke it).
-                ...(Array.isArray(it.var) && it.var.length === it.y.length
-                  ? { y_variance: it.var, variance_kind: it.var_kind ?? "relative" }
-                  : {}),
-              },
-              weighting: fp.weighting ?? "auto",
-              // Component options (avg_width, of, reference_id, ...) travel with each component.
-              components: compsApi.map((c) => ({ ...c })),
-              p0,
-              bounds: { lower: lo, upper: hi },
-              return_curve: true,
-              initial_guess_mode: "default",
-              technique_family: techniqueFamily,
-              vary: Array.isArray(flat.vary) ? (flat.vary as boolean[]) : undefined,
-              param_links: Array.isArray(flat.param_links)
-                ? (flat.param_links as FitRequest["param_links"])
-                : undefined,
-              xps_region: typeof flat.xps_region === "string" ? flat.xps_region : undefined,
-              fit_min_x: typeof flat.fit_min_x === "number" ? flat.fit_min_x : undefined,
-              fit_max_x: typeof flat.fit_max_x === "number" ? flat.fit_max_x : undefined,
-              initial_area_ratios:
-                typeof flat.initial_area_ratios === "string" && flat.initial_area_ratios.trim()
-                  ? flat.initial_area_ratios.trim()
-                  : undefined,
-            },
+            buildFitRequest(
+              { ...flat, components: compsApi, p0, bounds_lower: lo, bounds_upper: hi },
+              { spectrum_id: it.spectrum_id, x: it.x, y: it.y, var: it.var ?? null, var_kind: it.var_kind ?? null },
+              { technique: techniqueFamily, weighting: fp.weighting ?? "auto", fit: true }
+            ),
             { signal }
           );
         } catch (e) {
@@ -550,7 +549,32 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
           xAxisTitle,
           fillOpacity,
         });
-        figures.push({ ...built, spectrum_id: it.spectrum_id });
+        const fitMeta: FitMeta = {
+          x: it.x,
+          y: it.y,
+          yHat: fitResp.y_hat ?? [],
+          residual,
+          components: (fitResp.components ?? []).map((c) => ({
+            component_id: c.component_id,
+            component_type: c.component_type,
+            params: c.params ?? {},
+            y_hat: c.y_hat ?? null,
+          })),
+          fitted: true,
+          fitMin: typeof flat.fit_min_x === "number" ? flat.fit_min_x : null,
+          fitMax: typeof flat.fit_max_x === "number" ? flat.fit_max_x : null,
+          xAxisTitle,
+        };
+        figures.push({ ...built, spectrum_id: it.spectrum_id, fit_meta: fitMeta });
+        if (!fitDone) {
+          fitDone = {
+            flat,
+            meta: fitMeta,
+            spectrum_id: it.spectrum_id,
+            diagnostics: fitResp.diagnostics,
+            areaPct: Object.fromEntries((fitResp.components ?? []).filter((c) => c.area_pct != null).map((c) => [c.component_id, c.area_pct ?? null])),
+          };
+        }
       }
 
       const appliedSummary = [...appliedCounts.entries()].map(([k, n]) => `${k} ×${n}`).join(", ");
@@ -558,6 +582,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
         `Fitting preview: ${figures.length} spectra (stacked)` + (appliedSummary ? ` · weighting applied: ${appliedSummary}` : "")
       );
       commitFigure({ kind: "fit_stack", figures } satisfies FitStackFigure);
+      if (fitDone) onFitDone?.(fitDone);
       return;
     }
 

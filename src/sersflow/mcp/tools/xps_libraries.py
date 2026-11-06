@@ -16,6 +16,29 @@ if TYPE_CHECKING:
     from sersflow.mcp.runtime import RuntimeContext
 
 
+def _acquisition_pass_energy(
+    ctx: RuntimeContext,
+    *,
+    pass_energy: int | None,
+    preferred_pass_energy: int | None,
+    dataset_id: str | None,
+    spectrum_id: str | None,
+) -> int | None:
+    """X3: when no pass energy is given, read it from the dataset spectrum's acquisition metadata."""
+    if pass_energy is not None or preferred_pass_energy is not None or not dataset_id:
+        return preferred_pass_energy
+    if not spectrum_id:
+        raise ValueError("spectrum_id is required together with dataset_id to read the acquisition pass energy")
+    acq = ctx.get_client().datasets.spectrum_acquisition(dataset_id, spectrum_id, include_arrays=False)
+    pe = acq.get("pass_energy_eV")
+    if pe is None:
+        return None
+    try:
+        return int(round(float(pe)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _compact_chemical_entry(e: dict[str, Any]) -> dict[str, Any]:
     return {
         "section_id": e.get("section_id"),
@@ -254,6 +277,8 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         lock_spin_orbit: bool = True,
         spin_orbit_partner_splitting_eV: float | None = None,
         spin_orbit_partner_subshell: str | None = None,
+        dataset_id: str | None = None,
+        spectrum_id: str | None = None,
     ) -> str:
         """
         Expand an XPS fitting recipe into pipeline fitting-step params.
@@ -262,14 +287,23 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         default; doublet FWHM follows the recipe table ratio (Ti/V 2p1/2 Coster-Kronig broadening) or is equal.
         One-member recipes (Co/Ni/Fe/Mn/Cr 2p3/2 multiplets) stay single unless spin_orbit_partner_splitting_eV is
         given: then each peak gets a 2p1/2 partner at +splitting (you must supply the splitting; widen the fit window).
+
+        X3: pass dataset_id + spectrum_id (and no pass_energy) to take the pass energy from the spectrum's acquisition metadata.
         """
 
         def _run():
+            preferred_pass_energy_eff = _acquisition_pass_energy(
+                ctx,
+                pass_energy=pass_energy,
+                preferred_pass_energy=preferred_pass_energy,
+                dataset_id=dataset_id,
+                spectrum_id=spectrum_id,
+            )
             data = ctx.get_client().xps.apply_fitting_recipe(
                 recipe_id,
                 pass_energy=pass_energy,
                 include_background=include_background,
-                preferred_pass_energy=preferred_pass_energy,
+                preferred_pass_energy=preferred_pass_energy_eff,
                 lock_satellites=lock_satellites,
                 lock_spin_orbit=lock_spin_orbit,
                 spin_orbit_partner_splitting_eV=spin_orbit_partner_splitting_eV,
@@ -326,6 +360,8 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         lock_spin_orbit: bool = True,
         spin_orbit_partner_splitting_eV: float | None = None,
         spin_orbit_partner_subshell: str | None = None,
+        dataset_id: str | None = None,
+        spectrum_id: str | None = None,
         pipeline: dict[str, Any] | None = None,
         confirm: bool = False,
     ) -> str:
@@ -337,7 +373,13 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 recipe_id,
                 pass_energy=pass_energy,
                 include_background=include_background,
-                preferred_pass_energy=preferred_pass_energy,
+                preferred_pass_energy=_acquisition_pass_energy(
+                    ctx,
+                    pass_energy=pass_energy,
+                    preferred_pass_energy=preferred_pass_energy,
+                    dataset_id=dataset_id,
+                    spectrum_id=spectrum_id,
+                ),
                 lock_satellites=lock_satellites,
                 lock_spin_orbit=lock_spin_orbit,
                 spin_orbit_partner_splitting_eV=spin_orbit_partner_splitting_eV,
@@ -375,6 +417,8 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         lock_spin_orbit: bool = True,
         spin_orbit_partner_splitting_eV: float | None = None,
         spin_orbit_partner_subshell: str | None = None,
+        dataset_id: str | None = None,
+        spectrum_id: str | None = None,
         confirm: bool = False,
     ) -> str:
         """Apply XPS recipe into session working pipeline as a fitting step (technique_family=xps)."""
@@ -386,7 +430,13 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 recipe_id,
                 pass_energy=pass_energy,
                 include_background=include_background,
-                preferred_pass_energy=preferred_pass_energy,
+                preferred_pass_energy=_acquisition_pass_energy(
+                    ctx,
+                    pass_energy=pass_energy,
+                    preferred_pass_energy=preferred_pass_energy,
+                    dataset_id=dataset_id,
+                    spectrum_id=spectrum_id,
+                ),
                 lock_satellites=lock_satellites,
                 lock_spin_orbit=lock_spin_orbit,
                 spin_orbit_partner_splitting_eV=spin_orbit_partner_splitting_eV,

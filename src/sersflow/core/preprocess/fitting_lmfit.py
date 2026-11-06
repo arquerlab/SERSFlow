@@ -913,6 +913,38 @@ def _full_flat_covariance(result: Any, flat_names: list[str]) -> np.ndarray | No
     return jac @ c @ jac.T
 
 
+def resolve_initial_vector(problem: FitProblem) -> np.ndarray:
+    """X1: the starting vector a fit would use (XPS safeguards, Auto amplitudes, seeded backgrounds), no optimisation.
+
+    Lets the interactive preview draw the model at the user's current parameters, so dragging a peak shows the
+    curve before any refit.
+    """
+    if _shirley_needs_flip(problem):
+        problem = _flip_problem(problem)
+    _model, _fns, slices, _mapping, _prefixes, param_keys_per_comp, _cursor, _bg = _assemble_lmfit_model(problem)
+    p0_list, lo_list, hi_list, _auto = _apply_xps_fit_safeguards(
+        problem, slices=slices, param_keys_per_comp=param_keys_per_comp
+    )
+    mode = str(problem.initial_guess_mode or "default").strip().lower()
+    p0_list = _apply_auto_peak_amplitudes(
+        problem.x,
+        problem.y,
+        p0_list,
+        problem.components,
+        slices,
+        param_keys_per_comp,
+        lo_list,
+        hi_list,
+        only_nonpositive=(mode != "auto"),
+        initial_area_ratios=problem.initial_area_ratios,
+    )
+    p0_list = _apply_auto_fermi_amplitudes(
+        problem.y, p0_list, problem.components, slices, param_keys_per_comp, lo_list, hi_list
+    )
+    _seed_extra_backgrounds(problem, p0_list, slices, param_keys_per_comp)
+    return np.asarray(p0_list, dtype=float)
+
+
 def evaluate_curve_lmfit(
     problem: FitProblem,
     p_opt: np.ndarray,

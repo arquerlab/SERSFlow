@@ -25,6 +25,19 @@ def require_confirm(
     return refusal(reason=reason, message=message, details=details)
 
 
+def require_destructive_confirm(
+    confirm: bool | None, *, what: str, details: dict[str, Any]
+) -> dict[str, Any] | None:
+    """X3: delete/overwrite tools refuse until ``confirm=true``; the refusal says what would be removed."""
+    if confirm is True:
+        return None
+    return refusal(
+        reason="destructive_action",
+        message=f"{what} cannot be undone. Call again with confirm=true to proceed.",
+        details=details,
+    )
+
+
 def check_upload_size(
     paths: list[Path | str],
     *,
