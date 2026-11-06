@@ -35,6 +35,7 @@ class McpConfig:
     upload_confirm_bytes: int = 104_857_600
     fitting_confirm_max_components: int = 20
     sweep_confirm_max_points: int = 60
+    robustness_confirm_max_fits: int = 400
     tabular_max_rows: int = 50
     tabular_max_cols: int = 30
     analysis_async_default: bool = True
@@ -82,6 +83,8 @@ class McpConfig:
             raise ValueError("fitting_confirm_max_components must be >= 0")
         if self.sweep_confirm_max_points < 0:
             raise ValueError("sweep_confirm_max_points must be >= 0")
+        if self.robustness_confirm_max_fits < 0:
+            raise ValueError("robustness_confirm_max_fits must be >= 0")
         if self.tabular_max_rows < 1:
             raise ValueError("tabular_max_rows must be >= 1")
         if self.tabular_max_cols < 1:

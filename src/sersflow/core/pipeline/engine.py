@@ -940,6 +940,7 @@ def run_pipeline_parallel_no_cache(
     collect_step_inputs: bool = False,
     technique_family: str | None = None,
     collect_steps: set[str] | None = None,
+    calibration_cohort: Iterable[Any] | None = None,
 ) -> dict[str, XY] | tuple[dict[str, XY], dict[str, dict[int, XY]]] | tuple[dict[str, XY], dict[str, dict[str, XY]]]:
     """
     Parallel pipeline execution for large batches (no shared cache).
@@ -969,8 +970,10 @@ def run_pipeline_parallel_no_cache(
 
     tech = technique_family
     input_refs = [dict(r) for r in inputs]
+    # Subset runs (fit preview of a few spectra) must still measure cohort calibration over the full
+    # cohort, otherwise reference bands (e.g. valence-band Fermi edge) are missing and the shift is lost.
     cal_deltas = _prepare_calibration_cohort(
-        input_refs,
+        _calibration_cohort_refs(input_refs, calibration_cohort) if calibration_cohort is not None else input_refs,
         steps,
         technique_family=tech,
         namespace=cfg.cache_namespace,

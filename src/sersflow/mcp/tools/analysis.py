@@ -513,6 +513,205 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
         return await tool_call(ctx, _run)
 
+    @mcp.tool(name="post_analysis_robustness_plan")
+    async def post_analysis_robustness_plan(
+        run_id: str,
+        fitting_step_num: int | None = None,
+        fitting_step_index: int | None = None,
+        preset: str | None = None,
+        preset_options: dict[str, Any] | None = None,
+        factors: list[dict[str, Any]] | None = None,
+        responses: list[dict[str, Any]] | None = None,
+        max_cells: int | None = None,
+        interaction_order: int | str | None = None,
+        n_starts: int = 1,
+        noise: dict[str, Any] | None = None,
+        spectrum_ids: list[str] | None = None,
+    ) -> str:
+        """
+        POST /analysis/runs/{run_id}/robustness-plan — DRY RUN of a robustness study (nothing is fitted).
+
+        Returns the study spec (factors with levels and patches, responses; proposed from `preset` when given:
+        fit_model_choices = background type / fit window / line-shape mix / FWHM constraint of the fitting step,
+        baseline_method = upstream baseline algorithm), notes, and the cost estimate (cells x spectra x starts,
+        upstream groups, server limit). Edit the returned factors/responses and pass them to
+        post_analysis_robustness_jobs. See docs/ROBUSTNESS.md for the patch operations and response kinds.
+        """
+
+        def _run():
+            from sersflow.api.schemas.analysis import RobustnessJobCreateRequest
+
+            req = RobustnessJobCreateRequest(
+                fitting_step_num=fitting_step_num,
+                fitting_step_index=fitting_step_index,
+                preset=preset,
+                preset_options=preset_options,
+                factors=factors,
+                responses=responses,
+                max_cells=max_cells,
+                interaction_order=interaction_order,
+                n_starts=n_starts,
+                noise=noise,
+                spectrum_ids=spectrum_ids,
+            )
+            return {"ok": True, "data": ctx.get_client().analysis.plan_robustness(run_id, req)}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_analysis_robustness_jobs")
+    async def post_analysis_robustness_jobs(
+        run_id: str,
+        fitting_step_num: int | None = None,
+        fitting_step_index: int | None = None,
+        preset: str | None = None,
+        preset_options: dict[str, Any] | None = None,
+        factors: list[dict[str, Any]] | None = None,
+        responses: list[dict[str, Any]] | None = None,
+        x_label: str | None = None,
+        max_cells: int | None = None,
+        interaction_order: int | str | None = None,
+        subsample: dict[str, Any] | None = None,
+        n_starts: int = 1,
+        seed: int = 0,
+        filter: dict[str, Any] | None = None,
+        noise: dict[str, Any] | None = None,
+        reference_cell: str | None = None,
+        workers: int | None = None,
+        allow_large: bool = False,
+        spectrum_ids: list[str] | None = None,
+        confirm: bool = False,
+    ) -> str:
+        """
+        POST /analysis/runs/{run_id}/robustness-jobs — multi-factor analyst-choice study of ONE fitting step.
+
+        A full factorial of choices (background type, fit window, line-shape mix, FWHM constraint, upstream
+        baseline method, ... as `factors`, or proposed by `preset`) is refitted on every selected spectrum, with
+        optional multi-start (n_starts) and a counting-noise Monte Carlo baseline (noise={"n_replicates": 50}).
+        `responses` are what is compared (area_pct, area, param pos/fwhm/..., group_fraction, ratio, difference);
+        `x_label` is any spectrum label the trend is measured against (not limited to current density).
+        The result gives ANOVA variance shares per factor and interaction (exact on a full factorial), trend
+        preservation across variants, analyst-choice vs noise variance ratio, and a fit-quality filter report
+        (filter mode delta_bic_common compares on the window shared by all cells; native BIC is never compared
+        across different data windows). Run post_analysis_robustness_plan first to see the cost. Studies above
+        robustness_confirm_max_fits need confirm=true; above the server limit also allow_large=true.
+
+        Poll/wait with the fit-curve job tools; read results with get_analysis_robustness_summary, or download
+        the zip (design.csv, variant_points.csv, anova.csv, trend.csv, bands.csv, noise_comparison.csv, ...).
+        """
+
+        def _run():
+            from sersflow.api.schemas.analysis import RobustnessJobCreateRequest
+
+            req = RobustnessJobCreateRequest(
+                fitting_step_num=fitting_step_num,
+                fitting_step_index=fitting_step_index,
+                preset=preset,
+                preset_options=preset_options,
+                factors=factors,
+                responses=responses,
+                x_label=x_label,
+                max_cells=max_cells,
+                interaction_order=interaction_order,
+                subsample=subsample,
+                n_starts=n_starts,
+                seed=seed,
+                filter=filter,
+                noise=noise,
+                reference_cell=reference_cell,
+                workers=workers,
+                allow_large=allow_large,
+                spectrum_ids=spectrum_ids,
+            )
+            plan = ctx.get_client().analysis.plan_robustness(run_id, req)
+            est = plan.get("estimate") or {}
+            blocked = confirm_gates.check_robustness_fits(
+                int(est.get("n_total_fits") or 0), max_fits=ctx.config.robustness_confirm_max_fits, confirm=confirm
+            )
+            if blocked is not None:
+                return blocked
+            resp = ctx.get_client().analysis.create_robustness_job(run_id, req)
+            return {"ok": True, "job_id": resp.job_id, "status": resp.status, "run_id": run_id, "estimate": est}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="get_analysis_robustness_summary")
+    async def get_analysis_robustness_summary(
+        job_id: str,
+        response: str | None = None,
+        include_per_cell: bool = False,
+        include_per_spectrum: bool = False,
+    ) -> str:
+        """
+        GET /analysis/robustness-jobs/{job_id}/summary — result of a completed robustness study as JSON.
+
+        Per response: anova.terms (variance share of every factor and interaction: share_mean / share_median /
+        share_pooled over spectra; exact=true on a complete full factorial), trend (fraction of variants keeping the
+        trend sign, Spearman range, analyst-choice bands per spectrum), noise_comparison (analyst-choice variance /
+        noise variance per spectrum and the median ratio), anova_unfiltered when a filter is active. Top level:
+        design, filter report (what each filter removed per factor level), degeneracy (multi-start), meta.
+        Pass `response` to keep one response; per-cell trend rows and per-spectrum ANOVA are dropped unless asked.
+        """
+
+        def _run():
+            data = ctx.get_client().analysis.get_robustness_summary(job_id)
+            blocks = data.get("responses") or {}
+            if response:
+                blocks = {k: v for k, v in blocks.items() if k == response}
+            for b in blocks.values():
+                if not include_per_spectrum:
+                    (b.get("anova") or {}).pop("per_spectrum", None)
+                    (b.get("anova_unfiltered") or {}).pop("per_spectrum", None)
+                if not include_per_cell and b.get("trend"):
+                    b["trend"].pop("per_cell", None)
+            return {"ok": True, "data": {**data, "responses": blocks}}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_analysis_robustness_reanalyse")
+    async def post_analysis_robustness_reanalyse(
+        job_id: str,
+        responses: list[dict[str, Any]] | None = None,
+        filter: dict[str, Any] | None = None,
+        interaction_order: int | str | None = None,
+        x_label: str | None = None,
+        reference_cell: str | None = None,
+    ) -> str:
+        """
+        POST /analysis/robustness-jobs/{job_id}/reanalyse — recompute a finished study's summary with other
+        responses, a different fit-quality filter, interaction order, x_label or reference cell. No refitting:
+        the stored fits are re-read (responses are re-evaluated from the stored parameters).
+        """
+
+        def _run():
+            from sersflow.api.schemas.analysis import RobustnessReanalyseRequest
+
+            req = RobustnessReanalyseRequest(
+                responses=responses,
+                filter=filter,
+                interaction_order=interaction_order,
+                x_label=x_label,
+                reference_cell=reference_cell,
+            )
+            data = ctx.get_client().analysis.reanalyse_robustness(job_id, req)
+            for b in (data.get("responses") or {}).values():
+                (b.get("anova") or {}).pop("per_spectrum", None)
+                if b.get("trend"):
+                    b["trend"].pop("per_cell", None)
+            return {"ok": True, "data": data}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_analysis_robustness_resume")
+    async def post_analysis_robustness_resume(job_id: str) -> str:
+        """POST /analysis/robustness-jobs/{job_id}/resume — restart a failed or interrupted study; fits already
+        on disk are kept and only the missing (spectrum, cell) pairs are fitted."""
+
+        def _run():
+            resp = ctx.get_client().analysis.resume_robustness_job(job_id)
+            return {"ok": True, "job_id": resp.job_id, "status": resp.status}
+
+        return await tool_call(ctx, _run)
+
     @mcp.tool(name="post_analysis_report_jobs")
     async def post_analysis_report_jobs(
         run_id: str,

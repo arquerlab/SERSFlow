@@ -179,6 +179,25 @@ def check_sweep_points(
     )
 
 
+def check_robustness_fits(
+    n_fits: int,
+    *,
+    max_fits: int,
+    confirm: bool | None,
+) -> dict[str, Any] | None:
+    """A robustness study refits every selected spectrum under every design cell (x starts); large ones need approval."""
+    if n_fits <= max_fits:
+        return None
+    return require_confirm(
+        confirm,
+        reason="robustness_exceeds_threshold",
+        message=(
+            f"Robustness study needs {n_fits} fits > {max_fits}. Retry with confirm=true after user approval."
+        ),
+        details={"n_fits": n_fits, "threshold": max_fits},
+    )
+
+
 def reject_overwrite(overwrite: bool | None) -> dict[str, Any] | None:
     if overwrite:
         return {

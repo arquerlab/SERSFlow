@@ -97,6 +97,31 @@ def _pipeline_from_run(rec: Any) -> tuple[Any, Any, str]:
     return pipeline, sess, ns
 
 
+class _CohortRefs(list):
+    """Refs of the selected spectra; ``cohort`` holds the full analysis cohort (for calibration deltas)."""
+
+    cohort: list[Any]
+
+
+def cohort_inputs(refs: Any) -> list[dict[str, Any]] | None:
+    """Engine-input dicts of the full cohort behind ``refs`` (None when refs is not a subset)."""
+    cohort = getattr(refs, "cohort", None)
+    if not cohort:
+        return None
+    return [
+        {
+            "spectrum_id": r.spectrum_id,
+            "relative_path": r.relative_path,
+            "record_index": r.record_index,
+            "blob_id": r.blob_id,
+            "blob_relative_path": r.blob_relative_path,
+            "original_relative_path": r.original_relative_path,
+            "spectrum_labels": getattr(r, "spectrum_labels", None),
+        }
+        for r in cohort
+    ]
+
+
 def _resolved_refs_for_run(rec: Any, spectrum_ids: list[str] | None) -> tuple[Any, Any, list[Any], str]:
     pipeline, sess, ns = _pipeline_from_run(rec)
     effective_pipeline, _ = _effective_pipeline_for_analysis(pipeline)
@@ -116,7 +141,9 @@ def _resolved_refs_for_run(rec: Any, spectrum_ids: list[str] | None) -> tuple[An
     effective_pipeline = pipeline_without_qc_steps(effective_pipeline)
     if spectrum_ids is not None:
         wanted = set(spectrum_ids)
-        refs = [r for r in refs if r.spectrum_id in wanted]
+        full = list(refs)
+        refs = _CohortRefs(r for r in full if r.spectrum_id in wanted)
+        refs.cohort = full
         missing = wanted - {r.spectrum_id for r in refs}
         if missing:
             raise ValueError(f"spectrum_ids not in analysis cohort: {sorted(missing)[:5]}")
@@ -202,6 +229,7 @@ def _collect_fit_input_xy(
         collect_step_inputs=True,
         max_workers=min(8, max(1, len(inputs))),
         technique_family=getattr(pipeline, "technique_family", None),
+        calibration_cohort=cohort_inputs(refs),
     )
     if not isinstance(packed, tuple):
         raise RuntimeError("expected (final, per_step_inputs)")

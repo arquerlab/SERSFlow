@@ -17,6 +17,8 @@ from sersflow.api.schemas.analysis import (
     FittingPreviewRequest,
     MonteCarloJobCreateRequest,
     ObservationSchemaResponse,
+    RobustnessJobCreateRequest,
+    RobustnessReanalyseRequest,
     ReportJobCreateRequest,
     SweepJobCreateRequest,
 )
@@ -199,6 +201,32 @@ class AnalysisResource(_Base):
 
     def get_monte_carlo_summary(self, job_id: str) -> dict[str, Any]:
         return request_json(self._root.http, "GET", f"/analysis/monte-carlo-jobs/{job_id}/summary")
+
+    def plan_robustness(self, run_id: str, payload: RobustnessJobCreateRequest) -> dict[str, Any]:
+        return request_json(
+            self._root.http, "POST", f"/analysis/runs/{run_id}/robustness-plan", json_body=dump_json(payload)
+        )
+
+    def create_robustness_job(self, run_id: str, payload: RobustnessJobCreateRequest) -> FitCurveJobCreateResponse:
+        data = request_json(
+            self._root.http, "POST", f"/analysis/runs/{run_id}/robustness-jobs", json_body=dump_json(payload)
+        )
+        return FitCurveJobCreateResponse.model_validate(data)
+
+    def resume_robustness_job(self, job_id: str) -> FitCurveJobCreateResponse:
+        data = request_json(self._root.http, "POST", f"/analysis/robustness-jobs/{job_id}/resume")
+        return FitCurveJobCreateResponse.model_validate(data)
+
+    def get_robustness_summary(self, job_id: str) -> dict[str, Any]:
+        return request_json(self._root.http, "GET", f"/analysis/robustness-jobs/{job_id}/summary")
+
+    def reanalyse_robustness(self, job_id: str, payload: RobustnessReanalyseRequest) -> dict[str, Any]:
+        return request_json(
+            self._root.http, "POST", f"/analysis/robustness-jobs/{job_id}/reanalyse", json_body=dump_json(payload)
+        )
+
+    def list_robustness_presets(self) -> dict[str, Any]:
+        return request_json(self._root.http, "GET", "/analysis/robustness-presets")
 
     def get_fit_curve_job(self, job_id: str) -> FitCurveJobStatusResponse:
         data = request_json(self._root.http, "GET", f"/analysis/fit-curve-jobs/{job_id}")

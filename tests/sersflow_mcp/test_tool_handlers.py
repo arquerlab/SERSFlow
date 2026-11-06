@@ -629,6 +629,54 @@ def test_post_analysis_sweep_jobs_gate_and_post(tmp_path: Path) -> None:
     assert seen[0][1]["fitting_step_index"] == 0
 
 
+def test_robustness_tools_plan_gate_post_and_compact_summary(tmp_path: Path) -> None:
+    seen: list[tuple[str, dict]] = []
+    est = {"n_cells": 8, "n_spectra": 60, "n_starts": 1, "n_fits": 480, "n_total_fits": 480}
+    summary = {
+        "design": {"n_cells": 8},
+        "responses": {
+            "r": {
+                "anova": {"terms": [{"term": "background"}], "per_spectrum": {"s": {}}},
+                "trend": {"fraction_sign_preserved": 1.0, "per_cell": [{"cell_id": "c0"}], "bands": []},
+            },
+            "other": {"anova": {"terms": [], "per_spectrum": {}}},
+        },
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/analysis/runs/r1/robustness-plan":
+            seen.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(200, json={"estimate": est, "factors": [], "responses": [], "notes": []})
+        if request.url.path == "/analysis/runs/r1/robustness-jobs":
+            seen.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(202, json={"job_id": "fcjob_r", "status": "queued"})
+        if request.url.path == "/analysis/robustness-jobs/fcjob_r/summary":
+            return httpx.Response(200, json=summary)
+        return httpx.Response(404, json={"detail": request.url.path})
+
+    ctx = _ready_ctx(tmp_path, httpx.MockTransport(handle))
+    mcp = create_server(ctx)
+    plan = json.loads(asyncio.run(_tool_fn(mcp, "post_analysis_robustness_plan")(run_id="r1", fitting_step_index=0, preset="fit_model_choices")))
+    assert plan["ok"] is True and plan["data"]["estimate"]["n_cells"] == 8
+    assert seen[-1][1]["preset"] == "fit_model_choices"
+
+    jobs = _tool_fn(mcp, "post_analysis_robustness_jobs")
+    n_before = len(seen)
+    blocked = json.loads(asyncio.run(jobs(run_id="r1", fitting_step_index=0, preset="fit_model_choices")))
+    assert blocked["needs_confirm"] is True and blocked["reason"] == "robustness_exceeds_threshold"
+    assert all(path.endswith("robustness-plan") for path, _ in seen[n_before:])  # plan only, nothing started
+    ok = json.loads(asyncio.run(jobs(run_id="r1", fitting_step_index=0, preset="fit_model_choices", confirm=True, n_starts=3)))
+    assert ok["ok"] is True and ok["job_id"] == "fcjob_r" and ok["estimate"]["n_fits"] == 480
+    assert seen[-1][0].endswith("robustness-jobs") and seen[-1][1]["n_starts"] == 3
+
+    get = _tool_fn(mcp, "get_analysis_robustness_summary")
+    data = json.loads(asyncio.run(get(job_id="fcjob_r", response="r")))["data"]
+    assert list(data["responses"]) == ["r"]
+    assert "per_spectrum" not in data["responses"]["r"]["anova"] and "per_cell" not in data["responses"]["r"]["trend"]
+    full = json.loads(asyncio.run(get(job_id="fcjob_r", include_per_cell=True, include_per_spectrum=True)))["data"]
+    assert "per_spectrum" in full["responses"]["r"]["anova"] and "per_cell" in full["responses"]["r"]["trend"]
+
+
 def test_post_analysis_monte_carlo_jobs_and_summary(tmp_path: Path) -> None:
     seen: list[tuple[str, dict]] = []
     summary = {

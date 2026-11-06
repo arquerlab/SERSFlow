@@ -3251,6 +3251,27 @@ export default function AnalyzeWorkspace() {
                       <span className="hint" style={{ margin: 0 }}>
                         Selected {fitDiagSelectedIds.length}/10
                       </span>
+                      <button
+                        type="button"
+                        className="mini ghost"
+                        disabled={!fitDiagSpectrumIds.length}
+                        title={
+                          fitDiagSpectrumIds.length > 10
+                            ? "Selects the first 10 listed spectra (10 is the maximum per plot)"
+                            : "Select all listed spectra"
+                        }
+                        onClick={() => setFitDiagSelectedIds(fitDiagSpectrumIds.slice(0, 10))}
+                      >
+                        {fitDiagSpectrumIds.length > 10 ? "Select first 10" : "Select all"}
+                      </button>
+                      <button
+                        type="button"
+                        className="mini ghost"
+                        disabled={!fitDiagSelectedIds.length}
+                        onClick={() => setFitDiagSelectedIds([])}
+                      >
+                        Deselect all
+                      </button>
                       <label className="inline" title="Residual divided by its counting uncertainty σ (weighted fits only); ≈ ±1 noise band for a good fit">
                         <input
                           type="checkbox"

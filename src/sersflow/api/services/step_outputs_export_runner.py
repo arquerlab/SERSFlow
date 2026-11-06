@@ -14,7 +14,7 @@ import numpy as np
 
 from sersflow.api.services.analysis_runner import _effective_pipeline_for_analysis, prepare_run_context
 from sersflow.api.services.fit_curve_export_runner import _max_spectra, _safe_name
-from sersflow.api.services.fitting_preview import _resolved_refs_for_run
+from sersflow.api.services.fitting_preview import _resolved_refs_for_run, cohort_inputs
 from sersflow.api.services.pipeline_qc import pipeline_without_qc_steps
 from sersflow.core.pipeline.engine import RAW_COLLECT_TOKEN, EngineConfig, run_pipeline_parallel_no_cache
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
@@ -173,6 +173,7 @@ def execute_step_outputs_job(job_id: str) -> None:
             collect_steps=collect,
             max_workers=min(8, max(1, total)),
             technique_family=getattr(pipeline, "technique_family", None),
+            calibration_cohort=cohort_inputs(refs),
         )
         if not isinstance(packed, tuple):
             raise RuntimeError("expected (final, per_step_outputs)")

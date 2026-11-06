@@ -15,6 +15,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sersflow.api.schemas.analysis import (
     MonteCarloJobCreateRequest,
     ReportJobCreateRequest,
+    RobustnessJobCreateRequest,
+    RobustnessReanalyseRequest,
     AnalysisExportManifest,
     AnalysisJobStatusResponse,
     AnalysisRunCreateRequest,
@@ -50,6 +52,18 @@ from sersflow.api.services.monte_carlo_runner import (
     read_monte_carlo_summary,
 )
 from sersflow.api.services.report_runner import REPORT_CONTENT, execute_report_job, read_report_json
+from sersflow.api.services.fitting_preview import _resolved_refs_for_run as _rb_resolved_refs
+from sersflow.api.services.robustness_runner import (
+    ROBUSTNESS_CONTENT,
+    _load_labels as _rb_load_labels,
+    applicable_spectra as _rb_applicable_spectra,
+    estimate_for_options as _rb_estimate,
+    execute_robustness_job,
+    read_robustness_summary,
+    reanalyse_job as _rb_reanalyse,
+)
+from sersflow.core.robustness.presets import PRESETS as ROBUSTNESS_PRESETS
+from sersflow.core.robustness.presets import build_preset as _rb_build_preset
 from sersflow.api.services.sweep_runner import (
     SWEEP_CONTENT,
     _fixed_params,
@@ -78,6 +92,7 @@ from sersflow.infra.analysis_store import (
     delete_runs_for_dataset,
     find_run_by_client_job_key,
     get_fit_curve_job,
+    update_fit_curve_job,
     get_job_by_id,
     get_job_for_run,
     list_runs,
@@ -764,6 +779,136 @@ def get_monte_carlo_summary(job_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to read summary: {e}") from e
 
 
+def _robustness_build(rec: Any, payload: RobustnessJobCreateRequest) -> tuple[int, dict[str, Any], dict[str, Any], list[str]]:
+    """(fitting step num, study options, step params, preset notes) for a robustness request; 400 on bad input."""
+    step_num = _resolve_fitting_step_num(rec, num=payload.fitting_step_num, index=payload.fitting_step_index)
+    try:
+        pipeline, _sub, _sess = prepare_run_context(rec=rec)
+        effective, _ = _effective_pipeline_for_analysis(pipeline)
+        eff = pipeline_without_qc_steps(effective)
+        _idx, step = _find_fitting_step(eff, step_num)
+        step_params = dict(step.params or {})
+        tech = getattr(eff, "technique_family", None)
+        if tech and "technique_family" not in step_params:
+            step_params["technique_family"] = tech
+        opts = {
+            k: v
+            for k, v in payload.model_dump(
+                exclude={"fitting_step_num", "fitting_step_index", "preset", "preset_options"}
+            ).items()
+            if v is not None
+        }
+        notes: list[str] = []
+        if payload.preset:
+            gen = _rb_build_preset(payload.preset, step_params=step_params, pipeline=eff, opts=payload.preset_options)
+            notes = list(gen.get("notes") or [])
+            opts.setdefault("factors", gen["factors"])
+            if not opts.get("responses"):
+                opts["responses"] = gen["responses"]
+        return step_num, opts, step_params, notes
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get("/robustness-presets", response_model=None)
+def list_robustness_presets() -> dict[str, Any]:
+    return {"presets": [{"name": k, "description": v} for k, v in ROBUSTNESS_PRESETS.items()]}
+
+
+@router.post("/runs/{run_id}/robustness-plan", response_model=None)
+def post_robustness_plan(run_id: str, payload: RobustnessJobCreateRequest, request: Request) -> dict[str, Any]:
+    """Dry run: the study spec (factors / responses, from a preset when asked) and its cost; nothing is fitted."""
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
+    step_num, opts, step_params, notes = _robustness_build(rec, payload)
+    try:
+        _p, _ds, refs, _ns = _rb_resolved_refs(rec, list(payload.spectrum_ids) if payload.spectrum_ids else None)
+        labels = _rb_load_labels(list(refs))
+        n_spectra = len(_rb_applicable_spectra(list(refs), labels, step_params))
+        estimate = _rb_estimate(opts, n_spectra)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return sanitize_floats(
+        {
+            "fitting_step_num": step_num,
+            "factors": opts.get("factors"),
+            "responses": opts.get("responses"),
+            "notes": notes,
+            "estimate": estimate,
+        }
+    )
+
+
+@router.post("/runs/{run_id}/robustness-jobs", response_model=FitCurveJobCreateResponse)
+def post_robustness_job(
+    run_id: str, payload: RobustnessJobCreateRequest, request: Request
+) -> FitCurveJobCreateResponse | JSONResponse:
+    """Robustness study (factorial analyst-choice analysis); poll/download through the fit-curve job endpoints."""
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
+    if rec.status != "completed":
+        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    step_num, opts, _step_params, _notes = _robustness_build(rec, payload)
+    try:
+        _rb_estimate(opts, 1)  # validates the design and responses
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    jid = create_fit_curve_job(
+        run_id=run_id,
+        fitting_step_num=step_num,
+        content=ROBUSTNESS_CONTENT,
+        format="zip",
+        params_json=json.dumps(opts),
+    )
+    Thread(target=execute_robustness_job, args=(jid,), daemon=True).start()
+    return JSONResponse(status_code=202, content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump())
+
+
+def _robustness_job(job_id: str, user_id: Any) -> Any:
+    job = get_fit_curve_job(job_id)
+    if job is None or job.content != ROBUSTNESS_CONTENT:
+        raise HTTPException(status_code=404, detail="Robustness job not found")
+    _require_run(job.run_id, user_id)
+    return job
+
+
+@router.post("/robustness-jobs/{job_id}/resume", response_model=FitCurveJobCreateResponse)
+def post_robustness_resume(job_id: str, request: Request) -> FitCurveJobCreateResponse | JSONResponse:
+    """Restart a failed / interrupted study: records already on disk are kept, only the missing fits run."""
+    job = _robustness_job(job_id, current_user_id(request))
+    if job.status in ("running", "queued"):
+        raise HTTPException(status_code=409, detail=f"job is {job.status}; resume only applies to failed or stuck jobs")
+    if job.status == "completed":
+        raise HTTPException(status_code=409, detail="job already completed")
+    update_fit_curve_job(job_id=job_id, status="queued", error="", finished=False)
+    Thread(target=execute_robustness_job, args=(job_id,), daemon=True).start()
+    return JSONResponse(status_code=202, content=FitCurveJobCreateResponse(job_id=job_id, status="queued").model_dump())
+
+
+@router.get("/robustness-jobs/{job_id}/summary", response_model=None)
+def get_robustness_summary(job_id: str, request: Request) -> dict[str, Any]:
+    """Study summary as JSON: design, filter report, degeneracy, per response ANOVA / trend / noise comparison."""
+    job = _robustness_job(job_id, current_user_id(request))
+    if job.status != "completed" or not job.artifact_path:
+        raise HTTPException(status_code=400, detail=f"Robustness job is not ready (status {job.status})")
+    try:
+        return sanitize_floats(read_robustness_summary(job.artifact_path))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read summary: {e}") from e
+
+
+@router.post("/robustness-jobs/{job_id}/reanalyse", response_model=None)
+def post_robustness_reanalyse(job_id: str, payload: RobustnessReanalyseRequest, request: Request) -> dict[str, Any]:
+    """Recompute the summary with other responses / filter / interaction order from the stored fits (no refit)."""
+    job = _robustness_job(job_id, current_user_id(request))
+    if job.status != "completed":
+        raise HTTPException(status_code=400, detail=f"Robustness job is not ready (status {job.status})")
+    try:
+        return sanitize_floats(_rb_reanalyse(job_id, payload.model_dump(exclude_none=True)))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.post("/runs/{run_id}/report-jobs", response_model=FitCurveJobCreateResponse)
 def post_report_job(
     run_id: str, payload: ReportJobCreateRequest, request: Request
@@ -880,6 +1025,7 @@ def download_fit_curve_job(job_id: str, request: Request) -> Response:
         STEP_OUTPUTS_CONTENT: "step_outputs",
         SWEEP_CONTENT: "sweep",
         MONTE_CARLO_CONTENT: "monte_carlo",
+        ROBUSTNESS_CONTENT: "robustness",
         REPORT_CONTENT: "fit_report",
     }.get(job.content, "fit_curves")
     return Response(

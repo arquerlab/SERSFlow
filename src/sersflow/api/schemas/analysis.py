@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -219,6 +219,57 @@ class MonteCarloJobCreateRequest(BaseModel):
     spectrum_ids: list[str] | None = Field(
         default=None, description="Subset of the run's spectra; default = every spectrum the step applies to."
     )
+
+
+class RobustnessJobCreateRequest(BaseModel):
+    """
+    Robustness study: a factorial design of analyst choices refitted over a run's spectra, with ANOVA variance shares.
+
+    A FACTOR is one choice (background, fit window, line-shape mix, FWHM constraint, an upstream baseline method...);
+    its LEVELS are options, each a list of patches of the fitting step or of an upstream pipeline step (see
+    ``core/robustness/patches.py`` and docs/ROBUSTNESS.md). The first level of every factor is the nominal setting.
+    Give ``factors`` explicitly or a ``preset`` that proposes them from the run's fitting step (explicit values win).
+    ``responses`` are what is compared (area %, positions, widths, group fractions, ratios); ``x_label`` names any
+    spectrum label (or numeric metadata) the trend is measured against.
+    """
+
+    fitting_step_num: int | None = Field(default=None, description="1-based, from /fitting-steps.")
+    fitting_step_index: int | None = Field(default=None, description="0-based = N in s{N}_ columns.")
+    preset: str | None = Field(default=None, description="fit_model_choices | baseline_method (proposes factors/responses).")
+    preset_options: dict[str, Any] | None = None
+    factors: list[dict[str, Any]] | None = Field(default=None, description="[{name, levels:[{name, patches:[...]}]}]")
+    responses: list[dict[str, Any]] | None = Field(
+        default=None, description="[{name, kind: area_pct|area|param|group_fraction|ratio|difference, ...}]"
+    )
+    max_cells: int | None = Field(default=None, ge=1, description="Refuse designs above this many cells; null = no cap.")
+    interaction_order: int | Literal["all"] | None = Field(default=None, description="1 = main effects; null/'all' = every order.")
+    subsample: dict[str, Any] | None = Field(default=None, description="{n, seed}: opt-in random subset of cells (inexact ANOVA).")
+    n_starts: int = Field(default=1, ge=1, le=50, description="Multi-start per cell; flags degenerate cells.")
+    seed: int = Field(default=0, ge=0)
+    jitter_frac: float | None = Field(default=None, gt=0)
+    cost_tol: float | None = Field(default=None, gt=0)
+    resp_tol_rel: float | None = Field(default=None, gt=0)
+    resp_tol_abs: float | None = Field(default=None, gt=0)
+    x_label: str | None = Field(default=None, description="Label / numeric metadata the trend is measured against.")
+    filter: dict[str, Any] | None = Field(
+        default=None,
+        description="{mode: none|delta_bic_common|delta_bic_native|rmse_ratio, threshold, exclude_degenerate, max_at_bound}",
+    )
+    noise: dict[str, Any] | None = Field(default=None, description="{n_replicates (0=off), reference_cell, seed}: noise Monte Carlo baseline.")
+    reference_cell: str | None = Field(default=None, description="Cell whose trend sign is the reference (default: majority).")
+    workers: int | None = Field(default=None, ge=1, le=128, description="Parallel worker processes.")
+    allow_large: bool = Field(default=False, description="Bypass the server fit cap (SERSFLOW_ROBUSTNESS_MAX_FITS).")
+    spectrum_ids: list[str] | None = None
+
+
+class RobustnessReanalyseRequest(BaseModel):
+    """Recompute a finished study's summary with other responses / filter / interaction order (no refitting)."""
+
+    responses: list[dict[str, Any]] | None = None
+    filter: dict[str, Any] | None = None
+    interaction_order: int | Literal["all"] | None = None
+    x_label: str | None = None
+    reference_cell: str | None = None
 
 
 class ReportJobCreateRequest(BaseModel):
