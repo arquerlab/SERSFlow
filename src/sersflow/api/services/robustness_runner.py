@@ -35,6 +35,7 @@ import numpy as np
 
 from sersflow.api.services.fit_curve_export_runner import _max_spectra
 from sersflow.api.services.fitting_preview import (
+    _CohortRefs,
     _collect_fit_input_xy,
     _find_fitting_step,
     _resolved_refs_for_run,
@@ -400,12 +401,19 @@ def _load_labels(refs: list[Any]) -> dict[str, dict[str, Any]]:
 
 
 def applicable_spectra(refs: list[Any], labels: dict[str, dict[str, Any]], step_params: dict[str, Any]) -> list[Any]:
-    out = []
+    """Spectra the fitting step applies to. The result keeps the FULL cohort in ``.cohort``.
+
+    A cohort x_axis_calibration (e.g. XPS valence-band Fermi edge -> Co 2p) measures spectra that the fit itself does
+    not use. Dropping them from the cohort leaves the calibration without its reference band, which silently sets the
+    shift to 0 and fits uncalibrated data (see ``fitting_preview._CohortRefs``)."""
+    cohort = list(getattr(refs, "cohort", None) or refs)
+    out = _CohortRefs()
     for r in refs:
         raw = labels.get(str(r.spectrum_id), {}).get("xps_region")
         region = str(raw).strip() if raw is not None and str(raw).strip() else None
         if fitting_region_applies(step_params=step_params, spectrum_xps_region=region):
             out.append(r)
+    out.cohort = cohort
     return out
 
 
@@ -437,7 +445,7 @@ def execute_robustness_job(job_id: str) -> None:
             base_params["technique_family"] = tech
 
         labels = _load_labels(list(refs))
-        refs = applicable_spectra(list(refs), labels, base_params)
+        refs = applicable_spectra(refs, labels, base_params)
         if not refs:
             raise ValueError("no spectrum of the cohort belongs to this fitting step's region")
         n_fits_total = len(refs) * len(design.cells)
