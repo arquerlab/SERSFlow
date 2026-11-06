@@ -912,6 +912,54 @@ export default function AnalyzeWorkspace() {
     };
   }, [runId, selectedRun?.status]);
 
+  // Spectra that actually carry a fit for the selected step (non-empty value in any of its feature columns).
+  const [fitStepSpectrumIds, setFitStepSpectrumIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    setFitStepSpectrumIds(null);
+    if (!runId || selectedRun?.status !== "completed" || fitDiagStepNum == null) return;
+    const items = fittingStepsQ.data?.items ?? [];
+    const step = items.find((it) => it.step_num === fitDiagStepNum);
+    const featureKeys = schemaQ.data?.feature_keys;
+    if (!step || !featureKeys) return;
+    const prefix = step.column_prefix || "";
+    const cols = featureKeys
+      .filter((k) => (prefix ? k.startsWith(prefix) : !/^s\d+_/.test(k)))
+      .slice(0, 80);
+    if (!cols.length) return;
+    let cancelled = false;
+    fetchObservationColumns(runId, ["spectrum_id", ...cols], 500_000)
+      .then(({ rows }) => {
+        if (cancelled) return;
+        const have = new Set<string>();
+        for (const r of rows) {
+          const sid = String((r as any).spectrum_id ?? "");
+          if (!sid) continue;
+          if (cols.some((c) => cellToNumber((r as any)[c]) != null)) have.add(sid);
+        }
+        setFitStepSpectrumIds(have);
+      })
+      .catch(() => {
+        if (!cancelled) setFitStepSpectrumIds(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, selectedRun?.status, fitDiagStepNum, fittingStepsQ.data, schemaQ.data?.feature_keys]);
+
+  const fitDiagSpectrumIds = useMemo(
+    () => (fitStepSpectrumIds ? allSpectrumIds.filter((s) => fitStepSpectrumIds.has(s)) : allSpectrumIds),
+    [allSpectrumIds, fitStepSpectrumIds]
+  );
+
+  // Drop selections that have no fit on the newly selected step.
+  useEffect(() => {
+    if (!fitStepSpectrumIds) return;
+    setFitDiagSelectedIds((prev) => {
+      const next = prev.filter((s) => fitStepSpectrumIds.has(s));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [fitStepSpectrumIds]);
+
   useEffect(() => {
     setFitExportSelectedIds(fitDiagSelectedIds);
   }, [fitDiagSelectedIds]);
@@ -2516,7 +2564,7 @@ export default function AnalyzeWorkspace() {
                         gap: 4,
                       }}
                     >
-                      {allSpectrumIds.map((sid) => (
+                      {fitDiagSpectrumIds.map((sid) => (
                         <label key={sid} className="inline" style={{ gap: 4, fontSize: 12 }}>
                           <input
                             type="checkbox"
@@ -3227,7 +3275,7 @@ export default function AnalyzeWorkspace() {
                         gap: 4,
                       }}
                     >
-                      {allSpectrumIds.map((sid) => {
+                      {fitDiagSpectrumIds.map((sid) => {
                         const checked = fitDiagSelectedIds.includes(sid);
                         const atCap = !checked && fitDiagSelectedIds.length >= 10;
                         return (
