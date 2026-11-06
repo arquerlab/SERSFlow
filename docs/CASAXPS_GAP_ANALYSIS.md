@@ -1,6 +1,6 @@
 # CasaXPS → SpecFlow feature gap analysis
 
-Status: written 2026-11-05 against `main` @ `b845749`. **Implemented since:** K1, K2, K3, IO1, F1, F2, F3, F4 (see "Implementation notes" under each).
+Status: written 2026-11-05 against `main` @ `b845749`. **Implemented since:** K1, K2, K3, IO1, F1, F2, F3, F4, R1, B1, L1, M1, S1 (see "Implementation notes" under each).
 
 ## 0. How to use this document (for a planning / implementing agent)
 
@@ -316,6 +316,14 @@ Suggested order of work, in phases (each phase can ship on its own):
   4. **Outputs:** observation columns `quant_<name>_atpct`, `_rsf`, `_raw_area`, `_corrected_area`, `_atpct_sd` (from F2).
   5. **UI:** a Quantify panel listing the set, regions, RSF source and the at.% table. Export it.
   6. **MCP:** tools to list libraries, create regions from the library, and run and fetch quantification.
+- **Status (2026-11-05): DEFERRED by the user.** No RSF / cross-section source is available yet (no CasaXPS
+  library or Scofield table in the project; values must not be typed from memory) and the group's main data are
+  synchrotron (hv differs per region: Co 2p/W 4f 1100 eV, O 1s 980 eV, C 1s 740 eV), which needs hv-dependent
+  cross-sections and photon-flux normalisation rather than lab RSFs. Revisit when the user has (a) an RSF/cross-section
+  source, (b) the flux/I0 information, (c) a CasaXPS-quantified reference file. Findings kept for then: CasaXPS
+  corrected area A = I*E^n/(T(E)*RSF) with n negative (e.g. -0.7; BB p.284-287), angular factor
+  1 - (beta/4)(3cos^2(theta) - 1) for Scofield RSFs (CB p.25), VAMAS source/analyser polar+azimuth are already kept
+  in the block extra fields (the source-analyser angle is now exposed by the acquisition payload / R1 report).
 - **Done when:**
   - A survey of a known stoichiometric reference (e.g. NaCl, PTFE, or a group standard) gives at.% within tolerance of the CasaXPS result on the same file with the same RSFs and corrections.
   - The test fixture stores the CasaXPS numbers.
@@ -339,6 +347,7 @@ Suggested order of work, in phases (each phase can ship on its own):
   3. **Escape depth:** E^n, or TPP-2M with material parameters (density, Eg, Nv, M). The simple E^n is enough for P0; TPP-2M can follow.
   4. **Angular-distribution correction:** β values per line, applied when the RSFs are taken from the library.
   5. **Reports:** itemise the raw area, T(E), escape-depth term, angular-correction factor, library RSF, total sensitivity and at.%. This matches CasaXPS's report keywords: RAW_AREA, TRANSMISSION, MEAN_FREE_PATH, TOTAL_SENSITIVITY_FACTOR (BB p.77–78; CB p.40).
+- **Status (2026-11-05): DEFERRED together with Q1** (see Q1 status).
 - **Done when:**
   - The same file quantified in CasaXPS and in SpecFlow, with identical RSFs, transmission and exponent, agrees within 1 % relative per element.
   - Each correction factor is visible in the exports.
@@ -365,6 +374,19 @@ Suggested order of work, in phases (each phase can ship on its own):
   6. Fit statistics: optimiser, N points, M free parameters, χ², reduced χ², normalised residual STD (F1).
   7. Quantification table with the itemised corrections (Q2).
   8. An annotated figure of data, envelope, components, background and residual, with a component table on the plot.
+- **Implementation notes (done 2026-11-05):** `api/services/fit_report.py` builds the report from the run's stored fit
+  columns (via the fitting preview), the pipeline snapshot and the VAMAS blocks; `core/report/fit_report_model.py`
+  (CasaXPS line-shape strings, parameter status fixed/bounded/free/linked + relation text incl. F4 expressions,
+  optimiser text, checklist), `core/report/render.py` (self-contained HTML with embedded PNGs, Markdown, user decision:
+  HTML + Markdown + JSON, no native PDF). `core/provenance.py`: software name/version, git commit (env
+  `SERSFLOW_GIT_COMMIT` or `git rev-parse`, `-dirty` suffix), file SHA-256 (cached). Acquisition payload now exposes
+  source label, hv, analyser mode, step, source/analyser angles + their angle, counts and cps at the max channel.
+  Charge-correction shifts are recomputed for the run cohort with the engine's calibration precompute. Figure: the
+  fit-curve plot gained an on-plot component table and an inverted BE axis. Quantification section = "not performed"
+  (Q1/Q2 deferred). Async job (`report-jobs`, fit-curve job polling/download, zip `fit_report_<id>.zip`), `GET
+  /analysis/report-jobs/{id}/json`, MCP `post_analysis_report_jobs` / `get_analysis_report_json`, Analyze "Download
+  report". ISO 19830 itself is not in the project: the checklist follows the item list of this section.
+  Tests: `tests/test_fit_report.py`.
 - **Done when:**
   - A report generated for a Co 2p run contains every ISO 19830 clause-5/10 item.
   - The REST, UI ("Download report") and MCP surfaces all produce the same report.
@@ -410,6 +432,14 @@ Suggested order of work, in phases (each phase can ship on its own):
   3. Tougaard presets: U2 universal (B≈2866, C=1643), U3 polymer / material classes, U4 with T0 for band-gap onset. Expose them as named presets in the UI.
   4. erfc Step/Edge background with fitted a0..a3, used for Fermi-edge calibration (connects to V1).
   5. Optional: a Shirley that integrates only selected components.
+- **Implementation notes (done 2026-11-05):** `core/preprocess/xps_extra_components.py`. Av Width (+-N channels; 'auto' =
+  legacy; no averaging when the window does not fit, CasaXPS) and percent offsets (low/high x end) for the static
+  `shirley` (own iterative Shirley when non-default; lmfitxps otherwise, so old pipelines are unchanged) and new static
+  `linear` baseline methods, and as component options on active `shirley_bg` and new `linear_bg`. Active `erfc_step_bg`
+  (pos/height/fwhm/const; Edge position = pos - a sqrt(pi)/2; its `pos` is a calibration key, user decision: active +
+  Fermi-edge calibration). `tougaard_u4_bg` (B, C, C', D, T0; own kernel) with the U2 preset; U3/U4 values entered by
+  the user (user decision: not in project literature). Item 5 via SB (`shirley_of_bg`, see L1). Reported in R1 (all
+  backgrounds with options). Tests: `tests/test_b1_l1_m1_s1.py`.
 - **Done when:** Each new background has unit tests on synthetic data, is selectable in the UI and pipeline JSON, and is reported in R1.
 
 #### L1. Line-shape extensions
@@ -424,6 +454,11 @@ Suggested order of work, in phases (each phase can ship on its own):
   - In priority order: a finite-area DS (truncated or DSS), so metallic components get an area; TP slope/constant components; SB(0) Shirley-profile components; T(k) tails.
   - A parser from CasaXPS line-shape strings to SpecFlow specs, shared with IO3 and the recipes.
   - Measured-reference components are covered under M1.
+- **Implementation notes (done 2026-11-05):** DS/GDS areas integrated over the fit window (user decision; mapping rows carry
+  `x_window`; area_ratio / expressions use the same window). `shirley_of_bg` = SB(0)X (hidden `ref_*` parameters tied
+  to the source peak). `core/xps/casaxps_lineshape.py` parses/formats GL, SGL, GL(m,n), LA, LF, A(a,n,m)GL/SGL, DS and
+  the SB prefix; all recipe strings round-trip and match the recipe kinds/params. T(k), ST, PHI and TP deferred (user
+  decision: not defined in the project literature). Metallic Co/Ir recipes use LA/LF, which have areas since F3.
 - **Done when:** Metallic Co/Ir recipes with asymmetric shapes yield areas, and the string parser round-trips the shapes used in the recipes.
 
 #### M1. Linear least squares with reference spectra
@@ -439,6 +474,12 @@ Suggested order of work, in phases (each phase can ship on its own):
   - A fitting component type `reference_spectrum`: amplitude-only, optional shift, taken from a chosen dataset spectrum or a stored reference library.
   - NNLS for linear-only models; joint non-linear fitting when it is mixed with synthetic peaks.
   - A reference-spectrum library store with provenance. Output scaled components and fractions.
+- **Implementation notes (done 2026-11-05):** `infra/reference_spectra_store.py` (per user, user decision; unit-area
+  normalisation so amp = area; SHA-256; provenance), `/references` REST (inline processed spectrum, raw dataset
+  spectrum, two-column text import, rename, delete), component `reference_spectrum` (`core/preprocess/reference_component.py`;
+  options reference_id + reference_sha256 checked at fit time; shift fixed 0 by default, user decision), exact NNLS
+  (`fit_references_nnls`) for pure-reference models with fixed shifts, joint lmfit fit otherwise. Fitting-component only
+  (no standalone LLS tool, user decision). UI: "Reference spectra library" panel + reference picker; MCP get/post/delete.
 - **Done when:** A mixture of two measured references is recovered with correct fractions, and the result can be mixed with GL peaks in one fit.
 
 #### S1. Fit robustness: "Test Peak Model"
@@ -448,6 +489,11 @@ Suggested order of work, in phases (each phase can ship on its own):
   - Expose sweeps in the UI as "Test peak model", with χ²-vs-parameter and %area-vs-parameter plots.
   - Add a noise-replicate mode that shares the Monte Carlo engine from F2.
   - Add line-shape parameter scans across all components with the same index.
+- **Implementation notes (done 2026-11-05):** `core/metrics/peak_model_test.py` (scan one parameter or the same parameter
+  of every component of a type; noise replicates on the F2 Monte Carlo engine with overlay curves and %area
+  distributions), `POST /fitting/test-peak-model`, Prepare "Test peak model" panel (chi2 and %area profiles; overlay +
+  histograms), Analyze sweep panel on the existing sweep job (now with `pct:<id>` columns and a JSON summary at
+  `GET /analysis/sweep-jobs/{id}/summary`), MCP `post_fitting_test_peak_model` / `get_analysis_sweep_summary`.
 - **Done when:** From the fitting editor, a user can scan the position of one component and see the χ² and %area profile plots.
 
 #### R3. Fit-quality warnings (MAJOR Table I)

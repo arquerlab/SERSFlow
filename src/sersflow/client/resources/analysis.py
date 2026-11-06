@@ -17,6 +17,7 @@ from sersflow.api.schemas.analysis import (
     FittingPreviewRequest,
     MonteCarloJobCreateRequest,
     ObservationSchemaResponse,
+    ReportJobCreateRequest,
     SweepJobCreateRequest,
 )
 from sersflow.client.http import raise_for_response, request_bytes, request_json, stream_response_to_file
@@ -164,6 +165,18 @@ class AnalysisResource(_Base):
             json_body=dump_json(payload),
         )
         return FitCurveJobCreateResponse.model_validate(data)
+
+    def create_report_job(self, run_id: str, payload: ReportJobCreateRequest) -> FitCurveJobCreateResponse:
+        data = request_json(
+            self._root.http, "POST", f"/analysis/runs/{run_id}/report-jobs", json_body=dump_json(payload)
+        )
+        return FitCurveJobCreateResponse.model_validate(data)
+
+    def get_report_json(self, job_id: str) -> dict[str, Any]:
+        return request_json(self._root.http, "GET", f"/analysis/report-jobs/{job_id}/json")
+
+    def get_sweep_summary(self, job_id: str) -> dict[str, Any]:
+        return request_json(self._root.http, "GET", f"/analysis/sweep-jobs/{job_id}/summary")
 
     def get_monte_carlo_summary(self, job_id: str) -> dict[str, Any]:
         return request_json(self._root.http, "GET", f"/analysis/monte-carlo-jobs/{job_id}/summary")

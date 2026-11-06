@@ -480,6 +480,18 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
         return await tool_call(ctx, _run)
 
+    @mcp.tool(name="get_analysis_sweep_summary")
+    async def get_analysis_sweep_summary(job_id: str) -> str:
+        """GET /analysis/sweep-jobs/{job_id}/summary — sweep result as JSON: per grid point rmse/bic means and mean %area
+        per component (`pct:<id>_mean`), plus every spectrum x grid point row (S1 profiles)."""
+
+        def _run():
+            data = ctx.get_client().analysis.get_sweep_summary(job_id)
+            data.pop("points", None)
+            return {"ok": True, "data": data}
+
+        return await tool_call(ctx, _run)
+
     @mcp.tool(name="get_analysis_monte_carlo_summary")
     async def get_analysis_monte_carlo_summary(job_id: str, spectrum_id: str | None = None) -> str:
         """
@@ -497,6 +509,48 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                     "rows": [r for r in data.get("rows") or [] if r.get("spectrum_id") == spectrum_id],
                     "spectra": [s for s in data.get("spectra") or [] if s.get("spectrum_id") == spectrum_id],
                 }
+            return {"ok": True, "data": data}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_analysis_report_jobs")
+    async def post_analysis_report_jobs(
+        run_id: str,
+        spectrum_ids: list[str] | None = None,
+        fitting_step_nums: list[int] | None = None,
+        include_figures: bool = True,
+    ) -> str:
+        """
+        POST /analysis/runs/{run_id}/report-jobs — R1 publication fit report of a completed run.
+
+        Produces report.html (self-contained, figures embedded), report.md, report.json and figures/*.png: file
+        SHA-256, software version + git commit, pipeline hash, acquisition (source, hv, pass energy, step, dwell,
+        scans, counts at max channel), charge correction + applied shift, processing history, per region the
+        background and every component (CasaXPS line shape, position/FWHM/height/area/%area ± 1σ, fixed / bounded /
+        linked + relation), fit statistics (optimiser, N, free params, chi2, reduced chi2, normalised residual STD),
+        quantification status (not implemented yet) and a checklist. Wait with post_analysis_fit_curve_jobs_wait,
+        then read the JSON with get_analysis_report_json or download the zip with get_analysis_fit_curve_jobs_download.
+        """
+
+        def _run():
+            from sersflow.api.schemas.analysis import ReportJobCreateRequest
+
+            req = ReportJobCreateRequest(
+                spectrum_ids=spectrum_ids, fitting_step_nums=fitting_step_nums, include_figures=include_figures
+            )
+            resp = ctx.get_client().analysis.create_report_job(run_id, req)
+            return {"ok": True, "job_id": resp.job_id, "status": resp.status, "run_id": run_id}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="get_analysis_report_json")
+    async def get_analysis_report_json(job_id: str, spectrum_id: str | None = None) -> str:
+        """GET /analysis/report-jobs/{job_id}/json — the machine-readable R1 report; spectrum_id filters the spectra."""
+
+        def _run():
+            data = ctx.get_client().analysis.get_report_json(job_id)
+            if spectrum_id:
+                data = {**data, "spectra": [s for s in data.get("spectra") or [] if s.get("spectrum_id") == spectrum_id]}
             return {"ok": True, "data": data}
 
         return await tool_call(ctx, _run)

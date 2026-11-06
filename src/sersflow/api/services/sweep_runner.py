@@ -30,6 +30,7 @@ from sersflow.api.services.fitting_preview import (
     _resolved_refs_for_run,
 )
 from sersflow.api.services.observation_export import _labels_for_spectrum
+from sersflow.core.metrics.fit_uncertainty import area_percentages, component_areas
 from sersflow.core.metrics.fitting_features import _param_keys_for_component
 from sersflow.core.pipeline.engine import fitting_region_applies
 from sersflow.core.preprocess.fit_diagnostics import diagnostics_as_feature_dict
@@ -41,6 +42,12 @@ from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, wi
 logger = logging.getLogger(__name__)
 
 SWEEP_CONTENT = "sweep"
+SWEEP_SUMMARY_JSON = "sweep_summary.json"
+
+
+def read_sweep_summary(artifact_path: str) -> dict[str, Any]:
+    with open(os.path.join(os.path.dirname(artifact_path), SWEEP_SUMMARY_JSON), encoding="utf-8") as f:
+        return json.load(f)
 
 # Hard server-side cap on the number of fits one sweep may perform.
 def max_sweep_fits() -> int:
@@ -237,6 +244,7 @@ def execute_sweep_job(job_id: str) -> None:
                 param_names.append(f"p:{c.get('component_id')}.{k}")
 
         point_rows: list[dict[str, Any]] = []
+        pct_names: dict[str, None] = {}
         done = 0
         for grid in points_grid:
             fixed = _fixed_params(step_params, axes, grid)
@@ -258,6 +266,12 @@ def execute_sweep_job(job_id: str) -> None:
                     rowd.update({k: metrics.get(k) for k in _METRIC_COLUMNS})
                     for name, v in zip(param_names, res.p_opt.astype(float).tolist()):
                         rowd[name] = v
+                    # S1: %area per component, to see which components move with the swept parameter.
+                    areas = component_areas(res.mapping, res.p_opt)
+                    for m, pct in zip(res.mapping, area_percentages(areas)):
+                        if pct is not None:
+                            rowd[f"pct:{m['component_id']}"] = float(pct)
+                            pct_names.setdefault(f"pct:{m['component_id']}", None)
                 except Exception as e:  # one bad fit must not kill the sweep
                     rowd["error"] = f"{type(e).__name__}: {e}"
                 point_rows.append(rowd)
@@ -268,9 +282,16 @@ def execute_sweep_job(job_id: str) -> None:
         out_dir = os.path.join(artifacts_root(), "fit_curve_jobs", job_id)
         os.makedirs(out_dir, exist_ok=True)
         zip_path = os.path.join(out_dir, "export.zip")
-        point_headers = (
-            ["spectrum_id", "experiment_id", "current_density_A_cm2", *axes_names, *_METRIC_COLUMNS, "error", *param_names]
-        )
+        point_headers = [
+            "spectrum_id",
+            "experiment_id",
+            "current_density_A_cm2",
+            *axes_names,
+            *_METRIC_COLUMNS,
+            "error",
+            *param_names,
+            *pct_names,
+        ]
         summary = _summary_rows(axes_names, point_rows)
         summary_headers = [
             *axes_names,
@@ -285,6 +306,22 @@ def execute_sweep_job(job_id: str) -> None:
             "resid_mean_edge_lo_mean",
             "n_at_bound_total",
         ]
+        # Mean %area per grid point (S1 profiles in the Analyze UI).
+        for row in summary:
+            grid = tuple(row[a] for a in axes_names)
+            pts = [p for p in point_rows if tuple(p["grid"]) == grid and not p.get("error")]
+            for pn in pct_names:
+                vals = [p[pn] for p in pts if isinstance(p.get(pn), (int, float))]
+                row[f"{pn}_mean"] = float(np.mean(vals)) if vals else None
+        summary_headers = [*summary_headers, *[f"{pn}_mean" for pn in pct_names]]
+        js = {
+            "axes": axes_names,
+            "summary": summary,
+            "points": [{k: v for k, v in p.items() if k != "grid"} for p in point_rows],
+            "pct_columns": list(pct_names),
+        }
+        with open(os.path.join(out_dir, SWEEP_SUMMARY_JSON), "w", encoding="utf-8") as f:
+            json.dump(js, f, default=lambda o: None)
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("sweep_summary.csv", _csv_bytes(summary_headers, summary))
             zf.writestr("sweep_points.csv", _csv_bytes(point_headers, point_rows))

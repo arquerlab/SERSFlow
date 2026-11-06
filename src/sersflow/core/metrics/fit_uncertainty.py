@@ -43,7 +43,10 @@ def component_areas(mapping: list[dict[str, Any]], p: np.ndarray) -> list[float 
         if ctype not in AREA_EXPORT_COMPONENT_TYPES:
             out.append(None)
             continue
-        out.append(_derived_peak_area(ctype, _component_param_dict(m, p)))
+        pk: dict[str, Any] = dict(_component_param_dict(m, p))
+        if m.get("x_window"):
+            pk["_window"] = tuple(m["x_window"])  # DS / GDS areas are integrated over the fit window
+        out.append(_derived_peak_area(ctype, pk))
     return out
 
 

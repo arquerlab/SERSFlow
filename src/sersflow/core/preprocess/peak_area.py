@@ -305,8 +305,22 @@ def area_per_height(
         )
         return 0.5 * (left + right)
     if ct in ("ds", "gds"):
+        # L1: the ideal DS tail has no finite area; integrate the unit-height curve over the fit window
+        # (``_window``; without one, pos +- 50 gamma).
+        from sersflow.core.preprocess import fitting_models
+        from sersflow.core.preprocess.xps_extra_components import windowed_area_per_height
+
         gamma = float(_v(values, "gamma", fwhm))
-        return lorentzian_area_per_height(max(2.0 * gamma, 1e-12))
+        pos = float(_v(values, "pos", 0.0))
+        vals = [pos, 1.0, gamma, float(_v(values, "alpha", 0.0))]
+        fn = fitting_models.ds
+        if ct == "gds":
+            vals.append(float(_v(values, "sigma", 0.0)))
+            fn = fitting_models.gds
+        win = values.get("_window")
+        return windowed_area_per_height(fn, vals, tuple(win) if win else None, pos, gamma)
+    if ct == "reference_spectrum":
+        return 1.0  # stored normalised to unit area: amp is the area (M1)
     return gaussian_area_per_height(fwhm)
 
 

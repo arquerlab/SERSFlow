@@ -86,7 +86,7 @@ def _doublet_fit(ct: str, ratio: float):
     return a, b, res
 
 
-@pytest.mark.parametrize("ct", sorted(AREA_EXPORT_COMPONENT_TYPES))
+@pytest.mark.parametrize("ct", sorted(AREA_EXPORT_COMPONENT_TYPES - {"ds", "gds", "reference_spectrum"}))
 def test_area_ratio_link_holds_for_every_finite_area_line_shape(ct: str) -> None:
     a, b, _res = _doublet_fit(ct, 0.75)
     assert b / a == pytest.approx(0.75, rel=1e-9), ct
@@ -99,11 +99,27 @@ def test_area_ratio_link_for_la_recovers_truth() -> None:
     assert res.p_opt[0] == pytest.approx(60.8, abs=0.01)
 
 
-def test_ds_area_ratio_is_rejected() -> None:
-    with pytest.raises(ValueError, match="no finite area"):
-        from sersflow.core.preprocess.fitting_lmfit import _area_per_height_expr
+def test_ds_area_ratio_uses_the_fit_window_area() -> None:
+    """L1: DS / GDS areas are integrated over the fit window, so area_ratio links work for them too."""
+    from sersflow.core.metrics.fit_uncertainty import component_areas
+    from sersflow.core.preprocess.fitting_models import ds
 
-        _area_per_height_expr("ds", "a", {("a", "fwhm"): "a_fwhm"})
+    x = np.linspace(58.0, 70.0, 700)
+    y = ds(x, 60.8, 1000.0, 0.35, 0.12) + ds(x, 63.8, 700.0, 0.35, 0.12) + np.random.default_rng(2).normal(0, 3, x.size)
+    params = {
+        "components": [{"component_id": "a", "component_type": "ds"}, {"component_id": "b", "component_type": "ds"}],
+        "p0": [60.7, 900.0, 0.4, 0.1, 63.9, 600.0, 0.4, 0.1],
+        "bounds_lower": [60.0, 0.0, 0.05, 0.0, 63.0, 0.0, 0.05, 0.0],
+        "bounds_upper": [61.5, None, 2.0, 0.5, 64.5, None, 2.0, 0.5],
+        "vary": [True] * 8,
+        "technique_family": "xps",
+        "param_links": [
+            {"source_component_id": "b", "source_key": "amp", "target_component_id": "a", "target_key": "amp", "mode": "area_ratio", "ratio": 0.75}
+        ],
+    }
+    res = fit_curve(fit_problem_from_step_params(XY(x=x, y=y), params))
+    a, b = component_areas(res.mapping, res.p_opt)
+    assert b / a == pytest.approx(0.75, rel=1e-6)
 
 
 def test_gl0_area_is_pure_gaussian_not_gl30() -> None:

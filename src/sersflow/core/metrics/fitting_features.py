@@ -651,7 +651,10 @@ def collect_fitting_features_for_pipeline(
             has_area = ctype in AREA_EXPORT_COMPONENT_TYPES and len(final_group) > len(keys_list)
             if has_area:
                 area_key = final_group[len(keys_list)]
-                out[area_key] = _derived_peak_area(ctype, pk)
+                pk_area: dict[str, Any] = dict(pk)
+                if m.get("x_window"):
+                    pk_area["_window"] = tuple(m["x_window"])
+                out[area_key] = _derived_peak_area(ctype, pk_area)
                 out[final_group[len(keys_list) + 1]] = _finite_float(unc.area_pct[ci])
             se_start = len(keys_list) + (2 if has_area else 0)
             for j, fk in enumerate(final_group[se_start : se_start + len(keys_list)]):

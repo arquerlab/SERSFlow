@@ -15,6 +15,7 @@ from sersflow.api.schemas.fitting import (
     FitRequest,
     FitResponse,
     FitSpectrumRef,
+    PeakModelTestRequest,
     ValidateLinksRequest,
     ValidateLinksResponse,
 )
@@ -120,6 +121,67 @@ def validate_links(payload: ValidateLinksRequest) -> dict[str, Any]:
     return {"ok": not errors, "errors": errors, "drivers": drivers}
 
 
+@router.post("/test-peak-model", response_model=None)
+def test_peak_model(payload: PeakModelTestRequest, request: Request) -> dict[str, Any]:
+    """S1: scan one parameter (chi2 and %area profiles) or refit noise replicates, on one spectrum."""
+    from sersflow.api.services.json_safe import sanitize_floats
+    from sersflow.core.metrics.peak_model_test import noise_replicates, scan_parameter
+
+    user_id = current_user_id(request)
+    try:
+        xy = _resolve_target_xy(payload.fit.target, owner_user_id=user_id)
+        step_params = _step_params_from_request(payload.fit)
+        if payload.mode == "scan":
+            if not payload.key:
+                raise ValueError("mode=scan needs key (e.g. 'pos', 'fwhm', 'm')")
+            out = scan_parameter(
+                xy,
+                step_params,
+                key=payload.key,
+                values=payload.values,
+                component_id=payload.component_id,
+                component_type=payload.component_type,
+            )
+        else:
+            out = noise_replicates(xy, step_params, n_replicates=payload.n_replicates, seed=payload.seed)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return sanitize_floats(out)
+
+
+def _step_params_from_request(payload: FitRequest) -> dict[str, Any]:
+    """Fitting-step params equivalent to a ``/fitting/fit`` request (shared by fit and the peak-model test)."""
+    if not payload.p0:
+        raise ValueError("p0 is required (use /fitting/models to build the correct length/order)")
+    step_params: dict[str, Any] = {
+        "components": [
+            {
+                "component_id": c.component_id,
+                "component_type": c.component_type,
+                **({"degree": c.degree} if c.degree is not None else {}),
+                **(c.model_extra or {}),
+            }
+            for c in payload.components
+        ],
+        "p0": list(payload.p0),
+        "bounds_lower": list(payload.bounds.lower),
+        "bounds_upper": list(payload.bounds.upper),
+        "initial_guess_mode": str(payload.initial_guess_mode),
+        "technique_family": str(payload.technique_family or "vibrational"),
+    }
+    if payload.vary is not None:
+        step_params["vary"] = list(payload.vary)
+    if payload.param_links:
+        step_params["param_links"] = list(payload.param_links)
+    if payload.weighting:
+        step_params["weighting"] = payload.weighting
+    if payload.fit_min_x is not None:
+        step_params["fit_min_x"] = payload.fit_min_x
+    if payload.fit_max_x is not None:
+        step_params["fit_max_x"] = payload.fit_max_x
+    return step_params
+
+
 @router.post("/fit", response_model=FitResponse)
 def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
@@ -135,6 +197,7 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
                     "component_id": c.component_id,
                     "component_type": c.component_type,
                     **({"degree": c.degree} if c.degree is not None else {}),
+                    **(c.model_extra or {}),
                 }
                 for c in payload.components
             ],

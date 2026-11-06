@@ -716,6 +716,55 @@ export function postSpinOrbitPartner(body: {
   });
 }
 
+export type ReferenceSummary = {
+  reference_id: string;
+  name: string;
+  notes: string;
+  n_points: number;
+  x_min: number | null;
+  x_max: number | null;
+  area: number;
+  sha256: string;
+  source: Record<string, unknown>;
+  created_at: string;
+};
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+/** M1 reference-spectrum library (per user). */
+export function listReferences() {
+  return fetchJson<{ items: ReferenceSummary[]; count: number }>(`/references`);
+}
+
+export function createReference(body: {
+  name: string;
+  x: number[];
+  y: number[];
+  notes?: string;
+  source?: Record<string, unknown>;
+  x_min?: number | null;
+  x_max?: number | null;
+}) {
+  return fetchJson<ReferenceSummary>(`/references`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
+}
+
+export function createReferenceFromDataset(body: { name: string; dataset_id: string; spectrum_id: string; x_min?: number | null; x_max?: number | null }) {
+  return fetchJson<ReferenceSummary>(`/references/from-dataset`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
+}
+
+export function importReference(body: { name: string; content: string; filename?: string }) {
+  return fetchJson<ReferenceSummary>(`/references/import`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
+}
+
+export function deleteReference(referenceId: string) {
+  return fetchJson<{ deleted: boolean }>(`/references/${encodeURIComponent(referenceId)}`, { method: "DELETE" });
+}
+
+/** S1 "Test peak model": parameter scan or noise replicates on one spectrum. */
+export function postTestPeakModel(body: Record<string, unknown>) {
+  return fetchJson<Record<string, any>>(`/fitting/test-peak-model`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
+}
+
 /** F4: validate parameter links (expressions, cycles, unknown peaks) without fitting. */
 export function postValidateLinks(body: { components: unknown[]; param_links: unknown[] }) {
   return fetchJson<{ ok: boolean; errors: string[]; drivers: Record<string, string[]> }>(`/fitting/validate-links`, {

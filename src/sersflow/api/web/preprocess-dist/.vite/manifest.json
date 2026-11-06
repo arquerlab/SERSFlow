@@ -1,15 +1,15 @@
 {
-  "_DatasetPicker-Dwy4jydW.js": {
-    "file": "assets/DatasetPicker-Dwy4jydW.js",
+  "_DatasetPicker-BE0GRPKe.js": {
+    "file": "assets/DatasetPicker-BE0GRPKe.js",
     "name": "DatasetPicker"
   },
   "index.html": {
-    "file": "assets/index-bapu4Pb1.js",
+    "file": "assets/index-CqcmnxbB.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
     "imports": [
-      "_DatasetPicker-Dwy4jydW.js"
+      "_DatasetPicker-BE0GRPKe.js"
     ],
     "dynamicImports": [
       "src/AnalyzeWorkspace.tsx"
@@ -19,12 +19,12 @@
     ]
   },
   "src/AnalyzeWorkspace.tsx": {
-    "file": "assets/AnalyzeWorkspace-D1sZqAW1.js",
+    "file": "assets/AnalyzeWorkspace-D5R1LQDm.js",
     "name": "AnalyzeWorkspace",
     "src": "src/AnalyzeWorkspace.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_DatasetPicker-Dwy4jydW.js"
+      "_DatasetPicker-BE0GRPKe.js"
     ]
   }
 }

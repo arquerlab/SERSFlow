@@ -34,7 +34,16 @@ def render_fit_residual_figure(
     title: str | None = None,
     diagnostics: dict[str, Any] | None = None,
     include_components: bool = True,
+    table_rows: Sequence[Sequence[str]] | None = None,
+    x_label: str | None = None,
+    invert_x: bool = False,
 ) -> Any:
+    """
+    Fit (top, 65 %) and residual (bottom) figure.
+
+    ``table_rows`` (header first) draws a component table on the plot (R1 report); ``invert_x`` shows a
+    binding-energy axis decreasing to the right, as is usual for XPS.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -114,7 +123,25 @@ def render_fit_residual_figure(
     ax_bot.scatter(xf, rr, s=6, c="#2c3e50", alpha=0.7)
     ax_bot.axhline(0.0, color="#999", lw=0.8)
     ax_bot.set_ylabel("Residual")
-    ax_bot.set_xlabel("X")
+    ax_bot.set_xlabel(x_label or "X")
+    if invert_x:
+        ax_top.invert_xaxis()  # shared x: both panels follow
+    if table_rows and len(table_rows) > 1:
+        tbl = ax_top.table(
+            cellText=[list(r) for r in table_rows[1:]],
+            colLabels=list(table_rows[0]),
+            loc="upper left",
+            cellLoc="left",
+            colLoc="left",
+        )
+        tbl.auto_set_font_size(False)
+        tbl.set_fontsize(6.5)
+        tbl.auto_set_column_width(col=list(range(len(table_rows[0]))))
+        for cell in tbl.get_celld().values():
+            cell.set_alpha(0.85)
+            cell.set_linewidth(0.3)
+        ymin, ymax = ax_top.get_ylim()
+        ax_top.set_ylim(ymin, ymax + 0.07 * len(table_rows) * (ymax - ymin) * 1.6)
     return fig
 
 

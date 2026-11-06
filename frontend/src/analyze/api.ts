@@ -304,6 +304,34 @@ export function postMonteCarloJob(
   });
 }
 
+/** R1: publication fit report job (zip: report.html, report.md, report.json, figures). */
+export function postReportJob(
+  runId: string,
+  body: { spectrum_ids?: string[] | null; fitting_step_nums?: number[] | null; include_figures?: boolean }
+) {
+  return fetchJson<FitCurveJobCreateResponse>(`/analysis/runs/${encodeURIComponent(runId)}/report-jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** S1: run-level parameter sweep (existing sweep job) and its JSON summary. */
+export function postSweepJob(
+  runId: string,
+  body: { fitting_step_num: number; grid: Array<{ component_id: string; key: string; values: number[] }>; spectrum_ids?: string[] | null }
+) {
+  return fetchJson<FitCurveJobCreateResponse>(`/analysis/runs/${encodeURIComponent(runId)}/sweep-jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function getSweepSummary(jobId: string) {
+  return fetchJson<Record<string, any>>(`/analysis/sweep-jobs/${encodeURIComponent(jobId)}/summary`);
+}
+
 export function getMonteCarloSummary(jobId: string) {
   return fetchJson<MonteCarloSummary>(`/analysis/monte-carlo-jobs/${encodeURIComponent(jobId)}/summary`);
 }

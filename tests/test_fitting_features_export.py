@@ -117,7 +117,7 @@ def test_preview_fitting_keys_lorentzian_and_voigt() -> None:
     keys = preview_fitting_feature_keys_for_pipeline(pipe)
     assert "fit_ds1_pos" in keys
     assert "fit_ds1_alpha" in keys
-    assert "fit_ds1_area" not in keys  # infinite-area model
+    assert "fit_ds1_area" in keys  # L1: DS area integrated over the fit window
     assert "fit_apv1_eta_l" in keys
     assert "fit_apv1_area" in keys
     assert "fit_gl1_m" in keys

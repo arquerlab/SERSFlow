@@ -31,3 +31,6 @@
 
 <h2>XPS: static backgrounds</h2>
 <p>Shirley and Tougaard here subtract a <b>static</b> background before fitting. The alternative is an <b>active</b> background inside the fit (see <a href="#" data-help="r-xps">XPS specifics</a>). Use one or the other, never both.</p>
+<ul>
+  <li><b>shirley</b> and <b>linear</b> (endpoints) take CasaXPS-style end controls: <code>avg_width</code> = channels averaged on each side of the region end (empty = automatic; when the window does not fit, no averaging), <code>offset_low_pct</code> / <code>offset_high_pct</code> = lower the background at the low-x / high-x end by that percent (CasaXPS Start/End Offset). With the defaults the Shirley is the same as before.</li>
+</ul>

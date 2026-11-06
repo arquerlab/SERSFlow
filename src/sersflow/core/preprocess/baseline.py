@@ -270,9 +270,24 @@ BASELINE_METHOD_SPECS: tuple[BaselineMethodSpec, ...] = (
     _method(
         "shirley",
         "lmfitxps",
-        [("tol", 1e-5), ("maxit", 10), ("bounds", None)],
-        primary=("tol", "maxit"),
+        [
+            ("tol", 1e-5),
+            ("maxit", 10),
+            ("bounds", None),
+            # B1 (CasaXPS Av Width / Start-End Offset): None/'auto' and 0 keep the lmfitxps Shirley.
+            ("avg_width", None),
+            ("offset_low_pct", 0.0),
+            ("offset_high_pct", 0.0),
+        ],
+        primary=("tol", "maxit", "avg_width"),
         label="Shirley",
+    ),
+    _method(
+        "linear",
+        "lmfitxps",
+        [("avg_width", None), ("offset_low_pct", 0.0), ("offset_high_pct", 0.0)],
+        primary=("avg_width",),
+        label="Linear (endpoints)",
     ),
     _method(
         "tougaard",
@@ -409,9 +424,33 @@ def _correct_lmfitxps_baseline(
     coerced = baseline_kwargs(method_id, kwargs)
     info: dict[str, Any] = {"method": method_id}
     if method_id == "shirley":
-        baseline = np.asarray(
-            shirley_calculate(xx, y, tol=coerced["tol"], maxit=coerced["maxit"], bounds=coerced["bounds"]),
-            dtype=float,
+        from sersflow.core.preprocess.xps_extra_components import shirley_static
+
+        aw = coerced.get("avg_width")
+        offs = (float(coerced.get("offset_low_pct") or 0.0), float(coerced.get("offset_high_pct") or 0.0))
+        if (aw is None or str(aw).strip().lower() in ("", "auto")) and offs == (0.0, 0.0):
+            baseline = np.asarray(
+                shirley_calculate(xx, y, tol=coerced["tol"], maxit=coerced["maxit"], bounds=coerced["bounds"]),
+                dtype=float,
+            )
+        else:
+            baseline = shirley_static(
+                xx,
+                y,
+                avg_width=aw,
+                offset_low_pct=offs[0],
+                offset_high_pct=offs[1],
+                maxit=max(int(coerced["maxit"]), 20),
+            )
+    elif method_id == "linear":
+        from sersflow.core.preprocess.xps_extra_components import linear_static
+
+        baseline = linear_static(
+            xx,
+            y,
+            avg_width=coerced.get("avg_width"),
+            offset_low_pct=float(coerced.get("offset_low_pct") or 0.0),
+            offset_high_pct=float(coerced.get("offset_high_pct") or 0.0),
         )
     elif method_id == "tougaard":
         baseline_arr, b_opt = tougaard_calculate(

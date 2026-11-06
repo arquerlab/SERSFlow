@@ -26,7 +26,7 @@ export const XPS_BG_COMPONENT_TYPES = ["shirley_bg", "tougaard_bg", "slope_bg"] 
 export type FittingXpsBgType = (typeof XPS_BG_COMPONENT_TYPES)[number];
 
 /** XPS-only lmfitxps models that are not Shirley/Tougaard-style backgrounds. */
-export const XPS_SPECIAL_COMPONENT_TYPES = ["fermi_edge"] as const;
+export const XPS_SPECIAL_COMPONENT_TYPES = ["fermi_edge", "reference_spectrum"] as const;
 export type FittingXpsSpecialType = (typeof XPS_SPECIAL_COMPONENT_TYPES)[number];
 
 /** Prefer catalog `component_type` list; fall back to builtin XPS bg ids. */
@@ -100,6 +100,7 @@ export const XPS_BG_TYPE_LABELS: Record<FittingXpsBgType, string> = {
 
 export const XPS_SPECIAL_TYPE_LABELS: Record<FittingXpsSpecialType, string> = {
   fermi_edge: "Fermi edge (valence)",
+  reference_spectrum: "Reference spectrum (measured)",
 };
 
 export const XPS_REGION_PRESETS = ["O1s", "C1s", "N1s", "S2p", "Ir4f", "Au4f", "Ag3d", "Pt4f", "VB"] as const;
@@ -312,7 +313,22 @@ export type FittingComponentEditor = {
   /** Polynomial degree 0..MAX_POLY_DEGREE; ignored for peak shapes. */
   degree: number;
   rows: FittingParamRow[];
+  /**
+   * Component options sent with the component (B1/L1/M1): avg_width, offset_low_pct, offset_high_pct (backgrounds),
+   * of (SB source peak), reference_id / reference_sha256 (reference spectrum).
+   */
+  options?: Record<string, unknown>;
 };
+
+/** Keys of a component dict that are options (everything except id / type / degree). */
+export function componentOptionsFromRaw(raw: Record<string, unknown>): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (k === "component_id" || k === "component_type" || k === "degree" || v === undefined || v === null || v === "") continue;
+    out[k] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 export type FittingEditorParams = {
   /** Always "fit"; residual mode removed — residuals are plot/export only. */
@@ -787,6 +803,7 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
       component_id: c.component_id,
       component_type: c.component_type,
       ...(c.component_type === "polynomial_background" ? { degree: c.degree } : {}),
+      ...(componentOptionsFromRaw(c.options ?? {}) ?? {}),
     });
     for (const r of c.rows) {
       // Auto amplitude: send ≤0 sentinel so the engine estimates height at fit time.
@@ -998,7 +1015,8 @@ export function migrateFittingParamsToEditor(
       });
     }
     off += take;
-    out.push({ component_id, component_type, degree, rows });
+    const options = componentOptionsFromRaw(cr);
+    out.push({ component_id, component_type, degree, rows, ...(options ? { options } : {}) });
   }
   if (off !== (p0 as unknown[]).length) {
     return defaultFittingEditorParams(catalog);

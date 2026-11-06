@@ -235,6 +235,8 @@ class FitComponent:
     component_type: str
     component_id: str
     degree: int | None = None
+    options: dict[str, Any] | None = None
+    """Extra component fields (B1/L1/M1): avg_width / offsets, ``of`` (SB source peak), reference_id ..."""
 
 
 @dataclass(frozen=True)
@@ -531,7 +533,8 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
             raise ValueError(f"fitting.components[{i}] requires component_id and component_type")
         deg = row.get("degree")
         degree = int(deg) if deg is not None else None
-        components.append(FitComponent(component_type=ctype, component_id=cid, degree=degree))
+        opts = {k: v for k, v in row.items() if k not in ("component_id", "component_type", "degree")}
+        components.append(FitComponent(component_type=ctype, component_id=cid, degree=degree, options=opts or None))
 
     vary_raw = params.get("vary")
     vary: list[bool] | None = None
@@ -607,6 +610,10 @@ def fit_curve(problem: FitProblem) -> FitResult:
         raise ValueError(
             f"Invalid technique_family {problem.technique_family!r}; expected 'vibrational', 'xps' or 'xas'"
         )
+    from sersflow.core.preprocess.reference_component import fit_references_nnls, is_pure_reference_model
+
+    if is_pure_reference_model(problem):
+        return fit_references_nnls(problem)  # M1: exact non-negative linear least squares
     if tech in ("xps", "xas"):
         from sersflow.core.preprocess.fitting_lmfit import fit_curve_lmfit
 
@@ -670,8 +677,10 @@ def _build_scipy_component_model(
     slices: list[tuple[int, int]] = []
     mapping: list[dict[str, Any]] = []
     cursor = 0
+    from sersflow.core.preprocess.fitting_specs import build_component_function_for
+
     for comp in problem.components:
-        f, params = build_component_function(comp.component_type, degree=comp.degree)
+        f, params = build_component_function_for(comp.component_type, degree=comp.degree, options=comp.options)
         n = len(params)
         start, end = cursor, cursor + n
         cursor = end
@@ -684,6 +693,7 @@ def _build_scipy_component_model(
                 "degree": comp.degree,
                 "param_keys": [p.key for p in params],
                 "index_range": [start, end],
+                "x_window": [float(np.min(problem.x)), float(np.max(problem.x))] if problem.x.size else None,
             }
         )
     return funcs, slices, mapping, cursor

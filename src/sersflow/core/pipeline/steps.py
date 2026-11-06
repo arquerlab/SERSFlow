@@ -465,11 +465,11 @@ DEFAULT_STEPS: dict[str, StepImpl] = {
     "xas_normalize": StepImpl(name="xas_normalize", impl_version="1", transform=_xas_normalize),
     "noise_savgol": StepImpl(name="noise_savgol", impl_version="1", transform=_noise_savgol),
     "cosmic_ray_removal": StepImpl(name="cosmic_ray_removal", impl_version="1", transform=_cosmic_ray_removal),
-    "baseline": StepImpl(name="baseline", impl_version="1", transform=_baseline),
+    "baseline": StepImpl(name="baseline", impl_version="2", transform=_baseline),
     "baseline_curve": StepImpl(name="baseline_curve", impl_version="1", transform=_baseline_curve),
     # 4: K1 — ``gl`` is the CasaXPS product GL(m); invalidates step caches computed with the sum form.
     # 5: F1 — Poisson weighting by default for XPS (``weighting`` param, default "auto").
-    "fitting": StepImpl(name="fitting", impl_version="6", transform=_fitting),
+    "fitting": StepImpl(name="fitting", impl_version="7", transform=_fitting),
     "spectral_intensities": StepImpl(name="spectral_intensities", impl_version="1", transform=_spectral_intensities),
     "spectral_integrations": StepImpl(name="spectral_integrations", impl_version="1", transform=_spectral_integrations),
     "feature_operations": StepImpl(name="feature_operations", impl_version="1", transform=_feature_operations),

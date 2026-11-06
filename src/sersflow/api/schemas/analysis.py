@@ -221,6 +221,20 @@ class MonteCarloJobCreateRequest(BaseModel):
     )
 
 
+class ReportJobCreateRequest(BaseModel):
+    """
+    R1: publication fit report for a completed run (zip with report.html, report.md, report.json, figures/*.png).
+
+    Contents: provenance (file SHA-256, software version + git commit, pipeline hash), acquisition metadata,
+    charge correction and applied shifts, processing history, per-region background and components (CasaXPS line
+    shape, values ± 1σ, fixed / bounded / linked status), fit statistics, quantification status and a figure.
+    """
+
+    spectrum_ids: list[str] | None = Field(default=None, description="Default: every spectrum of the run (server cap).")
+    fitting_step_nums: list[int] | None = Field(default=None, description="1-based fitting step numbers; default all.")
+    include_figures: bool = True
+
+
 class StepOutputsJobCreateRequest(BaseModel):
     """Export raw XY plus the output of each selected pipeline step (one CSV per spectrum, zipped)."""
 

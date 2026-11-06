@@ -1,3 +1,4 @@
+import type { FitPreviewInput } from "./fitInputs";
 import type { MutableRefObject } from "react";
 import {
   postFittingFit,
@@ -100,6 +101,8 @@ export type ExplorePlotRunnerDeps = {
   /** Format-driven plot kind from /meta/formats (xy | multi_overlay | map). */
   formatPlotMode?: "xy" | "multi_overlay" | "map";
   defaultXLabel?: string | null;
+  /** S1 / M1: the spectra the fitting preview just fitted (input of the fitting step). */
+  onFitInputs?: (items: FitPreviewInput[]) => void;
 };
 
 /**
@@ -128,6 +131,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
     techniqueFamily = "vibrational",
     formatPlotMode = "xy",
     defaultXLabel = null,
+    onFitInputs,
   } = deps;
   // Format plot_mode is a format hint (map markers etc.); overlay/stack + subset size remain user prefs.
   const xAxisTitle =
@@ -371,7 +375,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       }
       const fp = migrateFittingParamsToEditor(fittingStep.params ?? {}, fittingCatalog);
       const flat = flattenFittingForPipeline(fp);
-      const compsApi = (flat.components as { component_id: string; component_type: string; degree?: number }[]) ?? [];
+      const compsApi = (flat.components as ({ component_id: string; component_type: string; degree?: number } & Record<string, unknown>)[]) ?? [];
       const p0 = flat.p0 as number[];
       const lo = flat.bounds_lower as (number | null)[];
       const hi = flat.bounds_upper as (number | null)[];
@@ -470,6 +474,9 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       );
       const fillOpacity = Math.max(0, Math.min(1, typeof fp.fill_opacity === "number" ? fp.fill_opacity : 0.15));
       const nSpectra = rawItems.length;
+      onFitInputs?.(
+        rawItems.map((it) => ({ spectrum_id: it.spectrum_id, x: it.x, y: it.y, var: it.var ?? null, var_kind: it.var_kind ?? null }))
+      );
 
       const figures: FitStackFigure["figures"] = [];
       const appliedCounts = new Map<string, number>();
@@ -491,11 +498,8 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
                   : {}),
               },
               weighting: fp.weighting ?? "auto",
-              components: compsApi.map((c) => ({
-                component_id: c.component_id,
-                component_type: c.component_type,
-                degree: c.degree,
-              })),
+              // Component options (avg_width, of, reference_id, ...) travel with each component.
+              components: compsApi.map((c) => ({ ...c })),
               p0,
               bounds: { lower: lo, upper: hi },
               return_curve: true,

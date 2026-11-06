@@ -110,6 +110,10 @@ import { FittingRecipePicker } from "./preprocess/FittingRecipePicker";
 import { SpinOrbitPartnerControl } from "./preprocess/SpinOrbitPartnerControl";
 import { ExpressionLinkInput } from "./preprocess/ExpressionLinkInput";
 import { LinkValidationNotice } from "./preprocess/LinkValidationNotice";
+import { ComponentOptionsEditor } from "./preprocess/ComponentOptionsEditor";
+import { ReferenceLibraryPanel } from "./preprocess/ReferenceLibraryPanel";
+import { TestPeakModelPanel } from "./preprocess/TestPeakModelPanel";
+import type { FitPreviewInput } from "./preprocess/fitInputs";
 import { linkColor } from "./preprocess/paramExpressions";
 import { peakColorMap } from "./preprocess/fitResidualPlot";
 import { DEFAULT_GUARDRAILS, type Mode, type PlotView } from "./preprocess/runController";
@@ -711,6 +715,9 @@ export default function PreprocessingWorkspace() {
     setPipelineVersion((vv) => vv + 1);
   }
 
+  /** S1 / M1: spectra the fitting preview last fitted. */
+  const [fitPreviewInputs, setFitPreviewInputs] = useState<FitPreviewInput[]>([]);
+
   function updateSelectedFittingParams(next: FittingEditorParams) {
     if (!selectedStep || selectedStep.name !== "fitting") return;
     setSteps((prev) =>
@@ -1013,6 +1020,7 @@ export default function PreprocessingWorkspace() {
       techniqueFamily: effectiveTechniqueFamily,
       formatPlotMode: selectedFormatUi.plot_mode,
       defaultXLabel: selectedFormatUi.default_x_label,
+      onFitInputs: setFitPreviewInputs,
     });
   }
 
@@ -2243,6 +2251,21 @@ export default function PreprocessingWorkspace() {
                         <div className="err">Could not load /fitting/models: {String((fittingModelsQ.error as Error)?.message ?? fittingModelsQ.error)}</div>
                       ) : null}
                       {isXpsPipeline ? <LinkValidationNotice fp={fp} /> : null}
+                      {isXpsPipeline ? (
+                        <div style={{ display: "grid", gap: 6 }}>
+                          <TestPeakModelPanel fp={fp} inputs={fitPreviewInputs} technique={effectiveTechniqueFamily} />
+                          <ReferenceLibraryPanel
+                            inputs={fitPreviewInputs}
+                            provenance={{
+                              session_id: sessionId,
+                              dataset_id: datasetId ?? null,
+                              pipeline_steps_before_fit: buildPipeline()
+                                .steps.slice(0, Math.max(0, steps.findIndex((s) => s.id === selectedStep.id)))
+                                .map((s) => ({ name: s.name, params: s.params })),
+                            }}
+                          />
+                        </div>
+                      ) : null}
                       {fp.components.map((comp, ci) => (
                         <div
                           key={`fitting-comp-${ci}`}
@@ -2338,6 +2361,9 @@ export default function PreprocessingWorkspace() {
                                   style={{ width: "100px" }}
                                 />
                               </label>
+                            ) : null}
+                            {isXpsPipeline ? (
+                              <ComponentOptionsEditor fp={fp} ci={ci} onApply={(next) => updateSelectedFittingParams(next)} />
                             ) : null}
                             {isXpsPipeline && isPeakComponentType(comp.component_type) && comp.component_type !== "ds" && comp.component_type !== "gds" ? (
                               <SpinOrbitPartnerControl

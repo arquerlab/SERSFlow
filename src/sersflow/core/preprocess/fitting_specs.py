@@ -31,13 +31,24 @@ PEAK_COMPONENT_TYPES = frozenset(
     }
 )
 
-# Ideal DS / GDS tails are non-integrable for alpha > 0 — do not export area.
+# Ideal DS / GDS tails are non-integrable for alpha > 0: their area is integrated over the fit window (L1, user
+# decision), so they export areas too. Kept for callers that need to know the area is window-dependent.
 INFINITE_AREA_COMPONENT_TYPES = frozenset({"ds", "gds"})
+WINDOW_AREA_COMPONENT_TYPES = INFINITE_AREA_COMPONENT_TYPES
+
+# Measured reference spectrum (M1): normalised to unit area, so its amplitude is its area.
+REFERENCE_COMPONENT_TYPES = frozenset({"reference_spectrum"})
 
 # Peaks that export a derived area column (analytical or numeric).
-AREA_EXPORT_COMPONENT_TYPES = PEAK_COMPONENT_TYPES - INFINITE_AREA_COMPONENT_TYPES
+AREA_EXPORT_COMPONENT_TYPES = PEAK_COMPONENT_TYPES | REFERENCE_COMPONENT_TYPES
 
-XPS_BACKGROUND_COMPONENT_TYPES = frozenset({"shirley_bg", "tougaard_bg", "slope_bg"})
+# x-only background callables (B1): fitted with the peaks, evaluable by both engines.
+CALLABLE_BACKGROUND_TYPES = frozenset({"erfc_step_bg", "linear_bg"})
+
+# Components whose function depends on component options (``of`` peak, ``reference_id``): XPS / lmfit only.
+OPTION_COMPONENT_TYPES = frozenset({"shirley_of_bg", "reference_spectrum"})
+
+XPS_BACKGROUND_COMPONENT_TYPES = frozenset({"shirley_bg", "tougaard_bg", "slope_bg", "tougaard_u4_bg"})
 
 # lmfitxps models that are not simple peak callables (XPS pipelines only).
 XPS_LMFITXPS_COMPONENT_TYPES = XPS_BACKGROUND_COMPONENT_TYPES | frozenset({"fermi_edge"})
@@ -532,6 +543,66 @@ def _slope_bg_spec() -> ComponentSpec:
     )
 
 
+def _erfc_step_spec() -> ComponentSpec:
+    return ComponentSpec(
+        component_type="erfc_step_bg",
+        display_name="erfc step / edge (active)",
+        params=[
+            ParamSpec(key="pos", label="Step position (inflection)", default=0.0, lower_default=None, upper_default=None, unit="eV", ui={"step": 0.01}),
+            ParamSpec(key="height", label="Step height", default=0.0, lower_default=None, upper_default=None, ui={"step": 1.0}),
+            ParamSpec(key="fwhm", label="Edge FWHM", default=0.5, lower_default=1e-3, upper_default=None, unit="eV", ui={"step": 0.01}),
+            ParamSpec(key="const", label="Low level", default=0.0, lower_default=None, upper_default=None, ui={"step": 1.0}),
+        ],
+    )
+
+
+def _linear_bg_spec() -> ComponentSpec:
+    return ComponentSpec(
+        component_type="linear_bg",
+        display_name="Linear background (endpoints)",
+        params=[
+            ParamSpec(key="low", label="Value at low-x end", default=0.0, lower_default=None, upper_default=None, ui={"step": 1.0, "vary_default": False}),
+            ParamSpec(key="high", label="Value at high-x end", default=0.0, lower_default=None, upper_default=None, ui={"step": 1.0, "vary_default": False}),
+        ],
+    )
+
+
+def _tougaard_u4_spec() -> ComponentSpec:
+    return ComponentSpec(
+        component_type="tougaard_u4_bg",
+        display_name="Tougaard U2/U3/U4 (active, with T0)",
+        params=[
+            ParamSpec(key="B", label="B", default=2866.0, lower_default=0.0, upper_default=None, unit="eV^2", ui={"step": 10.0}),
+            ParamSpec(key="C", label="C", default=1643.0, lower_default=None, upper_default=None, unit="eV^2", ui={"step": 1.0, "vary_default": False}),
+            ParamSpec(key="C_d", label="C' (sign: +1 U2, -1 U3/U4)", default=1.0, lower_default=None, upper_default=None, ui={"step": 1.0, "vary_default": False}),
+            ParamSpec(key="D", label="D", default=0.0, lower_default=0.0, upper_default=None, unit="eV^2", ui={"step": 1.0, "vary_default": False}),
+            ParamSpec(key="T0", label="T0 (onset / band gap)", default=0.0, lower_default=0.0, upper_default=None, unit="eV", ui={"step": 0.1, "vary_default": False}),
+        ],
+    )
+
+
+def _shirley_of_spec() -> ComponentSpec:
+    return ComponentSpec(
+        component_type="shirley_of_bg",
+        display_name="Shirley of a peak (SB, active)",
+        params=[
+            ParamSpec(key="k", label="Shirley k", default=0.01, lower_default=0.0, upper_default=None, ui={"step": 0.001}),
+            ParamSpec(key="shift", label="Energy shift", default=0.0, lower_default=-5.0, upper_default=5.0, unit="eV", ui={"step": 0.05, "vary_default": False}),
+        ],
+    )
+
+
+def _reference_spec() -> ComponentSpec:
+    return ComponentSpec(
+        component_type="reference_spectrum",
+        display_name="Reference spectrum (measured)",
+        params=[
+            ParamSpec(key="amp", label="Area (scale)", default=1.0, lower_default=0.0, upper_default=None, ui={"step": 1.0}),
+            ParamSpec(key="shift", label="Energy shift", default=0.0, lower_default=-1.0, upper_default=1.0, unit="eV", ui={"step": 0.01, "vary_default": False}),
+        ],
+    )
+
+
 def _fermi_edge_spec() -> ComponentSpec:
     """
     lmfitxps FermiEdgeModel (Gaussian-broadened Fermi-Dirac) plus a constant intensity floor.
@@ -614,6 +685,7 @@ def list_component_types() -> list[ComponentSpec]:
     ]
     base.extend(polynomial_background_spec(d) for d in (0, 1, 2, 3, 4))
     base.extend([_shirley_bg_spec(), _tougaard_bg_spec(), _slope_bg_spec(), _fermi_edge_spec()])
+    base.extend([_erfc_step_spec(), _linear_bg_spec(), _tougaard_u4_spec(), _shirley_of_spec(), _reference_spec()])
     return base
 
 
@@ -633,7 +705,15 @@ _BUILDERS: dict[str, Callable[[], tuple[Callable[..., np.ndarray], list[ParamSpe
     "a_sgl": lambda: (fitting_models.a_sgl, _a_gl_spec("a_sgl").params),
     "apv": lambda: (fitting_models.apv, _apv_spec().params),
     "asymmetric_voigt": lambda: (fitting_models.asymmetric_voigt, _asymmetric_voigt_spec().params),
+    "erfc_step_bg": lambda: (_xc().erfc_step_bg, _erfc_step_spec().params),
+    "linear_bg": lambda: (_xc().linear_bg, _linear_bg_spec().params),
 }
+
+
+def _xc():
+    from sersflow.core.preprocess import xps_extra_components
+
+    return xps_extra_components
 
 
 def component_param_specs(component_type: str, degree: int | None = None) -> list[ParamSpec]:
@@ -651,6 +731,12 @@ def component_param_specs(component_type: str, degree: int | None = None) -> lis
         return list(_slope_bg_spec().params)
     if ct == "fermi_edge":
         return list(_fermi_edge_spec().params)
+    if ct == "tougaard_u4_bg":
+        return list(_tougaard_u4_spec().params)
+    if ct == "shirley_of_bg":
+        return list(_shirley_of_spec().params)
+    if ct == "reference_spectrum":
+        return list(_reference_spec().params)
     _fn, params = build_component_function(ct, degree=degree)
     return list(params)
 
@@ -671,7 +757,27 @@ def build_component_function(component_type: str, degree: int | None = None) -> 
             f"component_type {component_type!r} requires the XPS/lmfit fitting path "
             "(lmfitxps model); it cannot be used with curve_fit"
         )
+    if ct in OPTION_COMPONENT_TYPES:
+        raise ValueError(
+            f"component_type {component_type!r} depends on component options (peak / reference id); "
+            "build it with build_component_function_for"
+        )
     builder = _BUILDERS.get(ct)
     if builder is None:
         raise ValueError(f"Unknown component_type: {component_type}")
     return builder()
+
+
+def build_component_function_for(
+    component_type: str,
+    *,
+    degree: int | None = None,
+    options: dict[str, Any] | None = None,
+) -> tuple[Callable[..., np.ndarray], list[ParamSpec]]:
+    """``build_component_function`` plus option-dependent types (``reference_spectrum``)."""
+    ct = component_type.strip().lower()
+    if ct == "reference_spectrum":
+        from sersflow.core.preprocess.reference_component import make_reference_function
+
+        return make_reference_function(options or {}), list(_reference_spec().params)
+    return build_component_function(ct, degree=degree)

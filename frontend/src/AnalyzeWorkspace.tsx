@@ -15,6 +15,8 @@ import Plotly from "plotly.js-dist-min";
 import { DatasetPicker } from "./components/DatasetPicker";
 import { listDatasets, listPipelines, type PipelineLibraryItem, type SubsetStrategy } from "./preprocess/api";
 import { FitUncertaintyPanel } from "./analyze/FitUncertaintyPanel";
+import { ReportDownload } from "./analyze/ReportDownload";
+import { SweepPanel } from "./analyze/SweepPanel";
 import { downloadBlob, downloadCsv, plotlyDivToPngBytes, plotlyDivToSvgText, rowsToCsv, zipFiles } from "./analyze/export";
 import { buildFitResidualFigure } from "./preprocess/fitResidualPlot";
 import { fitHealthSummary } from "./preprocess/fitHealth";
@@ -3258,6 +3260,23 @@ export default function AnalyzeWorkspace() {
                       <div className="hint" style={{ marginTop: 8 }}>
                         {fitDiagFigures.length} fit plot{fitDiagFigures.length === 1 ? "" : "s"} shown in the right panel.
                       </div>
+                    ) : null}
+                    {runId ? (
+                      <ReportDownload
+                        runId={runId}
+                        stepNum={fitDiagStepNum}
+                        selectedIds={fitDiagSelectedIds}
+                        download={safeDownload}
+                      />
+                    ) : null}
+                    {runId && fitDiagStepNum != null ? (
+                      <SweepPanel
+                        runId={runId}
+                        stepNum={fitDiagStepNum}
+                        selectedIds={fitDiagSelectedIds}
+                        items={fitDiagBusy ? [] : fitDiagItems}
+                        download={safeDownload}
+                      />
                     ) : null}
                     {runId && fitDiagStepNum != null ? (
                       <FitUncertaintyPanel

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from sersflow.api.schemas.datasets import SpectrumRef
 
@@ -58,6 +58,11 @@ FitTarget = FitInlineSeries | FitSpectrumRef
 
 
 class FitComponentRequest(BaseModel):
+    """Component of a fit. Extra fields are component options (B1/L1/M1): ``avg_width``, ``offset_low_pct``,
+    ``offset_high_pct`` (backgrounds), ``of`` (SB source peak), ``reference_id`` / ``reference_sha256``."""
+
+    model_config = ConfigDict(extra="allow")
+
     component_id: str = Field(min_length=1)
     component_type: str = Field(min_length=1)
     degree: int | None = None
@@ -149,6 +154,25 @@ class FitDiagnosticsPublic(BaseModel):
     """Relative Poisson: fitted gain g in var = g*y (data units per count); 1 for raw counts."""
 
 
+class PeakModelTestRequest(BaseModel):
+    """
+    S1 "Test peak model" on one spectrum (same target / model fields as ``/fitting/fit``).
+
+    mode=scan: fix ``key`` of ``component_id`` (or of every component, optionally only of ``component_type``) at each
+    of ``values`` and refit -> chi2 / reduced chi2 / RMSE / BIC and %area per value. mode=noise: refit
+    ``n_replicates`` noisy copies of the best fit (F2 Monte Carlo) -> %area distributions + overlay curves.
+    """
+
+    fit: "FitRequest"
+    mode: Literal["scan", "noise"] = "scan"
+    key: str | None = None
+    component_id: str | None = None
+    component_type: str | None = None
+    values: list[float] = Field(default_factory=list)
+    n_replicates: int = Field(default=50, ge=2, le=500)
+    seed: int = Field(default=0, ge=0)
+
+
 class ValidateLinksRequest(BaseModel):
     """F4: check a fitting step's ``param_links`` (expressions, cycles, unknown names) without fitting."""
 
@@ -173,3 +197,6 @@ class FitResponse(BaseModel):
     residual_normalised: list[float | None] | None = None
     """(y - y_hat) / sigma when the fit was weighted (F1); null otherwise."""
     diagnostics: FitDiagnosticsPublic | None = None
+
+
+PeakModelTestRequest.model_rebuild()

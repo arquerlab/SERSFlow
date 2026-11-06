@@ -697,3 +697,62 @@ def test_post_fitting_validate_links(tmp_path: Path) -> None:
     out = json.loads(asyncio.run(fn(components=[{"component_id": "C", "component_type": "gl"}], param_links=links)))
     assert out["ok"] is True and out["data"]["ok"] is False and "cyclic" in out["data"]["errors"][0]
     assert seen[0]["param_links"] == links
+
+
+def test_post_analysis_report_jobs_and_json(tmp_path: Path) -> None:
+    seen: list[tuple[str, object]] = []
+    report = {"schema": "specflow-fit-report/1", "spectra": [{"spectrum_id": "a"}, {"spectrum_id": "b"}]}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/analysis/runs/r1/report-jobs":
+            seen.append((request.url.path, json.loads(request.content)))
+            return httpx.Response(202, json={"job_id": "fcjob_r", "status": "queued"})
+        if request.url.path == "/analysis/report-jobs/fcjob_r/json":
+            return httpx.Response(200, json=report)
+        return httpx.Response(404, json={"detail": request.url.path})
+
+    ctx = _ready_ctx(tmp_path, httpx.MockTransport(handle))
+    mcp = create_server(ctx)
+    post = _tool_fn(mcp, "post_analysis_report_jobs")
+    ok = json.loads(asyncio.run(post(run_id="r1", fitting_step_nums=[2], include_figures=False)))
+    assert ok["ok"] is True and ok["job_id"] == "fcjob_r"
+    assert seen[0][1]["fitting_step_nums"] == [2] and seen[0][1]["include_figures"] is False
+    assert seen[0][1].get("spectrum_ids") is None
+    get = _tool_fn(mcp, "get_analysis_report_json")
+    data = json.loads(asyncio.run(get(job_id="fcjob_r", spectrum_id="b")))["data"]
+    assert [s["spectrum_id"] for s in data["spectra"]] == ["b"]
+
+
+def test_reference_and_test_peak_model_tools(tmp_path: Path) -> None:
+    seen: list[tuple[str, str, object]] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        seen.append((request.method, request.url.path, body))
+        if request.url.path == "/references" and request.method == "GET":
+            return httpx.Response(200, json={"items": [], "count": 0})
+        if request.url.path in ("/references", "/references/from-dataset", "/references/import"):
+            return httpx.Response(200, json={"reference_id": "ref_1", "name": body["name"], "x": [1, 2], "y": [3, 4]})
+        if request.url.path == "/fitting/test-peak-model":
+            return httpx.Response(200, json={"mode": "noise", "overlay": [{"a": [1]}], "x": [1], "components": []})
+        if request.url.path == "/analysis/sweep-jobs/fcjob_s/summary":
+            return httpx.Response(200, json={"axes": ["a.pos"], "summary": [], "points": [{"x": 1}]})
+        return httpx.Response(404, json={"detail": request.url.path})
+
+    ctx = _ready_ctx(tmp_path, httpx.MockTransport(handle))
+    mcp = create_server(ctx)
+    post = _tool_fn(mcp, "post_references")
+    out = json.loads(asyncio.run(post(name="CoO", x=[1.0, 2.0, 3.0], y=[1.0, 2.0, 1.0])))
+    assert out["data"] == {"reference_id": "ref_1", "name": "CoO"}  # arrays dropped from the answer
+    asyncio.run(post(name="raw", dataset_id="ds", spectrum_id="sp"))
+    asyncio.run(post(name="lit", text="1 2\n2 3\n3 4\n"))
+    assert [p for _m, p, _b in seen] == ["/references", "/references/from-dataset", "/references/import"]
+    bad = json.loads(asyncio.run(post(name="x")))
+    assert bad["ok"] is False
+    tpm = _tool_fn(mcp, "post_fitting_test_peak_model")
+    res = json.loads(asyncio.run(tpm(fit_request={"target": {}}, mode="noise", n_replicates=5)))
+    assert "overlay" not in res["data"] and "x" not in res["data"]
+    assert seen[-1][2]["mode"] == "noise" and seen[-1][2]["n_replicates"] == 5
+    sw = _tool_fn(mcp, "get_analysis_sweep_summary")
+    data = json.loads(asyncio.run(sw(job_id="fcjob_s")))["data"]
+    assert data["axes"] == ["a.pos"] and "points" not in data

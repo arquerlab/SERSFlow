@@ -50,6 +50,26 @@
 <p>Every fitted value has a 1σ error column: <code>fit_[region_]&lt;component&gt;_&lt;param&gt;_stderr</code>, <code>…_area_stderr</code> and <code>…_area_pct_stderr</code>. They come from the fit covariance, scaled by the reduced χ², and are propagated to area and %area through the peak links (ratios, shared widths). Fixed parameters have an empty error. Runs made before these columns existed show them empty until re-run. <code>fit_[region_]gof_median_rel_stderr</code> summarises them in one number.</p>
 <p>For uncertainties that include the background and overlapping peaks, run a <b>Monte Carlo</b> job (Analyze → Plots → Fit diagnostics, or <code>POST /analysis/runs/{id}/monte-carlo-jobs</code>). Its zip has <code>mc_summary.csv</code> (best fit, covariance error, Monte Carlo mean, SD and 2.5/50/97.5 percentiles per spectrum, component and quantity), <code>mc_replicates.csv</code> (every refitted replicate) and <code>mc_summary.json</code>.</p>
 
+<h2>Publication fit report</h2>
+<p>Analyze → Plots → Fit diagnostics → <span class="ui">Download report</span> (API <code>POST /analysis/runs/{id}/report-jobs</code>; MCP <code>post_analysis_report_jobs</code>) builds a zip with:</p>
+<ul>
+  <li><code>report.html</code>: one self-contained page (figures embedded) to read, print or save as PDF;</li>
+  <li><code>report.md</code>: the same in Markdown, with the figures in <code>figures/</code>;</li>
+  <li><code>report.json</code>: the machine-readable report (also <code>GET /analysis/report-jobs/{job_id}/json</code>; MCP <code>get_analysis_report_json</code>).</li>
+</ul>
+<p>Contents, per the ISO 19830 / Major et al. reporting items:</p>
+<ul>
+  <li><b>Provenance</b>: file name, block and SHA-256; software version and git commit; pipeline hash.</li>
+  <li><b>Acquisition</b> (VAMAS files): source, excitation energy, source–analyser angle, pass energy, step, dwell, scans, counts and count rate at the most intense channel.</li>
+  <li><b>Charge correction</b>: method, reference and the shift applied to each spectrum.</li>
+  <li><b>Processing history</b>: every pipeline step with its parameters.</li>
+  <li><b>Fits</b>, per region: background and fit window, and for each component the line shape in CasaXPS notation (GL(30), LA(α,β), …), position, FWHM, height, area and %area ± 1σ, and the status of every parameter (fixed, bounded [min, max], or linked with its relation).</li>
+  <li><b>Fit statistics</b>: optimiser, N points, free parameters, χ², reduced χ², normalised residual STD, weighting.</li>
+  <li><b>Figure</b>: data, envelope, components, background, residual and a component table.</li>
+  <li><b>Checklist</b> of the reporting items.</li>
+</ul>
+<p>Quantification (atomic %) is not available yet; the report says so.</p>
+
 <h2>PCA downloads</h2>
 <table>
   <tr><th>File</th><th>Columns</th></tr>

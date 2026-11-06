@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from sersflow.api.schemas.analysis import (
     MonteCarloJobCreateRequest,
+    ReportJobCreateRequest,
     AnalysisExportManifest,
     AnalysisJobStatusResponse,
     AnalysisRunCreateRequest,
@@ -48,7 +49,14 @@ from sersflow.api.services.monte_carlo_runner import (
     execute_monte_carlo_job,
     read_monte_carlo_summary,
 )
-from sersflow.api.services.sweep_runner import SWEEP_CONTENT, _fixed_params, execute_sweep_job, grid_points
+from sersflow.api.services.report_runner import REPORT_CONTENT, execute_report_job, read_report_json
+from sersflow.api.services.sweep_runner import (
+    SWEEP_CONTENT,
+    _fixed_params,
+    execute_sweep_job,
+    grid_points,
+    read_sweep_summary,
+)
 from sersflow.api.services.pipeline_qc import pipeline_without_qc_steps
 from sersflow.api.services.step_outputs_export_runner import (
     STEP_OUTPUTS_CONTENT,
@@ -756,6 +764,58 @@ def get_monte_carlo_summary(job_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to read summary: {e}") from e
 
 
+@router.post("/runs/{run_id}/report-jobs", response_model=FitCurveJobCreateResponse)
+def post_report_job(
+    run_id: str, payload: ReportJobCreateRequest, request: Request
+) -> FitCurveJobCreateResponse | JSONResponse:
+    """R1 publication fit report (HTML + Markdown + JSON); poll/download through the fit-curve job endpoints."""
+    user_id = current_user_id(request)
+    rec = _require_run(run_id, user_id)
+    if rec.status != "completed":
+        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    jid = create_fit_curve_job(
+        run_id=run_id,
+        fitting_step_num=int((payload.fitting_step_nums or [0])[0]),
+        content=REPORT_CONTENT,
+        format="zip",
+        params_json=json.dumps(payload.model_dump()),
+    )
+    Thread(target=execute_report_job, args=(jid,), daemon=True).start()
+    return JSONResponse(status_code=202, content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump())
+
+
+@router.get("/report-jobs/{job_id}/json", response_model=None)
+def get_report_json(job_id: str, request: Request) -> dict[str, Any]:
+    """The machine-readable report (report.json) of a completed report job."""
+    user_id = current_user_id(request)
+    job = get_fit_curve_job(job_id)
+    if job is None or job.content != REPORT_CONTENT:
+        raise HTTPException(status_code=404, detail="Report job not found")
+    _require_run(job.run_id, user_id)
+    if job.status != "completed" or not job.artifact_path:
+        raise HTTPException(status_code=400, detail=f"Report job is not ready (status {job.status})")
+    try:
+        return read_report_json(job.artifact_path)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read report: {e}") from e
+
+
+@router.get("/sweep-jobs/{job_id}/summary", response_model=None)
+def get_sweep_summary(job_id: str, request: Request) -> dict[str, Any]:
+    """S1: sweep result as JSON (per grid point: rmse / bic means and mean %area per component; plus all points)."""
+    user_id = current_user_id(request)
+    job = get_fit_curve_job(job_id)
+    if job is None or job.content != SWEEP_CONTENT:
+        raise HTTPException(status_code=404, detail="Sweep job not found")
+    _require_run(job.run_id, user_id)
+    if job.status != "completed" or not job.artifact_path:
+        raise HTTPException(status_code=400, detail=f"Sweep job is not ready (status {job.status})")
+    try:
+        return sanitize_floats(read_sweep_summary(job.artifact_path))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read sweep summary: {e}") from e
+
+
 @router.post("/runs/{run_id}/fit-curve-jobs", response_model=FitCurveJobCreateResponse)
 def post_fit_curve_job(
     run_id: str, payload: FitCurveJobCreateRequest, request: Request
@@ -816,9 +876,12 @@ def download_fit_curve_job(job_id: str, request: Request) -> Response:
             data = f.read()
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Failed to read artifact: {e}") from e
-    prefix = {STEP_OUTPUTS_CONTENT: "step_outputs", SWEEP_CONTENT: "sweep", MONTE_CARLO_CONTENT: "monte_carlo"}.get(
-        job.content, "fit_curves"
-    )
+    prefix = {
+        STEP_OUTPUTS_CONTENT: "step_outputs",
+        SWEEP_CONTENT: "sweep",
+        MONTE_CARLO_CONTENT: "monte_carlo",
+        REPORT_CONTENT: "fit_report",
+    }.get(job.content, "fit_curves")
     return Response(
         content=data,
         media_type="application/zip",

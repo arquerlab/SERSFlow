@@ -17,6 +17,7 @@ from sersflow.core.preprocess.fitting import (
     _validate_vectors,
 )
 from sersflow.core.preprocess.fitting_specs import (
+    build_component_function_for,
     BOLTZMANN_EV_PER_K,
     XPS_BACKGROUND_COMPONENT_TYPES,
     build_component_function,
@@ -148,7 +149,91 @@ def _xps_bg_model(component_type: str, prefix: str, y0: float):
         return xps_models.TougaardBG(independent_vars=["x", "y"], prefix=prefix), ["B", "C", "C_d", "D", "extend"]
     if ct == "slope_bg":
         return xps_models.SlopeBG(independent_vars=["y"], prefix=prefix), ["k"]
+    if ct == "tougaard_u4_bg":
+        from lmfit import Model
+
+        from sersflow.core.preprocess.xps_extra_components import tougaard_u4_bg
+
+        def _tougaard_u4(x, y, B, C, C_d, D, T0):
+            return tougaard_u4_bg(x, y, B, C, C_d, D, T0)
+
+        return Model(_tougaard_u4, independent_vars=["x", "y"], prefix=prefix), ["B", "C", "C_d", "D", "T0"]
     raise ValueError(f"Unknown XPS background component: {component_type}")
+
+
+def _sb_source_keys(problem: FitProblem, of: str) -> list[str]:
+    from sersflow.core.preprocess.fitting_specs import component_param_specs
+
+    src = next((c for c in problem.components if c.component_id == of), None)
+    if src is None:
+        raise ValueError(f"shirley_of_bg: unknown source peak {of!r} (set the component option 'of')")
+    return [s.key for s in component_param_specs(src.component_type, degree=src.degree)]
+
+
+def _shirley_of_model(problem: FitProblem, comp: FitComponent, prefix: str):
+    """
+    CasaXPS SB(0)X: k x cumulative integral of peak X (shifted by ``shift``) toward higher x (BE).
+
+    The source peak's parameters enter as hidden ``ref_<key>`` parameters tied to the peak by expressions, so the
+    Shirley profile follows the peak during the fit.
+    """
+    from sersflow.core.preprocess.fitting_specs import PEAK_COMPONENT_TYPES, build_component_function_for
+    from sersflow.core.preprocess.xps_extra_components import shirley_profile
+
+    of = str((comp.options or {}).get("of") or "")
+    src = next((c for c in problem.components if c.component_id == of), None)
+    if src is None or src.component_type.strip().lower() not in (PEAK_COMPONENT_TYPES | {"reference_spectrum"}):
+        raise ValueError(f"shirley_of_bg {comp.component_id!r}: option 'of' must name a peak component (got {of!r})")
+    f_src, specs = build_component_function_for(src.component_type, degree=src.degree, options=src.options)
+    src_keys = [s.key for s in specs]
+    hidden = [f"ref_{k}" for k in src_keys]
+
+    def _sb_impl(x, k, shift, *src_vals):
+        xf = np.asarray(x, dtype=float)
+        return shirley_profile(xf, f_src(xf - float(shift), *src_vals), k)
+
+    from lmfit import Model
+
+    args = ", ".join(["k", "shift", *hidden])
+    local: dict[str, Any] = {"impl": _sb_impl}
+    exec(f"def _sb(x, {args}):\n    return impl(x, {args})\n", local)
+    return Model(local["_sb"], independent_vars=["x"], prefix=prefix), ["k", "shift"]
+
+
+def _seed_extra_backgrounds(
+    problem: FitProblem,
+    p0: list[float],
+    slices: list[tuple[int, int]],
+    param_keys_per_comp: list[list[str]],
+) -> None:
+    """B1 seeds: linear_bg ends from averaged endpoints; erfc step height / low level from the data (in place)."""
+    from sersflow.core.preprocess.xps_extra_components import endpoint_levels
+
+    x = np.asarray(problem.x, dtype=float)
+    y = np.asarray(problem.y, dtype=float)
+    if x.size < 4 or not np.all(np.isfinite(y)):
+        return
+    for comp, keys, (s, _e) in zip(problem.components, param_keys_per_comp, slices):
+        ct = comp.component_type.strip().lower()
+        opts = comp.options or {}
+        if ct == "linear_bg" and "low" in keys and "high" in keys:
+            li, hi_i = s + keys.index("low"), s + keys.index("high")
+            if p0[li] == 0.0 and p0[hi_i] == 0.0:
+                lo_v, hi_v = endpoint_levels(
+                    x,
+                    y,
+                    avg_width=opts.get("avg_width"),
+                    offset_low_pct=float(opts.get("offset_low_pct") or 0.0),
+                    offset_high_pct=float(opts.get("offset_high_pct") or 0.0),
+                )
+                p0[li], p0[hi_i] = lo_v, hi_v
+        elif ct == "erfc_step_bg":
+            lo_v, hi_v = endpoint_levels(x, y, avg_width=opts.get("avg_width"))
+            hi_idx, c_idx = s + keys.index("height"), s + keys.index("const")
+            if p0[hi_idx] == 0.0:
+                p0[hi_idx] = hi_v - lo_v
+            if p0[c_idx] == 0.0:
+                p0[c_idx] = lo_v
 
 
 def _apply_xps_fit_safeguards(
@@ -234,14 +319,31 @@ def _apply_xps_fit_safeguards(
 _SHIRLEY_K_SPEC_DEFAULT = 0.03
 
 
-def _shirley_endpoints(y: np.ndarray) -> tuple[float, float, float, int]:
+def _shirley_endpoints(y: np.ndarray, options: dict[str, Any] | None = None) -> tuple[float, float, float, int]:
     """
     (I_right, step, sigma, n_end) for arrays oriented so the Shirley sum runs toward
     the last sample (low BE). ``step`` is the high-BE edge minus I_right.
+
+    B1 options (component dict): ``avg_width`` (+-N channels averaged at each end; default 'auto' =
+    max(3, min(10, n/20)) channels, the legacy behaviour) and ``offset_low_pct`` / ``offset_high_pct``
+    (percent lowering of the low-BE / high-BE end levels, CasaXPS Start/End Offset).
     """
-    n_end = int(max(3, min(10, y.size // 20)))
-    i_right = float(np.median(y[-n_end:]))
-    step = float(np.median(y[:n_end])) - i_right
+    from sersflow.core.preprocess.xps_extra_components import resolve_avg_width
+
+    opts = options or {}
+    w = resolve_avg_width(y.size, opts.get("avg_width"))
+    if w < 0:
+        n_end = int(max(3, min(10, y.size // 20)))
+        i_right = float(np.median(y[-n_end:]))
+        i_left = float(np.median(y[:n_end]))
+    else:
+        k = w if 2 * w + 1 <= y.size // 2 else 0  # CasaXPS: no averaging when the window does not fit
+        n_end = k + 1
+        i_right = float(np.mean(y[-n_end:]))
+        i_left = float(np.mean(y[:n_end]))
+    i_right *= 1.0 - float(opts.get("offset_low_pct") or 0.0) / 100.0
+    i_left *= 1.0 - float(opts.get("offset_high_pct") or 0.0) / 100.0
+    step = i_left - i_right
     d = np.diff(y)
     sigma = 1.4826 * float(np.median(np.abs(d - np.median(d)))) / np.sqrt(2.0) if d.size else 0.0
     return i_right, step, sigma, n_end
@@ -265,7 +367,8 @@ def _seed_shirley_params(
     """
     if y.size < 8 or not np.all(np.isfinite(y)):
         return
-    i_right, step, sigma, n_end = _shirley_endpoints(y)
+    sh = next((c for c in components if c.component_type.strip().lower() == "shirley_bg"), None)
+    i_right, step, sigma, n_end = _shirley_endpoints(y, sh.options if sh is not None else None)
     tol = max(4.0 * sigma / np.sqrt(n_end), 1e-4 * max(abs(i_right), 1.0))
     # The model is fed y - I_right (see _model_y_input), so its edge value for k=1 is this sum.
     total = float(np.sum(y - i_right))
@@ -306,7 +409,8 @@ def _model_y_input(problem: FitProblem, yf: np.ndarray) -> np.ndarray:
         return yf
     if yf.size < 8 or not np.all(np.isfinite(yf)):
         return yf
-    return yf - _shirley_endpoints(yf)[0]
+    sh = next((c for c in problem.components if c.component_type.strip().lower() == "shirley_bg"), None)
+    return yf - _shirley_endpoints(yf, sh.options if sh is not None else None)[0]
 
 
 def _shirley_needs_flip(problem: FitProblem) -> bool:
@@ -375,8 +479,13 @@ def _assemble_lmfit_model(
             except ImportError as e:
                 raise ImportError("Fermi-edge fitting requires lmfitxps>=4.2.0") from e
             peak_fns.append(None)
+        elif ct == "shirley_of_bg":
+            m, param_keys = _shirley_of_model(problem, comp, prefix)
+            peak_fns.append(None)
         else:
-            f, param_specs = build_component_function(comp.component_type, degree=comp.degree)
+            f, param_specs = build_component_function_for(
+                comp.component_type, degree=comp.degree, options=comp.options
+            )
             param_keys = [p.key for p in param_specs]
             m = _make_peak_model(f, param_keys, prefix)
             peak_fns.append(f)
@@ -392,6 +501,9 @@ def _assemble_lmfit_model(
                 "degree": comp.degree,
                 "param_keys": param_keys,
                 "index_range": [start, end],
+                # Fit window: DS / GDS areas are integrated over it (L1).
+                "x_window": [float(np.min(problem.x)), float(np.max(problem.x))] if problem.x.size else None,
+                **({"options": dict(comp.options)} if comp.options else {}),
             }
         )
         model = m if model is None else (model + m)
@@ -407,23 +519,27 @@ _GL_PRODUCT_K_FN = "sf_gl_product_area_k"
 _GENERIC_AREA_K_FN = "sf_area_per_height"
 
 
-def _generic_area_per_height(ctype: str, *vals: float) -> float:
+def _generic_area_per_height(ctype: str, *vals: float, window: tuple[float, float] | None = None) -> float:
     """Area / height of any finite-area peak type (F3), shape values in ``component_param_specs`` order."""
     from sersflow.core.preprocess.fitting_specs import component_param_specs
     from sersflow.core.preprocess.peak_area import area_per_height
 
-    keys = [s.key for s in component_param_specs(ctype) if s.key not in ("pos", "amp")]
-    return float(area_per_height(ctype, {k: float(v) for k, v in zip(keys, vals)}))
+    specs = [s.key for s in component_param_specs(ctype)]
+    keys = [k for k in specs if k not in ("amp",)]
+    d = {k: float(v) for k, v in zip(keys, vals)}
+    if window is not None:
+        d["_window"] = window
+    return float(area_per_height(ctype, d))
 
 
-def _register_area_functions(params: Any) -> None:
+def _register_area_functions(params: Any, window: tuple[float, float] | None = None) -> None:
     """Expose area-per-height helpers to lmfit constraint expressions (product GL has no simple expr)."""
     from sersflow.core.preprocess.fitting_models import gl_product_area_k
 
     ev = getattr(params, "_asteval", None)
     if ev is not None:
         ev.symtable[_GL_PRODUCT_K_FN] = gl_product_area_k
-        ev.symtable[_GENERIC_AREA_K_FN] = _generic_area_per_height
+        ev.symtable[_GENERIC_AREA_K_FN] = lambda ct, *v: _generic_area_per_height(ct, *v, window=window)
 
 
 def _area_per_height_expr(
@@ -461,7 +577,7 @@ def _area_per_height_expr(
     if ct in AREA_EXPORT_COMPONENT_TYPES:
         # F3: every other finite-area shape (LA, LF, voigt, GL(m,n), A-GL, APV, ...) through the same
         # numeric / closed-form area factors as the area export (peak_area.area_per_height).
-        keys = [s.key for s in component_param_specs(ct) if s.key not in ("pos", "amp")]
+        keys = [s.key for s in component_param_specs(ct) if s.key != "amp"]
         args = ", ".join(nm(k) for k in keys)
         return f"{_GENERIC_AREA_K_FN}('{ct}', {args})"
     raise ValueError(
@@ -481,8 +597,18 @@ def _apply_param_links(
         validate_param_links,
     )
 
-    _register_area_functions(params)
+    window = (float(np.min(problem.x)), float(np.max(problem.x))) if problem.x.size else None
+    _register_area_functions(params, window)
     ctype_by_id = {c.component_id: c.component_type for c in problem.components}
+    # SB (shirley_of_bg): its hidden copies of the source peak's parameters follow that peak.
+    for comp in problem.components:
+        if comp.component_type.strip().lower() != "shirley_of_bg":
+            continue
+        of = str((comp.options or {}).get("of") or "")
+        for key in _sb_source_keys(problem, of):
+            hidden = f"{_prefix_for(comp.component_id)}ref_{key}"
+            if hidden in params and (of, key) in name_by_comp_key:
+                params[hidden].set(expr=name_by_comp_key[(of, key)], vary=False, min=-np.inf, max=np.inf)
     if problem.param_links:
         errors = validate_param_links(
             [
@@ -626,6 +752,7 @@ def _fit_curve_lmfit(problem: FitProblem) -> FitResult:
         lo_list,
         hi_list,
     )
+    _seed_extra_backgrounds(problem, p0_list, slices, param_keys_per_comp)
 
     params = model.make_params()
     flat_names: list[str] = []
