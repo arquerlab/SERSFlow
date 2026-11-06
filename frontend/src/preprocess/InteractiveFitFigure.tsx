@@ -3,10 +3,9 @@ import Plotly from "plotly.js-dist-min";
 import { PlotlyWrapper } from "../legacy-wrappers/PlotlyWrapper";
 import { postFittingFit, type FittingComponentSpecPublic } from "./api";
 import { buildFitResidualFigure } from "./fitResidualPlot";
-import { flattenFittingForPipeline, isPeakComponentType, type FittingEditorParams } from "./fittingUtils";
+import { flattenFittingForPipeline, type FittingEditorParams } from "./fittingUtils";
 import type { FitPreviewInput } from "./fitInputs";
 import {
-  addPeak,
   baselineAt,
   buildFitRequest,
   dragPeak,
@@ -16,9 +15,11 @@ import {
   setWindowEdge,
   type DragKind,
   type FitMeta,
-  type NewPeakShape,
   type PeakHandle,
 } from "./interactiveFit";
+import { backgroundHandles, dragBackground, groupAnchor, recipeGroups, shiftGroup, type BgHandle } from "./interactiveEdit";
+import { AddComponentMenu, type CommitOpts } from "./AddComponentMenu";
+import { ComponentInspector } from "./ComponentInspector";
 
 export type FitEntry = {
   data: Record<string, unknown>[];
@@ -67,6 +68,7 @@ export async function evaluateFitEntry(
         component_id: c.component_id,
         component_type: c.component_type,
         params: c.params ?? {},
+        area: c.area ?? null,
         y_hat: c.y_hat ?? null,
       })),
       fitted: false,
@@ -92,8 +94,11 @@ type Props = {
 
 type DragState = {
   id: string;
-  kind: DragKind | "win-min" | "win-max";
+  kind: DragKind | "win-min" | "win-max" | "bg" | "group";
   handle?: PeakHandle;
+  bg?: BgHandle;
+  group?: string[];
+  anchorX?: number;
   fp0: FittingEditorParams;
   meta0: FitMeta;
 };
@@ -119,6 +124,9 @@ export function InteractiveFitFigure({ entry, fp, catalog, technique, onCommit, 
   const inFlight = useRef(false);
   const [note, setNote] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const onRefitRef = useRef(onRefit);
+  onRefitRef.current = onRefit;
 
   // Axis geometry lives inside Plotly; poll its signature so the overlay follows zoom, pan and resize.
   useEffect(() => {
@@ -136,6 +144,16 @@ export function InteractiveFitFigure({ entry, fp, catalog, technique, onCommit, 
   }, [entry]);
 
   const handles = useMemo(() => (meta && editOn ? peakHandles(meta, fp) : []), [meta, fp, editOn]);
+  const bgHandles = useMemo(() => (meta && editOn ? backgroundHandles(meta, fp) : []), [meta, fp, editOn]);
+  const groups = useMemo(
+    () =>
+      meta && editOn
+        ? recipeGroups(fp)
+            .map((g) => ({ ...g, anchor: groupAnchor(meta, g.members) }))
+            .filter((g) => g.anchor != null)
+        : [],
+    [meta, fp, editOn]
+  );
 
   function axes(): { xa: any; ya: any } | null {
     const fl = (divRef.current as any)?._fullLayout;
@@ -216,6 +234,8 @@ export function InteractiveFitFigure({ entry, fp, catalog, technique, onCommit, 
   function nextFor(d: DragState, at: { x: number; y: number }): FittingEditorParams {
     if (d.kind === "win-min") return setWindowEdge(d.fp0, d.meta0, "min", at.x);
     if (d.kind === "win-max") return setWindowEdge(d.fp0, d.meta0, "max", at.x);
+    if (d.kind === "bg") return dragBackground(d.fp0, d.meta0, d.bg!, at);
+    if (d.kind === "group") return shiftGroup(d.fp0, d.meta0, d.group!, at.x - (d.anchorX ?? at.x));
     return dragPeak(d.fp0, d.meta0, d.handle!, d.kind, at);
   }
 
@@ -276,51 +296,28 @@ export function InteractiveFitFigure({ entry, fp, catalog, technique, onCommit, 
   }, [selecting, meta, fp, onCommit, scheduleEval]);
 
   const residualPoint = meta ? maxResidualPoint(meta) : null;
-  const peaks = fp.components
-    .map((c, ci) => ({ c, ci }))
-    .filter(({ c }) => isPeakComponentType(c.component_type));
-  const peakTypes = useMemo(
-    () => (catalog ?? []).map((c) => c.component_type).filter((t) => isPeakComponentType(t)),
-    [catalog]
-  );
-  const [shapeMode, setShapeMode] = useState<"shape" | "copy">("copy");
-  const [shapeType, setShapeType] = useState("gl");
-  const [shapeFwhm, setShapeFwhm] = useState("1.5");
-  const [copyCi, setCopyCi] = useState<number>(-1);
-  const copySource = copyCi >= 0 && peaks.some((p) => p.ci === copyCi) ? copyCi : peaks[peaks.length - 1]?.ci ?? -1;
+  const selCi = selectedId ? fp.components.findIndex((c) => c.component_id === selectedId) : -1;
 
-  async function addAtResidual() {
-    if (!meta || !residualPoint) return;
-    setNote(null);
-    try {
-      const height = residualPoint.residual;
-      const shape: NewPeakShape =
-        shapeMode === "copy" && copySource >= 0
-          ? { kind: "copy", ci: copySource }
-          : { kind: "shape", componentType: shapeType, fwhm: Number(shapeFwhm) > 0 ? Number(shapeFwhm) : null };
-      let ampPerHeight: number | null = null;
-      if (shape.kind === "shape") {
-        // Evaluate the new shape alone at unit amplitude to convert the requested height into its amplitude.
-        const probe = addPeak({ ...fp, components: [] }, meta, catalog, { x: residualPoint.x, height: 1 }, shape, 1);
-        const flat = flattenFittingForPipeline(probe.fp) as Record<string, unknown>;
-        const one = await postFittingFit({
-          ...buildFitRequest(flat, { spectrum_id: "probe", x: meta.x, y: meta.x.map(() => 1) }, { technique, weighting: "none", fit: false }),
-          fit_min_x: undefined,
-          fit_max_x: undefined,
-        });
-        const yh = (one.components[0]?.y_hat ?? []).map(Number).filter(Number.isFinite);
-        const mx = yh.length ? Math.max(...yh) : 0;
-        ampPerHeight = mx > 0 ? 1 / mx : null;
-      }
-      const { fp: next, component_id } = addPeak(fp, meta, catalog, { x: residualPoint.x, height }, shape, ampPerHeight);
+  /** Write an edit into the step, redraw it, and optionally select the new component / refit afterwards. */
+  const commitEdit = useCallback(
+    async (next: FittingEditorParams, opts?: CommitOpts) => {
       onCommit(next);
       await onEvaluate(next);
-      setNote(`Added ${component_id} at ${residualPoint.x.toFixed(2)} (height ${height.toFixed(0)}). Refit to optimise.`);
-      setAddOpen(false);
-    } catch (e) {
-      setNote(String((e as Error)?.message ?? e));
-    }
-  }
+      if (opts?.select !== undefined) setSelectedId(opts.select);
+      if (opts?.note) setNote(opts.note);
+      else setNote(null);
+      if (opts?.refit) window.setTimeout(() => onRefitRef.current(), 500); // after the step state has propagated
+    },
+    [onCommit, onEvaluate]
+  );
+
+  /** Suggested satellite for a parent peak from the largest residual. */
+  const satelliteHint = (parentCi: number): { offset: number; ratio: number } | null => {
+    if (!meta || !residualPoint) return null;
+    const h = peakHandles(meta, fp).find((q) => q.ci === parentCi);
+    const pos = meta.components.find((m) => m.component_id === fp.components[parentCi]?.component_id)?.params.pos;
+    return h && typeof pos === "number" && h.height > 0 ? { offset: residualPoint.x - pos, ratio: residualPoint.residual / h.height } : null;
+  };
 
   void tick; // overlay positions are recomputed on every render after a geometry change
   const a = axes();
@@ -341,50 +338,43 @@ export function InteractiveFitFigure({ entry, fp, catalog, technique, onCommit, 
             Clear window
           </button>
         ) : null}
-        <button type="button" className="mini" onClick={() => setAddOpen((o) => !o)} disabled={!meta || !residualPoint} data-testid="fit-add-peak" title={residualPoint ? `Largest positive residual at ${residualPoint.x.toFixed(2)}` : "No positive residual in the window"}>
-          Add peak at max residual…
+        <button type="button" className={`mini${addOpen ? " active" : ""}`} onClick={() => setAddOpen((o) => !o)} disabled={!meta} data-testid="fit-add-peak" title="Add a peak, background, doublet partner, library multiplet, satellite or other component">
+          Add ▾
         </button>
         <button type="button" className="mini" onClick={onRefit} data-testid="fit-refit" title="Refit from the current values">
           Refit
         </button>
         {meta && !meta.fitted ? <span className="hint" style={{ margin: 0 }}>edited — not refitted</span> : null}
       </div>
-      {addOpen && residualPoint ? (
-        <div className="card-inner" style={{ display: "grid", gap: 6, marginBottom: 6, fontSize: 12 }} data-testid="fit-add-peak-panel">
-          <div>
-            New peak at <b>{residualPoint.x.toFixed(2)}</b>, height <b>{residualPoint.residual.toFixed(0)}</b> (largest positive residual).
-          </div>
-          <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <label className="inline" style={{ margin: 0 }}>
-              <input type="radio" checked={shapeMode === "copy"} onChange={() => setShapeMode("copy")} disabled={!peaks.length} /> Copy of
-            </label>
-            <select value={copySource} onChange={(e) => setCopyCi(Number(e.target.value))} disabled={shapeMode !== "copy" || !peaks.length}>
-              {peaks.map((p) => (
-                <option key={p.ci} value={p.ci}>
-                  {p.c.component_id} ({p.c.component_type})
-                </option>
-              ))}
-            </select>
-            <label className="inline" style={{ margin: 0 }}>
-              <input type="radio" checked={shapeMode === "shape"} onChange={() => setShapeMode("shape")} /> New shape
-            </label>
-            <select value={shapeType} onChange={(e) => setShapeType(e.target.value)} disabled={shapeMode !== "shape"}>
-              {(peakTypes.length ? peakTypes : ["gl"]).map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-            <label className="inline" style={{ margin: 0 }}>
-              FWHM
-              <input type="number" step="0.1" min="0" value={shapeFwhm} onChange={(e) => setShapeFwhm(e.target.value)} disabled={shapeMode !== "shape"} style={{ width: 64 }} />
-            </label>
-            <button type="button" className="mini" onClick={() => void addAtResidual()} data-testid="fit-add-peak-go">
-              Add
+      {meta && addOpen ? (
+        <AddComponentMenu
+          fp={fp}
+          meta={meta}
+          catalog={catalog}
+          technique={technique}
+          selectedId={selectedId}
+          onCommit={commitEdit}
+          onClose={() => setAddOpen(false)}
+        />
+      ) : null}
+      {meta ? (
+        <div className="row" style={{ gap: 4, flexWrap: "wrap", marginBottom: 4, fontSize: 11 }} data-testid="component-chips">
+          {fp.components.map((c) => (
+            <button
+              key={c.component_id}
+              type="button"
+              className={`mini${selectedId === c.component_id ? " active" : ""}`}
+              onClick={() => setSelectedId(selectedId === c.component_id ? null : c.component_id)}
+              title={String(c.component_type)}
+              data-testid={`chip-${c.component_id}`}
+            >
+              {c.component_id}
             </button>
-          </div>
+          ))}
         </div>
       ) : null}
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+      <div style={{ flex: "1 1 0", minWidth: 0 }}>
       <div ref={hostRef} style={{ position: "relative", width: "100%", height: 520, minHeight: 520 }}>
         <PlotlyWrapper
           ref={divRef}
@@ -448,7 +438,10 @@ export function InteractiveFitFigure({ entry, fp, catalog, technique, onCommit, 
                       stroke={mv ? "#fff" : "#999"}
                       strokeWidth={2}
                       style={{ pointerEvents: mv ? "all" : "none", cursor: mv ? "grab" : "default" }}
-                      onPointerDown={(e) => mv && begin(e, { id: `${h.component_id}:move`, kind: "move", handle: h })}
+                      onPointerDown={(e) => {
+                        setSelectedId(h.component_id);
+                        if (mv) begin(e, { id: `${h.component_id}:move`, kind: "move", handle: h });
+                      }}
                       onPointerMove={move}
                       onPointerUp={end}
                     >
@@ -466,7 +459,10 @@ export function InteractiveFitFigure({ entry, fp, catalog, technique, onCommit, 
                       stroke={h.color}
                       strokeWidth={2}
                       style={{ pointerEvents: "all", cursor: "ew-resize" }}
-                      onPointerDown={(e) => begin(e, { id: `${h.component_id}:width`, kind: "width", handle: h })}
+                      onPointerDown={(e) => {
+                        setSelectedId(h.component_id);
+                        begin(e, { id: `${h.component_id}:width`, kind: "width", handle: h });
+                      }}
                       onPointerMove={move}
                       onPointerUp={end}
                     >
@@ -476,15 +472,84 @@ export function InteractiveFitFigure({ entry, fp, catalog, technique, onCommit, 
                 </g>
               );
             })}
+            {/* ties: dotted line from a follower peak to its driver */}
+            {(fp.param_links ?? [])
+              .filter((l) => l.mode !== "expr" && l.source_key === "pos")
+              .map((l) => {
+                const a = handles.find((h) => h.component_id === l.source_component_id);
+                const b = handles.find((h) => h.component_id === l.target_component_id);
+                const pa = a && toPx(a.xMax, a.top);
+                const pb = b && toPx(b.xMax, b.top);
+                return pa && pb ? <line key={`tie-${l.source_component_id}`} x1={pa.px} y1={pa.py} x2={pb.px} y2={pb.py} stroke="#7f8c8d" strokeWidth={1} strokeDasharray="2 3" /> : null;
+              })}
+            {/* background handles */}
+            {bgHandles.map((b) => {
+              const dragged = live?.id === b.key;
+              const p = toPx(dragged && (b.kind === "edge" || b.kind === "edge-width") ? live!.x : b.x, dragged ? live!.y : b.y);
+              if (!p) return null;
+              return (
+                <rect
+                  key={b.key}
+                  data-testid={`bg-handle-${b.key}`}
+                  x={p.px - 6}
+                  y={p.py - 6}
+                  width={12}
+                  height={12}
+                  transform={`rotate(45 ${p.px} ${p.py})`}
+                  fill={b.canEdit ? "#7f8c8d" : "#fff"}
+                  stroke="#fff"
+                  strokeWidth={2}
+                  style={{ pointerEvents: b.canEdit ? "all" : "none", cursor: b.kind === "edge-width" ? "ew-resize" : b.kind === "edge" ? "move" : "ns-resize" }}
+                  onPointerDown={(e) => {
+                    setSelectedId(b.component_id);
+                    if (b.canEdit) begin(e, { id: b.key, kind: "bg", bg: b });
+                  }}
+                  onPointerMove={move}
+                  onPointerUp={end}
+                >
+                  <title>{b.title}</title>
+                </rect>
+              );
+            })}
+            {/* recipe groups: one handle to move the whole multiplet */}
+            {groups.map((g) => {
+              const p = g.anchor ? toPx(live?.id === `grp:${g.id}` ? live.x : g.anchor.x, g.anchor.top) : null;
+              if (!p) return null;
+              return (
+                <g key={`grp-${g.id}`} transform={`translate(${p.px}, ${p.py - 22})`}>
+                  <polygon
+                    data-testid={`group-handle-${g.id}`}
+                    points="0,-8 8,0 0,8 -8,0"
+                    fill="#2c3e50"
+                    stroke="#fff"
+                    strokeWidth={2}
+                    style={{ pointerEvents: "all", cursor: "ew-resize" }}
+                    onPointerDown={(e) => begin(e, { id: `grp:${g.id}`, kind: "group", group: g.members, anchorX: g.anchor!.x })}
+                    onPointerMove={move}
+                    onPointerUp={end}
+                  >
+                    <title>{`${g.id}: drag to move all ${g.members.length} peaks together`}</title>
+                  </polygon>
+                </g>
+              );
+            })}
           </svg>
         ) : null}
       </div>
-      {note ? <div className="hint" style={{ color: "var(--err, #b00020)" }}>{note}</div> : null}
+      </div>
+      {meta && selCi >= 0 ? (
+        <div style={{ flex: "0 0 380px" }}>
+          <ComponentInspector fp={fp} meta={meta} ci={selCi} catalog={catalog} onChange={(n) => void commitEdit(n)} onSelect={setSelectedId} satelliteHint={satelliteHint} />
+        </div>
+      ) : null}
+      </div>
+      {note ? <div className="hint">{note}</div> : null}
       {meta && editOn ? (
         <div className="hint" style={{ margin: "2px 0 0" }}>
-          Drag a ● to move a peak (position) and set its height; drag a □ to change its width; drag the blue lines to set the fit
-          window. Fixed or linked parameters have no handle; values stay inside their bounds. Edits show the model without
-          refitting; use Refit to optimise. Baseline under the first peak: {handles[0] ? baselineAt(meta, handles[0].xMax).toFixed(0) : "–"}.
+          Drag a ● to move a peak (position) and set its height; a □ changes its width; a ◆ above a multiplet moves all its peaks; grey
+          diamonds on a background set its levels (a fixed level takes the dragged value); blue lines set the fit window. Click a handle or
+          a name above to edit it in the card. Fixed or linked parameters have no handle; values stay inside their bounds. Edits show the
+          model without refitting; use Refit to optimise. Baseline under the first peak: {handles[0] ? baselineAt(meta, handles[0].xMax).toFixed(0) : "–"}.
         </div>
       ) : null}
     </div>

@@ -558,6 +558,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
             component_id: c.component_id,
             component_type: c.component_type,
             params: c.params ?? {},
+            area: c.area ?? null,
             y_hat: c.y_hat ?? null,
           })),
           fitted: true,

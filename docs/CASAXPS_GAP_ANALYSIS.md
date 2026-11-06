@@ -570,7 +570,10 @@ Suggested order of work, in phases (each phase can ship on its own):
   amplitudes resolved by `resolve_initial_vector`) so dragging redraws without an optimiser; the first edit after a fit
   adopts the fitted values of all rows. History: `infra/fit_history_store.py`, `/fitting/history` (per user and scope key
   `dataset|region|fittingN`; every preview fit stored as its fitted state, de-duplicated by a hash of the model state, newest
-  50 unpinned kept, named = pinned; compare = parameter table + stats + curve overlay). MCP: `get/post/delete_fitting_history`,
+  50 unpinned kept, named = pinned; compare = parameter table + stats + curve overlay). Follow-up (2026-11-06): one "Add" menu
+  (peak, any active background, doublet partner, library multiplet at an energy, satellite tied by offset / area ratio, other
+  types), an inspector card (values, fix, bounds, tie-to, shape, options), background handles (linear / Shirley / erfc levels)
+  and a group handle for recipe multiplets: `interactiveEdit.ts`, `AddComponentMenu.tsx`, `ComponentInspector.tsx`. MCP: `get/post/delete_fitting_history`,
   `get_fitting_history_compare`. Tests: `tests/test_x1_x2.py`, `interactiveFit.test.ts`.
 - **Done when:** A full Co 2p model can be set up and adjusted without typing positions, and the previous fit states can be recalled.
 

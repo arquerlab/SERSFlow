@@ -24,7 +24,7 @@ export type FitMeta = {
   y: number[];
   yHat: Array<number | null>;
   residual: Array<number | null>;
-  components: Array<FitPlotComponent & { params: Record<string, number> }>;
+  components: Array<FitPlotComponent & { params: Record<string, number>; area?: number | null }>;
   /** True when the curve came from an optimiser run, false for an evaluation of edited parameters. */
   fitted: boolean;
   fitMin: number | null;

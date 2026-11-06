@@ -139,8 +139,19 @@
   <li><b>● at a peak maximum</b>: drag to move the peak (position) and set its height. The amplitude scales in proportion to the height above the background, whatever the line shape.</li>
   <li><b>□ at the half maximum</b>: drag to change the width. The FWHM scales with the distance from the maximum.</li>
   <li><b>Blue dashed lines</b>: the fit window (<code>fit_min_x</code> / <code>fit_max_x</code>); drag an edge, or press <span class="ui">Select fit window</span> and drag a box.</li>
-  <li><span class="ui">Add peak at max residual…</span>: a new peak where the data is furthest above the model. Choose <b>Copy of</b> any current peak (same shape and fitted width, scaled to the residual height) or a <b>New shape</b> with a FWHM. It is free and linked to nothing.</li>
+  <li><b>Grey diamonds on a background</b>: linear end levels, the Shirley base level and step height, the erfc step position, height and width. A fixed level takes the dragged value.</li>
+  <li><b>◆ above a multiplet</b>: drag to move every peak of a library multiplet together (their position bounds move with them).</li>
 </ul>
+<p><span class="ui">Add ▾</span> is the one menu for everything that can be added:</p>
+<ul>
+  <li><b>Peak</b>: at the largest residual or at an energy you type; a <b>Copy of</b> any current peak (same shape and width, scaled to the height) or a <b>New shape</b> with a FWHM. It is free and linked to nothing.</li>
+  <li><b>Background</b>: Shirley, linear, Tougaard (with T0), classic Tougaard, slope, erfc step / edge, Shirley of a peak (SB) or polynomial. A baseline replaces the current baseline; an erfc step or SB is added on top. Linear and erfc are seeded from the data at the window ends; Shirley, Tougaard, slope, SB and polynomial are scaled by the fit, so the preview refits once after adding.</li>
+  <li><b>Doublet partner</b>: the spin-orbit partner of a peak (subshell, splitting, locked area ratio), as in the form.</li>
+  <li><b>Library multiplet</b>: search a Biesinger compound fit (Co3O4, ...) and drop its peaks with the strongest peak at an energy, keeping their separations and locked ratios (no background is added).</li>
+  <li><b>Satellite</b>: a peak tied to a main peak by an offset and an area ratio (prefilled from the largest residual); a dotted line shows the tie.</li>
+  <li><b>Other</b>: Fermi edge, reference spectrum and any other component type.</li>
+</ul>
+<p>Click a handle or a component name above the plot to open its <b>card</b>: values, <b>Fix</b>, min / max, shape, <b>Tie to…</b> another component (Equal, Offset from, Area ratio to; cycles are not offered), background options (Av Width, offsets, Tougaard preset, reference), Spin-orbit partner, Satellite, Duplicate and Delete. Expression links are still edited in the form below.</p>
 <p>Edits show the model at the new values <b>without refitting</b> (the title says "edited, not refitted") and are written into the step as starting values. The first edit after a fit adopts the fitted values of all peaks, so nothing jumps back to the old seeds. <span class="ui">Refit</span> optimises from the edited values. Constraints are respected: a <b>fixed</b> parameter, or one that <b>follows</b> a link or expression, has no handle (its driver does, and the follower moves with it), and dragged values are clipped to their own bounds. The same evaluate-without-fitting mode exists in the API (<code>POST /fitting/fit</code> with <code>"fit": false</code>).</p>
 
 <h3>Fit history</h3>
