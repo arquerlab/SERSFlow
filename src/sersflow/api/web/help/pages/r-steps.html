@@ -16,10 +16,11 @@
 <h2 id="step-baseline">Baseline Correction</h2>
 <p>Subtracts an estimated slowly varying background. Choose a <b>category</b>, then a <b>method</b>, then its parameters. Full list: <a href="#" data-help="r-baseline">Baseline methods</a>.</p>
 
-<h2 id="step-cosmic">Cosmic Ray Removal (vibrational only)</h2>
-<p>Finds narrow spikes and replaces them by interpolation.</p>
+<h2 id="step-cosmic">Cosmic Ray Removal (and XPS spikes)</h2>
+<p>Finds narrow spikes and replaces them by interpolation. Vibrational data: <i>zscore</i> or <i>derivative</i>. XPS: <i>xps_poisson</i>.</p>
 <ul>
-  <li><b>method</b>: <i>zscore</i> (threshold 5, window 5) or <i>derivative</i> (threshold 3, window 3). Switching resets the settings below.</li>
+  <li><b>method</b>: <i>zscore</i> (threshold 5, window 5) or <i>derivative</i> (threshold 3, window 3), for vibrational data; <i>xps_poisson</i> for XPS (below). Switching resets the settings.</li>
+  <li><b>xps_poisson</b> (XPS): each channel is compared with a local quadratic fit of its neighbours (so peak tops are followed) in units of the counting noise, which grows as the square root of the counts; the noise level is estimated from the spectrum itself. <b>threshold</b> (default 5 sigma), <b>window</b> (odd, default 7, at least 5), <b>direction</b> (<i>positive</i> default: only spikes above the trend; <i>both</i> also removes dips), <b>n_iterations</b> (default 10). Flagged channels are replaced by the local fit and given the Poisson variance of that height, so weighted fitting stays valid. Single and adjacent two-channel spikes are handled; the first and last channels are less reliable. <b>max_width</b> (default 3): a run of more adjacent replaced channels is taken for a peak and restored. Peaks need about 8 or more channels across their FWHM; for sharper, under-sampled peaks raise the threshold or check the replaced channels. Put it first, before smoothing, calibration shifts and baselines. Never apply it to spectra that were already smoothed or summed from rescaled data without checking the replaced channels.</li>
   <li><b>interpolation</b>: <i>median</i> (default), <i>linear</i>, <i>cubic</i>. <b>max_width</b> (10 points): wider features are never treated as spikes. <b>min_intensity_ratio</b> (2.0): spike height relative to local background. <b>n_iterations</b> (3).</li>
 </ul>
 <div class="warn">Run it <b>before</b> baseline subtraction: spots with zero or negative local background are never corrected. Use an <b>odd</b> window. With very fine sampling, narrow genuine bands can be mistaken for spikes: lower <i>max_width</i> or raise the threshold.</div>

@@ -12,6 +12,7 @@ from sersflow.core.metrics.integration_features import parse_integration_windows
 from sersflow.core.pipeline.hashing import canonical_json
 from sersflow.core.preprocess.baseline import baseline_kwargs, correct_baseline
 from sersflow.core.preprocess.cosmic_ray import remove_cosmic_rays
+from sersflow.core.preprocess.xps_despike import remove_spikes_poisson
 from sersflow.core.metrics.intensity_probes import parse_probes
 from sersflow.core.preprocess.fitting import (
     expand_fit_curves_to_full,
@@ -183,6 +184,8 @@ def _cosmic_ray_removal(xy: XY, params: dict[str, Any]) -> XY:
     if xy.y.size == 0:
         return xy
     method = str(params.get("method", "zscore"))
+    if method == "xps_poisson":
+        return _xps_despike(xy, params)
     threshold = float(params.get("threshold", 5.0))
     window = int(params.get("window", 5))
     interpolation = str(params.get("interpolation", "median"))
@@ -200,6 +203,33 @@ def _cosmic_ray_removal(xy: XY, params: dict[str, Any]) -> XY:
         n_iterations=n_iterations,
     )
     return xy.keep_var(xy.x, np.asarray(corrected, dtype=float))
+
+
+def _xps_despike(xy: XY, params: dict[str, Any]) -> XY:
+    """XPS spike removal with counting-statistics detection (C3); keeps and patches the variance (F1)."""
+    y = xy.y.astype(float, copy=False)
+    corrected, mask, _ = remove_spikes_poisson(
+        y,
+        threshold=float(params.get("threshold", 5.0)),
+        window=int(params.get("window", 7)),
+        direction=str(params.get("direction", "positive")),
+        n_iterations=int(params.get("n_iterations", 10)),
+        max_width=int(params.get("max_width", 3)),
+    )
+    if xy.var is None or xy.var.shape != y.shape:
+        return XY(x=xy.x, y=corrected)
+    var = xy.var.copy()
+    if np.any(mask):
+        # Replaced channels get the variance a Poisson channel of that height has locally:
+        # (var / y) of the untouched neighbours times the new value.
+        floor = max(1e-3 * float(np.max(np.abs(y))), 1e-12)
+        ratio = xy.var / np.maximum(np.abs(y), floor)
+        for i in np.flatnonzero(mask):
+            lo, hi = max(0, i - 6), min(y.size, i + 7)
+            ok = ~mask[lo:hi]
+            if np.any(ok):
+                var[i] = float(np.median(ratio[lo:hi][ok])) * max(abs(float(corrected[i])), floor)
+    return XY(x=xy.x, y=corrected, var=var, var_kind=xy.var_kind)
 
 
 def _baseline(xy: XY, params: dict[str, Any]) -> XY:

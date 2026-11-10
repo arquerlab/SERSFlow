@@ -26,35 +26,7 @@ CROP = StepUiSchema(
     ),
 )
 
-COSMIC_RAY_REMOVAL = StepUiSchema(
-    method_param_key="method",
-    methods=(
-        StepMethodUi(
-            id="zscore",
-            label="zscore",
-            defaults={
-                "threshold": 5.0,
-                "window": 5,
-                "interpolation": "median",
-                "max_width": 10,
-                "min_intensity_ratio": 2.0,
-                "n_iterations": 3,
-            },
-        ),
-        StepMethodUi(
-            id="derivative",
-            label="derivative",
-            defaults={
-                "threshold": 3.0,
-                "window": 3,
-                "interpolation": "median",
-                "max_width": 10,
-                "min_intensity_ratio": 2.0,
-                "n_iterations": 3,
-            },
-        ),
-    ),
-    common_fields=(
+_COSMIC_RAMAN_FIELDS = (
         _F(
             "threshold",
             "number",
@@ -77,7 +49,63 @@ COSMIC_RAY_REMOVAL = StepUiSchema(
             "Spike must exceed local baseline by this ratio.",
         ),
         _F("n_iterations", "int", "n_iterations", "Number of detect→correct passes."),
+)
+
+COSMIC_RAY_REMOVAL = StepUiSchema(
+    method_param_key="method",
+    methods=(
+        StepMethodUi(
+            id="zscore",
+            label="zscore",
+            fields=_COSMIC_RAMAN_FIELDS,
+            defaults={
+                "threshold": 5.0,
+                "window": 5,
+                "interpolation": "median",
+                "max_width": 10,
+                "min_intensity_ratio": 2.0,
+                "n_iterations": 3,
+            },
+        ),
+        StepMethodUi(
+            id="derivative",
+            label="derivative",
+            fields=_COSMIC_RAMAN_FIELDS,
+            defaults={
+                "threshold": 3.0,
+                "window": 3,
+                "interpolation": "median",
+                "max_width": 10,
+                "min_intensity_ratio": 2.0,
+                "n_iterations": 3,
+            },
+        ),
+        StepMethodUi(
+            id="xps_poisson",
+            label="xps_poisson (XPS)",
+            defaults={
+                "threshold": 5.0,
+                "window": 7,
+                "direction": "positive",
+                "n_iterations": 10,
+                "max_width": 3,
+            },
+            fields=(
+                _F("threshold", "number", "threshold", "Detection level in robust sigma of the counting noise (Poisson-scaled)."),
+                _F("window", "int", "window", "Odd window (points) of the local quadratic reference; 5 or more."),
+                _F(
+                    "direction",
+                    "select",
+                    "direction",
+                    "positive = only channels above the trend; both also removes dips.",
+                    options=("positive", "both"),
+                ),
+                _F("n_iterations", "int", "n_iterations", "Maximum detect-replace passes."),
+                _F("max_width", "int", "max_width", "Runs of more channels than this are treated as a peak and left untouched."),
+            ),
+        ),
     ),
+    common_fields=(),
 )
 
 BASELINE = StepUiSchema(

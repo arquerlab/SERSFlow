@@ -40,7 +40,7 @@ def test_golden_xps_meta_catalog_snapshot() -> None:
     xps_steps = {s.id for s in list_steps(technique_family="xps")}
     assert "fitting" in xps_steps
     assert "baseline" in xps_steps
-    assert "cosmic_ray_removal" not in xps_steps
+    assert "cosmic_ray_removal" in xps_steps  # C3
 
     vamas = next(f for f in list_formats() if f.id == "vamas")
     pub = vamas.to_public()

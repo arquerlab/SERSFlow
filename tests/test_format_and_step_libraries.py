@@ -33,7 +33,7 @@ def test_step_library_applicability():
     vib = {s.id for s in list_steps(technique_family="vibrational")}
     xps = {s.id for s in list_steps(technique_family="xps")}
     assert "cosmic_ray_removal" in vib
-    assert "cosmic_ray_removal" not in xps
+    assert "cosmic_ray_removal" in xps  # C3: XPS spike removal (xps_poisson method)
 
     public = get_step("baseline").to_public()
     assert public["ui"]["method_param_key"] == "method"
@@ -52,4 +52,4 @@ def test_meta_formats_and_steps_endpoints():
     assert r2.status_code == 200
     ids = {it["id"] for it in r2.json()["items"]}
     assert "fitting" in ids
-    assert "cosmic_ray_removal" not in ids
+    assert "cosmic_ray_removal" in ids

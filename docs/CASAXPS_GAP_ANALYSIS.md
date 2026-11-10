@@ -1,6 +1,6 @@
 # CasaXPS → SpecFlow feature gap analysis
 
-Status: written 2026-11-05 against `main` @ `b845749`. **Implemented since:** K1, K2, K3, IO1, F1, F2, F3, F4, R1, B1, L1, M1, S1, X1, X2 (without quantification), X3 (see "Implementation notes" under each).
+Status: written 2026-11-05 against `main` @ `b845749`. **Implemented since:** K1, K2, K3, IO1, F1, F2, F3, F4, R1, B1, L1, M1, S1, X1, X2 (without quantification), X3, C3 (see "Implementation notes" under each).
 
 ## 0. How to use this document (for a planning / implementing agent)
 
@@ -699,9 +699,27 @@ sweep UI = S1; the casa-fits viewer stays with IO3 (user decision). Tests: `test
 
 #### C2. X-ray satellite subtraction
 For non-monochromatic Mg/Al sources: subtract Kα3/4 (and Kβ) satellites using standard offsets and intensities (RBD; ISO19830 clause 7). Implement it as a pipeline step.
+- **Status (2026-11-10): DEFERRED by the user.** The numeric Mg/Al satellite table (offsets in eV and relative intensities of
+  Kα3, Kα4, Kα5, Kα6, Kβ) is in none of the project sources: searched the two CasaXPS books (Cookbook p.13 and Blue Book
+  p.330-331 describe satellites qualitatively only), `handbook.txt` and the Biesinger thesis (no hits). Values must not be typed
+  from memory. Revisit when a source is available. Design agreed for then: pipeline step on a BE axis with `anode` (Mg | Al |
+  custom table of (offset eV, rel. intensity) rows); correct from high to low BE, `true(E) = y(E) - sum_k r_k * true(E + d_k)`
+  (shifted values interpolated, points beyond the window edge taken as 0 and reported); propagate the F1 variance as
+  `var + sum r_k^2 var(E + d_k)`; Auger lines unaffected (fixed KE); synchrotron data need none.
 
 #### C3. Spike removal for XPS
 `cosmic_ray_removal` is restricted to vibrational data (`requires_technique={"vibrational"}`). Validate it on XPS data and enable it there, or add an XPS-specific despike step.
+- **Implementation notes (done 2026-11-10):** user decision: ONE step. `cosmic_ray_removal` is now available for XPS and gains the
+  method `xps_poisson` (`core/preprocess/xps_despike.py`); the Raman methods are unchanged (the Raman detector needs a spike >= 2x
+  the local background and uses one global MAD, which does not suit XPS). Detection: leave-one-out local quadratic reference per
+  channel, residual in units of sqrt(level) (Poisson shape; level = max(reference, local median)), noise gain estimated from the
+  data by MAD (so counts, cps and rescaled data all work), z > `threshold` (default 5), the strongest candidate per window, one sign
+  per pass, iterated (`n_iterations` 10); replacement = quadratic fit of the non-candidate neighbours; runs longer than `max_width`
+  (3) are restored untouched (under-sampled peak, not a spike); spikes must also exceed 1 % of the local level. `direction`
+  positive (default) or both. The F1 variance is kept and patched at replaced channels (neighbour var/y x new value). Known limits:
+  first/last channels less reliable (~10 % of edge spikes missed), peaks need about 8+ channels per FWHM, `direction: both` can
+  false-flag next to a two-channel spike on a sharp apex. New XPS steps default to `xps_poisson` (frontend template). Tests:
+  `tests/test_c3_xps_despike.py`; the XPS palette tests now expect the step.
 
 #### F5. Global fitting across spectra and regions
 - **Why:**

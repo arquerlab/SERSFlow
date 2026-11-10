@@ -1175,7 +1175,10 @@ export default function PreprocessingWorkspace() {
   function addStepTemplate(name: string) {
     const defaultBaseline = defaultMethodForCategory(baselineCatalog, "whittaker") ?? baselineCatalog.methods[0];
     const catalogItem = pipelineStepsQ.data?.items?.find((it) => it.id === name);
-    const catalogMethod = catalogItem?.ui?.methods?.[0];
+    const catalogMethod =
+      name === "cosmic_ray_removal" && isXpsPipeline
+        ? (catalogItem?.ui?.methods?.find((m) => m.id === "xps_poisson") ?? catalogItem?.ui?.methods?.[0])
+        : catalogItem?.ui?.methods?.[0];
     const catalogDefaults =
       catalogMethod != null
         ? {

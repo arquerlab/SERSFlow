@@ -70,10 +70,10 @@ _register(
         label="Cosmic Ray Removal",
         category="denoise",
         palette_group="Preprocessing",
-        description="Detect and replace spike-like cosmic ray artifacts.",
+        description="Detect and replace spikes: cosmic rays (vibrational) or single-channel detector spikes (XPS).",
         impl=_impl("cosmic_ray_removal"),
         ui=ui.COSMIC_RAY_REMOVAL,
-        requires_technique=frozenset({"vibrational"}),
+        requires_technique=frozenset({"vibrational", "xps"}),
     )
 )
 _register(
