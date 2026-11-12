@@ -161,6 +161,41 @@ def test_derived_ref_round_trips_through_pipeline_run(client) -> None:
     assert all(it["x"] and min(it["x"]) >= 150.0 for it in items)
 
 
+def test_step_tokens_after_the_group_use_editor_numbering_with_uuid_step_ids(client) -> None:
+    """View tokens are numbered j+1 over the whole editor list; dropping the group step must not shift them."""
+    api, upload_root = client
+    rec = _dataset(upload_root)
+    pipe = Pipeline(
+        steps=[
+            PipelineStep(
+                name="group_average",
+                params={"method": "by_label", "group_by": ["current_density"], "reducer": "mean"},
+                step_id="0b7c2f1e-group",
+            ),
+            PipelineStep(name="crop", params={"min_x": 100.0, "max_x": 300.0}, step_id="5d1a-crop-a"),
+            PipelineStep(name="crop", params={"min_x": 200.0, "max_x": 300.0}, step_id="9e4b-crop-b"),
+        ]
+    )
+    r = api.post("/sessions", json={"dataset_id": rec.dataset_id, "pipeline": pipe.model_dump()})
+    assert r.status_code == 200, r.text
+    sid = r.json()["session"]["session_id"]
+    r = api.post(f"/sessions/{sid}/subset", json={"kind": "indices", "indices": [0, 3]})
+    assert r.status_code == 200, r.text
+
+    for token, x_min in (("crop__2", 100.0), ("crop__3", 200.0)):
+        r = api.post(
+            f"/sessions/{sid}/run",
+            json={"scope": "subset", "return": {"kind": "intermediates", "steps": [token]}},
+        )
+        assert r.status_code == 200, r.text
+        items = r.json()["items"]
+        assert items and all(it["spectrum_id"].startswith("grp_") for it in items)
+        for it in items:
+            xy = it["steps"].get(token)
+            assert xy and xy["x"], f"{token} came back empty"
+            assert min(xy["x"]) == pytest.approx(x_min)
+
+
 def test_view_after_the_aggregate_step_itself_shows_the_aggregates(client) -> None:
     """The "after: Aggregate Spectra" view requests the group step's own output (it used to come back empty)."""
     api, upload_root = client

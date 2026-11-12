@@ -456,7 +456,8 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
             strict=True,
             group_universe=group_universe,
         )
-    runtime_pipeline_no_qc = pipeline_without_qc_steps(runtime_pipeline)
+    # Placeholders keep "name__N" view tokens aligned with the editor numbering (cohort steps stay as disabled rows).
+    runtime_pipeline_no_qc = pipeline_without_qc_steps(runtime_pipeline, keep_placeholders=True)
     # Calibration references (VB partner, reference_filters, group members) may be outside the subset.
     cal_cohort = None if payload.scope == "all" else filter_reference_spectra(ds.spectra, runtime_pipeline)
 

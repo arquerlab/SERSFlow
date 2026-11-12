@@ -97,18 +97,25 @@ def _last_group_index(pipeline: Pipeline, before: int | None = None) -> int | No
     return None
 
 
-def pipeline_without_qc_steps(pipeline: Pipeline) -> Pipeline:
+def pipeline_without_qc_steps(pipeline: Pipeline, *, keep_placeholders: bool = False) -> Pipeline:
     """
     Pipeline the XY engine runs after cohort steps were applied to the refs.
 
     Cohort steps are removed. Steps before the last ``group_average`` were already applied to produce
     the averages, so they stay in place but disabled (keeps step numbering stable, and they pass the
     averaged spectrum through untouched).
+
+    ``keep_placeholders``: keep cohort steps as disabled rows instead of removing them, so ``name__N``
+    tokens keep the numbering of the full pipeline (the Prepare view selector numbers steps j+1 over the
+    whole editor list). Analysis runs leave it off: their feature columns (``s{N}_...``) use the stripped
+    numbering.
     """
     g = _last_group_index(pipeline)
     steps = []
     for i, s in enumerate(pipeline.steps):
         if s.enabled and s.name in _COHORT_NAMES:
+            if keep_placeholders:
+                steps.append(s.model_copy(deep=True, update={"enabled": False}))
             continue
         c = s.model_copy(deep=True)
         if g is not None and i < g:

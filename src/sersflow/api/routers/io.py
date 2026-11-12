@@ -121,6 +121,39 @@ def _sanitize_relative_upload_subpath(raw_name: str) -> str:
     return str(Path(*parts)).replace("\\", "/")
 
 
+# Dataset-derived upload metadata per file version (path + mtime + size). /io/uploads fills it on every call for
+# rows that lack it, and XPS/XAS rows never get wn_min/wn_max, so without this memo every listing re-parsed every
+# multi-block file (~20-40 ms per .sle; the fitting preview lists uploads each time to gate regions).
+_UPLOAD_FILE_META: dict[tuple[str, int, int], dict[str, Any]] = {}
+_UPLOAD_FILE_META_MAX = 20000
+
+
+def _upload_file_meta(p: Path) -> dict[str, Any]:
+    st = p.stat()
+    key = (str(p), int(st.st_mtime_ns), int(st.st_size))
+    hit = _UPLOAD_FILE_META.get(key)
+    if hit is not None:
+        return hit
+    ds = load_dataset(p)
+    meta: dict[str, Any] = {"wn": (float("nan"), float("nan")), "spectrum_count": None, "xps_regions": None}
+    try:
+        meta["wn"] = dataset_wn_range_cm1(ds)
+    except Exception:
+        pass
+    try:
+        meta["spectrum_count"] = dataset_spectrum_count(ds)
+    except Exception:
+        pass
+    try:
+        meta["xps_regions"] = dataset_xps_regions(ds)
+    except Exception:
+        pass
+    if len(_UPLOAD_FILE_META) >= _UPLOAD_FILE_META_MAX:
+        _UPLOAD_FILE_META.clear()
+    _UPLOAD_FILE_META[key] = meta
+    return meta
+
+
 def _ensure_upload_wn_metadata(root_dir: Path, row: dict[str, Any]) -> dict[str, Any]:
     """Fill wn_min / wn_max / spectrum_count for legacy registry rows when missing."""
     if row.get("wn_min") is not None and row.get("wn_max") is not None:
@@ -132,11 +165,11 @@ def _ensure_upload_wn_metadata(root_dir: Path, row: dict[str, Any]) -> dict[str,
         p = resolve_uploaded_path(root_dir, rel)
         if not p.exists():
             return row
-        ds = load_dataset(p)
-        lo, hi = dataset_wn_range_cm1(ds)
+        meta = _upload_file_meta(p)
+        lo, hi = meta["wn"]
         if lo != lo or hi != hi:
             return row
-        n = dataset_spectrum_count(ds)
+        n = meta["spectrum_count"]
         out = dict(row)
         out["wn_min"] = lo
         out["wn_max"] = hi
@@ -173,16 +206,18 @@ def _ensure_upload_technique_meta(root_dir: Path, row: dict[str, Any]) -> dict[s
             p = resolve_uploaded_path(root_dir, rel)
             if p.exists():
                 fmt = get_format_for_path(p)
-                ds = load_dataset(p)
-                out["xps_regions"] = dataset_xps_regions(ds)
+                meta = _upload_file_meta(p)
+                if meta["xps_regions"] is None:
+                    raise ValueError("no xps regions")
+                out["xps_regions"] = list(meta["xps_regions"])
                 if out.get("spectrum_count") is None:
-                    out["spectrum_count"] = dataset_spectrum_count(ds)
+                    out["spectrum_count"] = meta["spectrum_count"]
                 if out.get("technique_family") is None:
                     out["technique_family"] = (
                         None if fmt.technique == "sniff" else str(fmt.technique)
                     ) or "xps"
                 if (not has_blocks or blocks_truncated) and fmt.enrich is not None:
-                    er = fmt.enrich(p, ds, dict(labels) if labels else None)
+                    er = fmt.enrich(p, load_dataset(p), dict(labels) if labels else None)
                     if er.block_map:
                         out["labels"] = er.labels
                         try:

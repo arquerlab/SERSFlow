@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import atexit
+import hashlib
+import json
 import logging
 import os
 import re
 import threading
+from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Protocol, Sequence
+
+import numpy as np
 
 from sersflow.core.io.load_file import load_dataset
 from sersflow.core.io.upload_registry import resolve_uploaded_path, upload_root
@@ -36,6 +41,60 @@ logger = logging.getLogger(__name__)
 
 # ``collect_steps`` token for the unprocessed input spectrum (parallel runner only).
 RAW_COLLECT_TOKEN = "__raw__"
+
+# Calibration-cohort memos (process-wide). Measuring a spectrum's reference position needs a fit, and the
+# cohort is the whole dataset, so without these every preview refits everything.
+_CAL_MEASURE_MEMO: dict[str, float] = {}
+_CAL_LABELS_MEMO: dict[tuple[Any, ...], dict[str, Any]] = {}
+_CAL_MEMO_MAX = 50000
+
+
+def _hash_default(o: Any) -> Any:
+    if isinstance(o, np.ndarray):
+        return f"nd:{o.dtype}:{o.shape}:" + hashlib.sha256(np.ascontiguousarray(o).tobytes()).hexdigest()
+    return str(o)
+
+
+def _stable_hash(obj: Any) -> str:
+    return sha256_hex(json.dumps(obj, sort_keys=True, separators=(",", ":"), default=_hash_default))
+
+
+# Parsed source files (process-wide LRU). A multi-block file (.sle, .vms) holds every spectrum of an
+# experiment, and each spectrum ref used to re-parse the whole file: a 258-spectrum cohort parsed its
+# 12 files ~26 times each. Keyed by path + mtime + size, so an edited file is re-read.
+_DATASET_CACHE: "OrderedDict[tuple[str, int, int], Any]" = OrderedDict()
+_DATASET_CACHE_MAX = 64
+_DATASET_CACHE_LOCK = threading.Lock()
+
+
+def _load_dataset_cached(p: Path) -> Any:
+    """``load_dataset`` with a small LRU. Callers must not mutate the result (use ``_extract_xy_copy``)."""
+    p = Path(p)
+    st = p.stat()
+    key = (str(p), int(st.st_mtime_ns), int(st.st_size))
+    with _DATASET_CACHE_LOCK:
+        hit = _DATASET_CACHE.get(key)
+        if hit is not None:
+            _DATASET_CACHE.move_to_end(key)
+            return hit
+    ds = load_dataset(p)
+    with _DATASET_CACHE_LOCK:
+        _DATASET_CACHE[key] = ds
+        while len(_DATASET_CACHE) > _DATASET_CACHE_MAX:
+            _DATASET_CACHE.popitem(last=False)
+    return ds
+
+
+def _extract_xy_copy(ds: Any, record_index: Any) -> XY:
+    """``extract_xy`` on a cached dataset, with private arrays so no step can alter the cached file."""
+    xy = extract_xy(ds, record_index=record_index)
+    var = getattr(xy, "var", None)
+    return XY(
+        x=np.array(xy.x, copy=True),
+        y=np.array(xy.y, copy=True),
+        var=None if var is None else np.array(var, copy=True),
+        var_kind=getattr(xy, "var_kind", None),
+    )
 
 
 def spectrum_xps_region_from_dataset(ds: Any, record_index: int | None) -> str | None:
@@ -400,6 +459,51 @@ def _lineage_after_indexed_step(
     return sha256_hex(f"{lineage_in}|idx={step_index}|{name}|{params_hash}|{impl_version}|in={input_tag}")
 
 
+def _stop_index(
+    steps_list: Sequence[Any],
+    step_nums: Sequence[int] | None,
+    up_to_step: str | None,
+    collect_steps: set[str] | None,
+) -> int | None:
+    """
+    Index of the last step whose result is needed, or None to run everything.
+
+    ``up_to_step``: first enabled step matching by name, step_id or ``name__<num>``. Otherwise, with
+    ``collect_steps``: the last step any collected token refers to (None if a token matches nothing,
+    e.g. the raw sentinel, so such runs are never cut short).
+    """
+
+    def num_at(j: int) -> int | None:
+        return step_nums[j] if step_nums is not None and j < len(step_nums) else None
+
+    if up_to_step is not None:
+        for j, s in enumerate(steps_list):
+            if not _step_enabled_raw(s):
+                continue
+            name = _step_name_raw(s)
+            sid = _step_id_raw(s)
+            if name == up_to_step or (sid and sid == up_to_step):
+                return j
+            if num_at(j) is not None and f"{name}__{num_at(j)}" == up_to_step:
+                return j
+        return None
+    if not collect_steps:
+        return None
+    last = -1
+    for t in collect_steps:
+        nm, num = _parse_collect_token(str(t))
+        hit = -1
+        for j, s in enumerate(steps_list):
+            if not _step_enabled_raw(s) or _step_name_raw(s) != nm:
+                continue
+            if num is None or num_at(j) == num:
+                hit = j
+        if hit < 0:
+            return None
+        last = max(last, hit)
+    return last if last >= 0 else None
+
+
 def _run_indexed_steps_for_spectrum(
     *,
     xy_initial: XY,
@@ -458,7 +562,17 @@ def _run_indexed_steps_for_spectrum(
                 continue
             want_by_name.setdefault(nm, set()).add(num)
 
-    for j in range(n):
+    # Steps after the last one that was asked for cannot change the result: do not run them (fits included).
+    # Also covers cohort steps (group_average, QC), which the engine passes through and could never stop at.
+    stop_idx = _stop_index(
+        steps_list,
+        step_nums,
+        up_to_step,
+        None if collect_step_inputs else collect_steps,
+    )
+    last_j = n if stop_idx is None else stop_idx + 1
+
+    for j in range(last_j):
         step = steps_list[j]
         en = _step_enabled_raw(step)
         if not en:
@@ -759,16 +873,13 @@ def _measure_fitting_pos_for_ref(
     pos_key: str,
     technique_family: str | None,
     namespace: str,
+    cache: CacheInterface[XY] | None = None,
 ) -> float:
     """Run steps up to the fitting step and measure pos_key on that spectrum's fitting input."""
     from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 
     p = _resolve_ref_path(ref)
-    ds = load_dataset(Path(p))
-    xy_initial = extract_xy(ds, record_index=ref.get("record_index"))
     input_hash = _file_input_hash(Path(p))
-    labels = _merged_spectrum_labels(ref, ds)
-    region = str(labels.get("xps_region") or "").strip() or None
     step_nums = assign_pipeline_step_nums(steps)
     fit_idx = None
     for i, step in enumerate(steps):
@@ -778,16 +889,41 @@ def _measure_fitting_pos_for_ref(
     if fit_idx is None:
         raise ValueError(f"fitting_step_id {fitting_step_id!r} not found")
 
+    memo_key = _stable_hash(
+        [
+            input_hash,
+            ref.get("record_index"),
+            ref.get("spectrum_labels"),
+            _steps_as_dicts(steps[: fit_idx + 1]),
+            fit_params,
+            pos_key,
+            technique_family,
+        ]
+    )
+    memo_hit = _CAL_MEASURE_MEMO.get(memo_key)
+    if memo_hit is not None:
+        return memo_hit
+
+    ds = _load_dataset_cached(Path(p))
+    xy_initial = _extract_xy_copy(ds, ref.get("record_index"))
+    labels = _merged_spectrum_labels(ref, ds)
+    region = str(labels.get("xps_region") or "").strip() or None
+
+    # Only the fitting step's INPUT is needed (measured_pos_from_fitting_xy fits it). Running the fitting
+    # step itself fitted every reference twice; a disabled row still records its would-be input.
+    measure_steps = _steps_as_dicts(steps[: fit_idx + 1])
+    measure_steps[-1] = {**measure_steps[-1], "enabled": False}
+
     _, _, per_in = _run_indexed_steps_for_spectrum(
         xy_initial=xy_initial,
         input_hash=input_hash,
-        steps_list=steps,
+        steps_list=measure_steps,
         spectrum_id=str(ref.get("spectrum_id") or "unknown"),
-        cache=None,
+        cache=cache,
         namespace=namespace,
-        up_to_step=fitting_step_id,
+        up_to_step=None,
         collect_steps=None,
-        step_nums=step_nums,
+        step_nums=list(step_nums[: fit_idx + 1]),
         collect_step_inputs=True,
         technique_family=technique_family,
         spectrum_xps_region=region,
@@ -796,12 +932,16 @@ def _measure_fitting_pos_for_ref(
     fit_input = per_in.get(step_nums[fit_idx])
     if fit_input is None:
         fit_input = xy_initial
-    return measured_pos_from_fitting_xy(
+    value = measured_pos_from_fitting_xy(
         fit_input,
         fit_params,
         pos_key=pos_key,
         technique_family=technique_family,
     )
+    if len(_CAL_MEASURE_MEMO) >= _CAL_MEMO_MAX:
+        _CAL_MEASURE_MEMO.clear()
+    _CAL_MEASURE_MEMO[memo_key] = value
+    return value
 
 
 def _calibration_cohort_refs(
@@ -830,8 +970,15 @@ def _prepare_calibration_cohort(
     *,
     technique_family: str | None,
     namespace: str,
+    cache: CacheInterface[XY] | None = None,
+    needed_ids: Iterable[str] | None = None,
 ) -> dict[str, dict[str, float]]:
-    """Precompute per-step, per-spectrum calibration deltas for the cohort."""
+    """
+    Precompute per-step, per-spectrum calibration deltas for the cohort.
+
+    ``needed_ids``: spectra that will actually be run (a preview subset). Grouped methods then measure only
+    the references those spectra use; deltas of the other cohort members are not computed.
+    """
     if not pipeline_needs_calibration_cohort(steps):
         return {}
 
@@ -842,8 +989,15 @@ def _prepare_calibration_cohort(
             continue
         try:
             p = _resolve_ref_path(ref)
-            ds = load_dataset(Path(p))
-            labels_by_id[sid] = _merged_spectrum_labels(ref, ds)
+            lkey = (_file_input_hash(Path(p)), ref.get("record_index"))
+            base_labels = _CAL_LABELS_MEMO.get(lkey)
+            if base_labels is None:
+                base_labels = spectrum_labels_from_dataset(_load_dataset_cached(Path(p)), ref.get("record_index"))
+                if len(_CAL_LABELS_MEMO) >= _CAL_MEMO_MAX:
+                    _CAL_LABELS_MEMO.clear()
+                _CAL_LABELS_MEMO[lkey] = base_labels
+            extra = ref.get("spectrum_labels")
+            labels_by_id[sid] = {**base_labels, **extra} if isinstance(extra, dict) and extra else dict(base_labels)
         except (FileNotFoundError, OSError, ValueError, IndexError) as e:
             logger.info("calibration cohort: skip labels for %s: %s", sid, e)
             labels_by_id[sid] = dict(ref.get("spectrum_labels") or {})
@@ -863,6 +1017,7 @@ def _prepare_calibration_cohort(
             pos_key=pos_key,
             technique_family=technique_family,
             namespace=namespace,
+            cache=cache,
         )
 
     deltas, warnings = compute_all_calibration_deltas(
@@ -871,6 +1026,7 @@ def _prepare_calibration_cohort(
         labels_by_id=labels_by_id,
         measure_for_fitting_step=measure,
         technique_family=technique_family,
+        only_ids=None if needed_ids is None else {str(s) for s in needed_ids},
     )
     for w in warnings:
         logger.info("x_axis_calibration: %s", w)
@@ -900,8 +1056,8 @@ def _run_one_no_cache(
     sid = str(ref.get("spectrum_id") or "unknown")
     try:
         p = _resolve_ref_path(ref)
-        ds = load_dataset(Path(p))
-        xy_initial = extract_xy(ds, record_index=ref.get("record_index"))
+        ds = _load_dataset_cached(Path(p))
+        xy_initial = _extract_xy_copy(ds, ref.get("record_index"))
         input_hash = _file_input_hash(Path(p))
         labels = _merged_spectrum_labels(ref, ds)
         region = str(labels.get("xps_region") or "").strip() or None
@@ -976,11 +1132,20 @@ def run_pipeline_parallel_no_cache(
     input_refs = [dict(r) for r in inputs]
     # Subset runs (fit preview of a few spectra) must still measure cohort calibration over the full
     # cohort, otherwise reference bands (e.g. valence-band Fermi edge) are missing and the shift is lost.
+    from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
+
+    cal_stop = _stop_index(
+        steps,
+        step_nums or assign_pipeline_step_nums(steps),
+        up_to_step,
+        None if collect_step_inputs else collect_steps,
+    )
     cal_deltas = _prepare_calibration_cohort(
         _calibration_cohort_refs(input_refs, calibration_cohort) if calibration_cohort is not None else input_refs,
-        steps,
+        steps if cal_stop is None else steps[: cal_stop + 1],
         technique_family=tech,
         namespace=cfg.cache_namespace,
+        needed_ids=[str(r.get("spectrum_id")) for r in input_refs if r.get("spectrum_id")],
     )
     if cal_deltas:
         for ref in input_refs:
@@ -1109,19 +1274,24 @@ def run_pipeline(
 
     input_list = list(inputs)
     # Reference bands may live outside a preview subset: measure over the full cohort when given.
+    from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
+
+    cal_stop = _stop_index(steps_list, assign_pipeline_step_nums(steps_list), up_to_step, None)
     cal_deltas = _prepare_calibration_cohort(
         _calibration_cohort_refs(input_list, calibration_cohort),
-        _steps_as_dicts(steps_list),
+        _steps_as_dicts(steps_list if cal_stop is None else steps_list[: cal_stop + 1]),
         technique_family=tech,
         namespace=cfg.cache_namespace,
+        cache=cache,
+        needed_ids=[str(getattr(r, "spectrum_id", "")) for r in input_list],
     )
 
     for ref in input_list:
         sid = ref.spectrum_id
         try:
             p = _resolve_ref_path(ref)
-            ds = load_dataset(Path(p))
-            xy_initial = extract_xy(ds, record_index=ref.record_index)
+            ds = _load_dataset_cached(Path(p))
+            xy_initial = _extract_xy_copy(ds, ref.record_index)
             input_hash = _file_input_hash(Path(p))
             labels = _merged_spectrum_labels(ref, ds)
             region = str(labels.get("xps_region") or "").strip() or None
@@ -1182,19 +1352,22 @@ def run_pipeline_with_intermediates(
     tech = getattr(pipeline, "technique_family", None)
     input_list = list(inputs)
     # Reference bands may live outside a preview subset: measure over the full cohort when given.
+    cal_stop = _stop_index(steps_list, step_nums, up_to_step, collect_steps)
     cal_deltas = _prepare_calibration_cohort(
         _calibration_cohort_refs(input_list, calibration_cohort),
-        _steps_as_dicts(steps_list),
+        _steps_as_dicts(steps_list if cal_stop is None else steps_list[: cal_stop + 1]),
         technique_family=tech,
         namespace=cfg.cache_namespace,
+        cache=cache,
+        needed_ids=[str(getattr(r, "spectrum_id", "")) for r in input_list],
     )
 
     for ref in input_list:
         sid = ref.spectrum_id
         try:
             p = _resolve_ref_path(ref)
-            ds = load_dataset(Path(p))
-            xy_initial = extract_xy(ds, record_index=ref.record_index)
+            ds = _load_dataset_cached(Path(p))
+            xy_initial = _extract_xy_copy(ds, ref.record_index)
             input_hash = _file_input_hash(Path(p))
             labels = _merged_spectrum_labels(ref, ds)
             region = str(labels.get("xps_region") or "").strip() or None

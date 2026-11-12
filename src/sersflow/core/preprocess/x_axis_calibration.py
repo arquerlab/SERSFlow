@@ -7,7 +7,7 @@ import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Collection, Mapping, Sequence
 
 import numpy as np
 
@@ -386,13 +386,20 @@ def compute_calibration_deltas_for_step(
     fit_params: Mapping[str, Any],
     measure: MeasureFn,
     technique_family: str | None = None,
+    only_ids: Collection[str] | None = None,
 ) -> CalibrationCohortResult:
     """
     Compute per-spectrum x deltas for one calibration step.
 
     ``measure(spectrum_id, fit_params, pos_key)`` must re-fit that spectrum's fitting input.
+
+    ``only_ids``: the spectra whose deltas are actually needed (e.g. a 3-spectrum preview inside a
+    258-spectrum cohort). Grouped methods then measure only the references those spectra use and return
+    deltas only for them; the values are the same as for a full computation. ``single_reference_band``
+    averages every reference, so it always measures all of them.
     """
     del technique_family  # fit_params already carry technique when needed
+    only = None if only_ids is None else {str(s) for s in only_ids}
     method = str(cal_params.get("method") or "").strip().lower()
     if method == "reference_peak":
         method = "single_reference_band"
@@ -469,6 +476,8 @@ def compute_calibration_deltas_for_step(
                 )
             missing_groups: list[str] = []
             for gkey, members in groups.items():
+                if only is not None and not only.intersection(members):
+                    continue
                 ref_sid = next(
                     (
                         sid
@@ -510,8 +519,12 @@ def compute_calibration_deltas_for_step(
         # valence_band: per core region R in group, use paired VB Fermi (target 0).
         unpaired: list[str] = []
         for gkey, members in groups.items():
+            if only is not None and not only.intersection(members):
+                continue
             vb_cache: dict[str, float] = {}
             for sid in members:
+                if only is not None and sid not in only:
+                    continue
                 region = _spectrum_region(labels_by_id.get(sid))
                 if is_valence_band_region_name(region):
                     try:
@@ -549,7 +562,8 @@ def compute_calibration_deltas_for_step(
                     )
                     result.deltas[sid] = 0.0
             for sid in members:
-                result.deltas.setdefault(sid, 0.0)
+                if only is None or sid in only:
+                    result.deltas.setdefault(sid, 0.0)
         if unpaired:
             result.warnings.append(
                 "grouped_reference_band (valence_band): no VB partner for: " + ", ".join(unpaired)
@@ -566,11 +580,13 @@ def compute_all_calibration_deltas(
     labels_by_id: Mapping[str, Mapping[str, Any]],
     measure_for_fitting_step: Callable[[str, str, dict[str, Any], str], float],
     technique_family: str | None = None,
+    only_ids: Collection[str] | None = None,
 ) -> tuple[dict[str, dict[str, float]], list[str]]:
     """
     For each cohort calibration step, return deltas keyed by step_id then spectrum_id.
 
     ``measure_for_fitting_step(spectrum_id, fitting_step_id, fit_params, pos_key)``.
+    ``only_ids``: see ``compute_calibration_deltas_for_step``.
     """
     by_step: dict[str, dict[str, float]] = {}
     warnings: list[str] = []
@@ -598,6 +614,7 @@ def compute_all_calibration_deltas(
                 fit_params=fit_params,
                 measure=_measure,
                 technique_family=technique_family,
+                only_ids=only_ids,
             )
         except ValueError as e:
             warnings.append(str(e))
