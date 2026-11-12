@@ -66,6 +66,24 @@ def _cmd_assign_orphans(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_check_patches(args: argparse.Namespace) -> int:
+    import json
+
+    from sersflow.api.services.robustness_runner import check_patches_for_job
+
+    try:
+        report = check_patches_for_job(args.job_id)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    for row in report["rows"]:
+        print(f"{row['status']:<22} {row['factor']} / {row['level']}  ({row['spectra_changed']}/{row['n_spectra']} spectra)")
+    print(f"errors={report['n_errors']} warnings={report['n_warnings']} -> {report['written_to']}")
+    if args.json:
+        print(json.dumps(report, indent=1))
+    return 1 if report["n_errors"] else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sersflow-admin")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -87,6 +105,13 @@ def main(argv: list[str] | None = None) -> int:
     revoke = sub.add_parser("revoke-superuser", help="Remove global access from a user")
     revoke.add_argument("username")
     revoke.set_defaults(func=_cmd_revoke_superuser)
+
+    check = sub.add_parser(
+        "robustness-check-patches", help="Patch-effect check of a stored robustness study (nothing is refitted)"
+    )
+    check.add_argument("job_id")
+    check.add_argument("--json", action="store_true", help="also print the full report")
+    check.set_defaults(func=_cmd_check_patches)
 
     assign = sub.add_parser("assign-orphans", help="Assign NULL owners to a user")
     assign.add_argument("username", help="Target user_id or username is resolved via user_id field")

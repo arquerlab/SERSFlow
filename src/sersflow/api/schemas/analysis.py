@@ -231,7 +231,12 @@ class RobustnessJobCreateRequest(BaseModel):
     Give ``factors`` explicitly or a ``preset`` that proposes them from the run's fitting step (explicit values win).
     ``responses`` are what is compared (area %, positions, widths, group fractions, ratios); ``x_label`` names any
     spectrum label (or numeric metadata) the trend is measured against.
+
+    Unknown keys are REJECTED (a stale client that sends a field this server does not know must fail loudly, not be
+    ignored).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     fitting_step_num: int | None = Field(default=None, description="1-based, from /fitting-steps.")
     fitting_step_index: int | None = Field(default=None, description="0-based = N in s{N}_ columns.")
@@ -266,11 +271,17 @@ class RobustnessJobCreateRequest(BaseModel):
     reference_cell: str | None = Field(default=None, description="Cell whose trend sign is the reference (default: majority).")
     workers: int | None = Field(default=None, ge=1, le=128, description="Parallel worker processes.")
     allow_large: bool = Field(default=False, description="Bypass the server fit cap (SERSFLOW_ROBUSTNESS_MAX_FITS).")
+    allow_inert: bool = Field(
+        default=False,
+        description="Run although the patch-effect check found inert / unresolved / duplicate levels (strict by default).",
+    )
     spectrum_ids: list[str] | None = None
 
 
 class RobustnessReanalyseRequest(BaseModel):
     """Recompute a finished study's summary with other responses / filter / interaction order (no refitting)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     responses: list[dict[str, Any]] | None = None
     filter: dict[str, Any] | None = None

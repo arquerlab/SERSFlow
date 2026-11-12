@@ -30,7 +30,14 @@ from sersflow.client.polling import (
     fit_curve_job_terminal_statuses,
     poll_until,
 )
+from sersflow.api.schemas.robustness_schema import SCHEMA_HEADER, robustness_schema_hash
 from sersflow.client.resources._common import _Base, dump_json
+
+
+def _schema_headers() -> dict[str, str]:
+    """Header carrying this client's robustness schema hash (a stale MCP / client process is refused with 409)."""
+    return {SCHEMA_HEADER: robustness_schema_hash()}
+
 
 if TYPE_CHECKING:
     from sersflow.client.client import SersflowClient
@@ -204,17 +211,21 @@ class AnalysisResource(_Base):
 
     def plan_robustness(self, run_id: str, payload: RobustnessJobCreateRequest) -> dict[str, Any]:
         return request_json(
-            self._root.http, "POST", f"/analysis/runs/{run_id}/robustness-plan", json_body=dump_json(payload)
+            self._root.http, "POST", f"/analysis/runs/{run_id}/robustness-plan", json_body=dump_json(payload),
+            headers=_schema_headers(),
         )
 
     def create_robustness_job(self, run_id: str, payload: RobustnessJobCreateRequest) -> FitCurveJobCreateResponse:
         data = request_json(
-            self._root.http, "POST", f"/analysis/runs/{run_id}/robustness-jobs", json_body=dump_json(payload)
+            self._root.http, "POST", f"/analysis/runs/{run_id}/robustness-jobs", json_body=dump_json(payload),
+            headers=_schema_headers(),
         )
         return FitCurveJobCreateResponse.model_validate(data)
 
     def resume_robustness_job(self, job_id: str) -> FitCurveJobCreateResponse:
-        data = request_json(self._root.http, "POST", f"/analysis/robustness-jobs/{job_id}/resume")
+        data = request_json(
+            self._root.http, "POST", f"/analysis/robustness-jobs/{job_id}/resume", headers=_schema_headers()
+        )
         return FitCurveJobCreateResponse.model_validate(data)
 
     def get_robustness_summary(self, job_id: str) -> dict[str, Any]:
@@ -222,7 +233,13 @@ class AnalysisResource(_Base):
 
     def reanalyse_robustness(self, job_id: str, payload: RobustnessReanalyseRequest) -> dict[str, Any]:
         return request_json(
-            self._root.http, "POST", f"/analysis/robustness-jobs/{job_id}/reanalyse", json_body=dump_json(payload)
+            self._root.http, "POST", f"/analysis/robustness-jobs/{job_id}/reanalyse", json_body=dump_json(payload),
+            headers=_schema_headers(),
+        )
+
+    def check_robustness_patches(self, job_id: str) -> dict[str, Any]:
+        return request_json(
+            self._root.http, "POST", f"/analysis/robustness-jobs/{job_id}/check-patches", headers=_schema_headers()
         )
 
     def list_robustness_presets(self) -> dict[str, Any]:

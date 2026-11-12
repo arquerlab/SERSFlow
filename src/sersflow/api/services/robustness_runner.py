@@ -48,6 +48,8 @@ from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_pa
 from sersflow.core.provenance import software_info
 from sersflow.core.robustness.cell_fit import common_window, fit_cell
 from sersflow.core.robustness.design import Design, DesignError, build_design, estimate_cost
+from sersflow.core.robustness.fit_hash import sha256_hex, xy_fingerprint
+from sersflow.core.robustness.patch_check import PatchCheckReport, run_patch_check
 from sersflow.core.robustness.patches import (
     _norm_target,
     apply_fit_patches,
@@ -66,6 +68,7 @@ ROBUSTNESS_CONTENT = "robustness"
 SUMMARY_JSON = "robustness_summary.json"
 RECORDS_JSONL = "robustness_records.jsonl"
 NOISE_JSONL = "robustness_noise.jsonl"
+PATCH_CHECK_JSON = "patch_check.json"
 CHUNK_CELLS = 16
 
 
@@ -128,11 +131,12 @@ def parse_options(opts: dict[str, Any]) -> dict[str, Any]:
         "reference_cell": opts.get("reference_cell"),
         "workers": int(opts.get("workers") or default_workers()),
         "allow_large": bool(opts.get("allow_large")),
+        "allow_inert": bool(opts.get("allow_inert")),
     }
 
 
-def estimate_for_options(opts: dict[str, Any], n_spectra: int) -> dict[str, Any]:
-    p = parse_options(opts)
+def estimate_for_options(opts: dict[str, Any], n_spectra: int, parsed: dict[str, Any] | None = None) -> dict[str, Any]:
+    p = parsed if parsed is not None else parse_options(opts)
     d: Design = p["design"]
     est = estimate_cost(
         n_cells=len(d.cells),
@@ -219,6 +223,40 @@ def patched_pipeline(pipeline: Any, upstream_patches: list[dict[str, Any]], fitt
     return p, int(nums[fitting_idx])
 
 
+def snapshot_steps(pipeline: Any) -> list[dict[str, Any]]:
+    """Plain-data view of the pipeline steps for the patch check."""
+    return [
+        {
+            "index": i,
+            "id": getattr(s, "step_id", None),
+            "name": s.name,
+            "enabled": bool(getattr(s, "enabled", True)),
+            "params": dict(s.params or {}),
+        }
+        for i, s in enumerate(pipeline.steps)
+    ]
+
+
+def compute_patch_check(
+    *,
+    pipeline: Any,
+    design: Design,
+    base_params: dict[str, Any],
+    refs: list[Any],
+    ns: str,
+    fitting_idx: int,
+    fitting_step_num: int,
+) -> PatchCheckReport:
+    """Patch-effect check of a design (see ``core.robustness.patch_check``): optimizer inputs, no fitting."""
+
+    def prefit(up_patches: list[dict[str, Any]]) -> dict[str, Any]:
+        pl, fit_num = patched_pipeline(pipeline, up_patches, fitting_idx) if up_patches else (pipeline, fitting_step_num)
+        xy = _collect_fit_input_xy(pipeline=pl, refs=refs, ns=ns, fitting_idx=fitting_idx, fitting_step_num=fit_num)
+        return {str(k): v for k, v in xy.items() if v is not None and getattr(v, "x", None) is not None and v.x.size > 0}
+
+    return run_patch_check(design, base_params, snapshot_steps(pipeline), fitting_idx, prefit)
+
+
 def _make_pool(workers: int) -> ProcessPoolExecutor:
     # BLAS threads multiply with processes; spawned children inherit these.
     for k in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
@@ -247,6 +285,7 @@ def _cell_task(task: dict[str, Any]) -> list[dict[str, Any]]:
             cost_tol=task["cost_tol"],
             resp_tol_rel=task["resp_tol_rel"],
             resp_tol_abs=task["resp_tol_abs"],
+            prefit_data_hash=task.get("prefit_data_hash"),
         )
         out.append(_sanitize(rec))
     return out
@@ -467,6 +506,24 @@ def execute_robustness_job(job_id: str) -> None:
 
         out_dir = os.path.join(artifacts_root(), "fit_curve_jobs", job_id)
         os.makedirs(out_dir, exist_ok=True)
+        check_path = os.path.join(out_dir, PATCH_CHECK_JSON)
+        if os.path.exists(check_path):  # resumed job: keep the check made when it was first run
+            with open(check_path, encoding="utf-8") as f:
+                patch_check = json.load(f)
+        else:
+            report = compute_patch_check(
+                pipeline=pipeline, design=design, base_params=base_params, refs=refs, ns=ns,
+                fitting_idx=fitting_idx, fitting_step_num=rec.fitting_step_num,
+            )
+            patch_check = report.to_dict()
+            with open(check_path, "w", encoding="utf-8") as f:
+                json.dump(_sanitize(patch_check), f, indent=1, allow_nan=False)
+        if patch_check["n_errors"] and not p["allow_inert"]:
+            bad = [f"{r['factor']}/{r['level']}: {r['status']}" for r in patch_check["rows"] if _is_error_status(r["status"])]
+            raise ValueError(
+                "patch-effect check failed (" + "; ".join(bad[:8]) + ("; ..." if len(bad) > 8 else "")
+                + f"); see {PATCH_CHECK_JSON}. Fix the levels or set allow_inert=true."
+            )
         rec_path = os.path.join(out_dir, RECORDS_JSONL)
         noise_path = os.path.join(out_dir, NOISE_JSONL)
         records = _read_jsonl(rec_path)
@@ -524,6 +581,7 @@ def execute_robustness_job(job_id: str) -> None:
                                 "cost_tol": p["cost_tol"],
                                 "resp_tol_rel": p["resp_tol_rel"],
                                 "resp_tol_abs": p["resp_tol_abs"],
+                                "prefit_data_hash": xy_fingerprint(xy)["data_hash"],
                             }
                         )
 
@@ -593,6 +651,8 @@ def execute_robustness_job(job_id: str) -> None:
             for name, data in files.items():
                 zf.writestr(name, data)
             zf.write(rec_path, RECORDS_JSONL)
+            if os.path.exists(check_path):
+                zf.write(check_path, PATCH_CHECK_JSON)
         update_fit_curve_job(
             job_id=job_id,
             status="completed",
@@ -604,6 +664,12 @@ def execute_robustness_job(job_id: str) -> None:
     except Exception as e:
         logger.exception("robustness job failed: %s", job_id)
         update_fit_curve_job(job_id=job_id, status="failed", error=str(e), finished=True)
+
+
+def _is_error_status(status: str) -> bool:
+    from sersflow.core.robustness.patch_check import is_error
+
+    return is_error(status)
 
 
 def _noise_values(noise_recs: list[dict[str, Any]]) -> dict[str, dict[str, list[float]]]:
@@ -672,10 +738,82 @@ def _finalise(
     files["summary.json"] = json.dumps(summary, indent=1, allow_nan=False).encode("utf-8")
     files["study_spec.json"] = json.dumps(_sanitize(raw_opts), indent=1).encode("utf-8")
     files["provenance.json"] = json.dumps(
-        _sanitize({"software": software_info(), "design_hash": design.design_hash(), "job_id": job_id, "run_id": run_id, "seed": p["seed"]}),
+        _sanitize(
+            {
+                "software": software_info(),
+                "design_hash": design.design_hash(),
+                "spec_hash": sha256_hex(raw_opts),
+                "job_id": job_id,
+                "run_id": run_id,
+                "seed": p["seed"],
+            }
+        ),
         indent=1,
     ).encode("utf-8")
     return summary, files
+
+
+def audit_records(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Cells that were in fact identical, from the optimizer-input hashes stored in the records.
+
+    Two cells fitted the same spectrum with the same prefit data, model, parameters and window when all hashes match:
+    one of them tested nothing new. Records written before the hash fields existed are skipped."""
+    groups: dict[tuple[Any, ...], list[str]] = {}
+    n_hashed = 0
+    for r in records:
+        if not r.get("fit_config_hash"):
+            continue
+        n_hashed += 1
+        key = (r["spectrum_id"], r.get("prefit_data_hash"), r["fit_config_hash"], r.get("fit_data_hash"))
+        groups.setdefault(key, []).append(r["cell_id"])
+    dup = {k: v for k, v in groups.items() if len(v) > 1}
+    return {
+        "n_records": len(records),
+        "n_records_with_hashes": n_hashed,
+        "n_distinct_inputs": len(groups),
+        "n_redundant_fits": n_hashed - len(groups),
+        "example_identical_cells": [v[:6] for v in list(dup.values())[:5]],
+    }
+
+
+def check_patches_for_job(job_id: str) -> dict[str, Any]:
+    """Retro-audit of a stored study: re-run the patch-effect check on its spec and cohort (no fitting, records
+    untouched) and write ``patch_check.json`` (``patch_check_audit.json`` when the job already has one) next to them."""
+    rec = get_fit_curve_job(job_id)
+    if rec is None or rec.content != ROBUSTNESS_CONTENT:
+        raise ValueError("robustness job not found")
+    run = get_run(rec.run_id)
+    if run is None:
+        raise ValueError("analysis run not found")
+    raw_opts = json.loads(rec.params_json or "{}")
+    p = parse_options(raw_opts)
+    spectrum_ids = raw_opts.get("spectrum_ids")
+    pipeline, _ds, refs, ns = _resolved_refs_for_run(run, list(spectrum_ids) if spectrum_ids else None)
+    fitting_idx, fitting_step = _find_fitting_step(pipeline, rec.fitting_step_num)
+    base_params = dict(fitting_step.params or {})
+    tech = getattr(pipeline, "technique_family", None)
+    if tech and "technique_family" not in base_params:
+        base_params["technique_family"] = tech
+    labels = _load_labels(list(refs))
+    refs = applicable_spectra(refs, labels, base_params)
+    report = compute_patch_check(
+        pipeline=pipeline, design=p["design"], base_params=base_params, refs=refs, ns=ns,
+        fitting_idx=fitting_idx, fitting_step_num=rec.fitting_step_num,
+    )
+    out_dir = os.path.join(artifacts_root(), "fit_curve_jobs", job_id)
+    os.makedirs(out_dir, exist_ok=True)
+    out = report.to_dict()
+    out["job_id"] = job_id
+    out["run_id"] = rec.run_id
+    out["design_hash"] = p["design"].design_hash()
+    out["n_cells"] = len(p["design"].cells)
+    out["n_spectra"] = len(refs)
+    out["records_audit"] = audit_records(_read_jsonl(os.path.join(out_dir, RECORDS_JSONL)))
+    name = PATCH_CHECK_JSON if not os.path.exists(os.path.join(out_dir, PATCH_CHECK_JSON)) else "patch_check_audit.json"
+    out["written_to"] = name
+    with open(os.path.join(out_dir, name), "w", encoding="utf-8") as f:
+        json.dump(_sanitize(out), f, indent=1, allow_nan=False)
+    return _sanitize(out)
 
 
 def read_robustness_summary(artifact_path: str) -> dict[str, Any]:

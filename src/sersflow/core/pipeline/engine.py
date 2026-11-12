@@ -345,6 +345,10 @@ def _refs_as_dicts(inputs: Iterable[Any]) -> list[dict[str, Any]]:
                 "relative_path": getattr(ref, "relative_path", None),
                 "upload_id": getattr(ref, "upload_id", None),
                 "record_index": getattr(ref, "record_index", None),
+                # Derived spectra (group averages) have no source file: they resolve via their blob.
+                "blob_id": getattr(ref, "blob_id", None),
+                "blob_relative_path": getattr(ref, "blob_relative_path", None),
+                "original_relative_path": getattr(ref, "original_relative_path", None),
                 "spectrum_labels": getattr(ref, "spectrum_labels", None),
             }
         )

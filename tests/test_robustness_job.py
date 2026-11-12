@@ -316,8 +316,17 @@ def _co2p_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fracs=(0.15, 0.35
 
 def test_co2p_recipe_preset_proposes_chemically_meaningful_factors_and_runs(tmp_path, monkeypatch):
     client, run_id = _co2p_run(tmp_path, monkeypatch)
-    plan = client.post(
+    # The preset's widened fit window cannot add points the spectra do not have: the patch check reports it inert
+    # (HTTP 422 unless allow_inert), exactly the silent no-op that makes an ANOVA share meaningless.
+    strict = client.post(
         f"/analysis/runs/{run_id}/robustness-plan", json={"fitting_step_index": 0, "preset": "fit_model_choices"}
+    )
+    assert strict.status_code == 422
+    rows = {(r["factor"], r["level"]): r["status"] for r in strict.json()["detail"]["patch_check"]["rows"]}
+    assert rows[("window", "wide[773.1,792.9]")] == "inert" and rows[("window", "narrow[774.9,791.1]")] == "ok"
+    plan = client.post(
+        f"/analysis/runs/{run_id}/robustness-plan",
+        json={"fitting_step_index": 0, "preset": "fit_model_choices", "allow_inert": True},
     ).json()
     by = {f["name"]: [lv["name"] for lv in f["levels"]] for f in plan["factors"]}
     assert list(by) == ["background", "window", "lineshape_mix", "fwhm_constraint", "satellite_treatment"]

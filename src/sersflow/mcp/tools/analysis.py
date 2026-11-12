@@ -29,6 +29,29 @@ def _resolve_pipeline_by_name(client: SersflowClient, name: str) -> Any:
     return matches[0].pipeline
 
 
+_PLAN_ONLY_KEYS = {"fitting_step_num", "fitting_step_index", "preset", "preset_options"}
+
+
+def _verify_received_spec(req: Any, plan: dict[str, Any]) -> None:
+    """Raise when the API's echo of the study spec differs from what this tool sent.
+
+    A stale MCP or API process can drop or rewrite arguments silently (a study once ran WITHOUT its exclusion
+    rules); the server echoes the spec it parsed, so any difference is caught before a study is launched.
+    """
+    import json as _json
+
+    sent = _json.loads(_json.dumps(req.model_dump(exclude_none=True)))
+    got = plan.get("received_spec")
+    if got is None:
+        raise ValueError("the API did not echo the study spec (received_spec): the API process is out of date, restart it")
+    diff = [k for k, v in sent.items() if k not in _PLAN_ONLY_KEYS and got.get(k) != v]
+    if diff:
+        raise ValueError(
+            "the API received a different study spec than this tool sent (keys: " + ", ".join(sorted(diff)) + "). "
+            "A stale MCP server or API process is dropping or changing arguments; restart it."
+        )
+
+
 def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
     @mcp.tool(name="post_analysis_runs")
     async def post_analysis_runs(
@@ -527,11 +550,29 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         subsample: dict[str, Any] | None = None,
         constraints: list[dict[str, Any]] | None = None,
         n_starts: int = 1,
+        seed: int = 0,
+        jitter_frac: float | None = None,
+        cost_tol: float | None = None,
+        resp_tol_rel: float | None = None,
+        resp_tol_abs: float | None = None,
+        x_label: str | None = None,
+        filter: dict[str, Any] | None = None,
         noise: dict[str, Any] | None = None,
+        reference_cell: str | None = None,
+        workers: int | None = None,
+        allow_large: bool = False,
+        allow_inert: bool = False,
         spectrum_ids: list[str] | None = None,
     ) -> str:
         """
         POST /analysis/runs/{run_id}/robustness-plan — DRY RUN of a robustness study (nothing is fitted).
+
+        Also runs the PATCH-EFFECT CHECK: for every factor level it compares what the optimizer would receive with
+        the nominal input (no fitting). Levels that are inert (change nothing), unresolved (typo, missing
+        component), duplicates, or only change start values are listed in `patch_check`; inert / unresolved /
+        duplicate levels make the call fail with HTTP 422 and the table unless allow_inert=true. The reply echoes
+        the spec as the server parsed it (`received_spec`, `spec_hash`); this tool raises if it differs from what
+        was sent (a stale MCP or API process dropping arguments).
 
         Returns the study spec (factors with levels and patches, responses; proposed from `preset` when given:
         fit_model_choices = background type / fit window / line-shape mix / FWHM constraint of the fitting step,
@@ -560,10 +601,23 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 subsample=subsample,
                 constraints=constraints,
                 n_starts=n_starts,
+                seed=seed,
+                jitter_frac=jitter_frac,
+                cost_tol=cost_tol,
+                resp_tol_rel=resp_tol_rel,
+                resp_tol_abs=resp_tol_abs,
+                x_label=x_label,
+                filter=filter,
                 noise=noise,
+                reference_cell=reference_cell,
+                workers=workers,
+                allow_large=allow_large,
+                allow_inert=allow_inert,
                 spectrum_ids=spectrum_ids,
             )
-            return {"ok": True, "data": ctx.get_client().analysis.plan_robustness(run_id, req)}
+            plan = ctx.get_client().analysis.plan_robustness(run_id, req)
+            _verify_received_spec(req, plan)
+            return {"ok": True, "data": plan}
 
         return await tool_call(ctx, _run)
 
@@ -583,11 +637,16 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         constraints: list[dict[str, Any]] | None = None,
         n_starts: int = 1,
         seed: int = 0,
+        jitter_frac: float | None = None,
+        cost_tol: float | None = None,
+        resp_tol_rel: float | None = None,
+        resp_tol_abs: float | None = None,
         filter: dict[str, Any] | None = None,
         noise: dict[str, Any] | None = None,
         reference_cell: str | None = None,
         workers: int | None = None,
         allow_large: bool = False,
+        allow_inert: bool = False,
         spectrum_ids: list[str] | None = None,
         confirm: bool = False,
     ) -> str:
@@ -604,6 +663,8 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         (filter mode delta_bic_common compares on the window shared by all cells; native BIC is never compared
         across different data windows). `constraints` exclude implausible cells before fitting (see the plan
         tool); the design is then unbalanced and the ANOVA shares are sequential, flagged exact=false.
+        The patch-effect check runs first: levels that are inert / unresolved / duplicates refuse the job (HTTP 422
+        with the table) unless allow_inert=true.
         Run post_analysis_robustness_plan first to see the cost. Studies above
         robustness_confirm_max_fits need confirm=true; above the server limit also allow_large=true.
 
@@ -628,14 +689,20 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 constraints=constraints,
                 n_starts=n_starts,
                 seed=seed,
+                jitter_frac=jitter_frac,
+                cost_tol=cost_tol,
+                resp_tol_rel=resp_tol_rel,
+                resp_tol_abs=resp_tol_abs,
                 filter=filter,
                 noise=noise,
                 reference_cell=reference_cell,
                 workers=workers,
                 allow_large=allow_large,
+                allow_inert=allow_inert,
                 spectrum_ids=spectrum_ids,
             )
             plan = ctx.get_client().analysis.plan_robustness(run_id, req)
+            _verify_received_spec(req, plan)
             est = plan.get("estimate") or {}
             blocked = confirm_gates.check_robustness_fits(
                 int(est.get("n_total_fits") or 0), max_fits=ctx.config.robustness_confirm_max_fits, confirm=confirm
@@ -711,6 +778,19 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 if b.get("trend"):
                     b["trend"].pop("per_cell", None)
             return {"ok": True, "data": data}
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_analysis_robustness_check_patches")
+    async def post_analysis_robustness_check_patches(job_id: str) -> str:
+        """POST /analysis/robustness-jobs/{job_id}/check-patches — retro-audit of a stored study: for every factor
+        level, did it really change the optimizer input? Statuses: ok, inert, upstream_inert, unresolved_target,
+        duplicate_of:<level>, start_only, untestable. Nothing is fitted; writes patch_check.json next to the records
+        and reports cells whose stored hashes show identical inputs. Inert levels mean the study's ANOVA share for
+        that factor measured nothing."""
+
+        def _run():
+            return {"ok": True, "data": ctx.get_client().analysis.check_robustness_patches(job_id)}
 
         return await tool_call(ctx, _run)
 

@@ -171,6 +171,62 @@ noise replicates per spectrum and their median.
 scores, multi-start flags, `kept`), `anova.csv`, `trend.csv`, `bands.csv`, `noise_comparison.csv`, `filter_report.csv`,
 `study_spec.json`, `provenance.json` (software version, git commit, design hash, seed), `robustness_records.jsonl`.
 
+## Patch-effect check (is every level real?)
+
+A factor level can silently do nothing: a typo in a component id, a step key the step never reads, a value set on a
+parameter that is tied by an expression, two levels that are the same configuration, or a change that only moves the
+initial value of a free parameter. The ANOVA then reports a ~0 share for a choice that was never tested, and the
+robustness claim covers less than it says. Before a study is planned or run, `core/robustness/patch_check.py`
+compares **what the optimizer receives**, never the response:
+
+* *inert*: the optimizer input equals the nominal one: a bug, reported as an error;
+* *insensitive*: the input differs but the response hardly moves: a real finding, never flagged.
+
+The fit is split into `prepare_fit` (patches -> `FitProblem`: fit-window crop, weighting, components, bounds) and
+`solve_fit` (multi-start); `fit_cell` is their composition. `core/robustness/fit_hash.py` hashes the problem:
+`data_hash` (window x / y / sigma and weighting), `config_hash` (model, parameters, settings; the initial value of a
+free parameter excluded; a linked parameter records only its link, a fixed one only its value) and `start_hash`
+(config plus initial values and `initial_guess_mode` / `initial_area_ratios`). SHA-256 over canonical JSON, floats
+rounded to 12 significant digits, arrays as float64 text plus shape: stable across processes and machines.
+
+Layers, all at plan time (only `prepare_fit` runs, no optimisation):
+
+1. **spec**: every patch resolves (`PatchResult`: op, target, resolved, old / new value, reason; a `set_step_param`
+   key must be one the step declares or already carries), the patched pipeline differs from the nominal one, and the
+   levels of a factor differ pairwise;
+2. **upstream**: for levels that patch steps before the fit, the pre-fit spectra (n points, x range, data hash) differ
+   from nominal on at least one spectrum;
+3. **fit**: the one-factor-at-a-time cell versus the nominal one: config or data hash differs on at least one
+   spectrum. If the plain OFAT cell was excluded (`constraints`) or not drawn (`subsample`), the nearest allowed pair is
+   compared; if none exists the level is `untestable`.
+
+Statuses: `ok`, `inert`, `upstream_inert`, `unresolved_target`, `duplicate_of:<level>` (errors); `start_only`,
+`untestable` (warnings). `start_only` means only initial values differ: with multi-start jitter that is not a model
+choice (for a free parameter give the level bounds, or fix it, to make it a real choice).
+
+Strict by default. `post_analysis_robustness_plan` returns the table in `patch_check` (with `n_errors`,
+`n_warnings`); with errors the call is **HTTP 422** and the table is the body. The run endpoint refuses (422) unless
+`allow_inert: true`; the job re-checks at start and writes `patch_check.json` into the export. The plan also echoes the
+spec as the server parsed it (`received_spec`, `spec_hash`): the MCP tools raise when it differs from what they sent.
+The request schema rejects unknown keys (`extra="forbid"`), and the client sends `X-SpecFlow-Robustness-Schema` (a hash
+of the request schemas): a stale MCP or API process gets **HTTP 409** ("restart it") instead of silently dropping an
+argument, which is how a study once ran without its exclusion rules.
+
+Retro-audit of a stored study (nothing is refitted, records untouched):
+`post_analysis_robustness_check_patches(job_id)` (`POST /analysis/robustness-jobs/{job}/check-patches`) or
+`sersflow-admin robustness-check-patches <job_id>` re-runs the check on the stored spec and cohort, writes
+`patch_check.json` (`patch_check_audit.json` if the job already has one) and adds `records_audit`: cells whose stored
+hashes show identical optimizer inputs (only for records written after this feature).
+
+New record fields (additive; old records still load): `prefit_data_hash`, `fit_config_hash`, `fit_start_hash`,
+`fit_data_hash`, `n_points_fit`, `fit_x_min`, `fit_x_max`, `patch_check_version`. `provenance.json` also carries
+`spec_hash`.
+
+Limitations: layer 3 is one-factor-at-a-time, so a level that only acts together with another factor's level (an
+interaction-only effect) can look inert; the check sees optimizer *inputs*, so an input the engine later re-derives
+internally is only caught when it changes the fit data or the problem the engine is handed; a window wider than the
+spectrum is inert by construction (the data do not extend there).
+
 ## Limits
 
 * Responses come from the fitting step under study (not from other steps' features).

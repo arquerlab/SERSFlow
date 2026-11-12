@@ -26,6 +26,7 @@ Operations on the fitting step only
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 import json
 from typing import Any
 
@@ -415,3 +416,146 @@ def resolve_step_index(steps: list[Any], target: dict[str, Any], *, get_name, ge
                     return i
         raise ValueError(f"no pipeline step named {target['step_name']!r} (occurrence {occ})")
     raise ValueError(f"patch target selects no step: {target}")
+
+
+# --------------------------------------------------------------------------------------------------------------
+# reporting: what did a patch actually do?
+# --------------------------------------------------------------------------------------------------------------
+
+# Keys the fitting step reads (``fit_problem_from_step_params`` / ``resolve_weighting`` / the transform).
+FIT_STEP_KEYS = frozenset(
+    {
+        "components", "p0", "bounds_lower", "bounds_upper", "vary", "param_links", "fit_min_x", "fit_max_x",
+        "initial_guess_mode", "technique_family", "xps_region", "initial_area_ratios", "weighting",
+        "fit_outside", "recipe_id", "recipe",
+    }
+)
+
+
+@dataclass
+class PatchResult:
+    """Outcome of one patch op: did its target exist, and what changed."""
+
+    op: str
+    target: dict[str, Any]
+    resolved: bool
+    old_value: Any = None
+    new_value: Any = None
+    noop: bool = False
+    """True when the patch left the step params unchanged (resolved, but it changed nothing)."""
+    reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "op": self.op,
+            "target": self.target,
+            "resolved": self.resolved,
+            "old_value": self.old_value,
+            "new_value": self.new_value,
+            "noop": self.noop,
+            "reason": self.reason,
+        }
+
+
+def allowed_step_keys(step_name: str | None, current_params: dict[str, Any] | None) -> frozenset[str] | None:
+    """Param keys a ``set_step_param`` may target: those the step declares (registry UI schema) plus those already
+    present in its params. ``None`` = unknown step (everything is accepted; the effect check still applies).
+
+    This catches typos and renamed keys. It cannot know a key the step accepts but never reads; the
+    optimizer-input comparison (``fit_hash``) and the pre-fit data comparison catch those.
+    """
+    present = set((current_params or {}).keys())
+    if step_name == "fitting":
+        return frozenset(FIT_STEP_KEYS | present)
+    if not step_name:
+        return None
+    try:
+        from sersflow.core.pipeline.library import registry as _reg
+
+        try:  # make sure the built-in steps are registered
+            import sersflow.core.pipeline.library.builtins  # noqa: F401
+        except Exception:
+            pass
+        spec = _reg.get_step(step_name)
+    except Exception:
+        return None
+    if spec is None:
+        return None
+    keys: set[str] = set(present)
+    ui = spec.ui
+    if ui.method_param_key:
+        keys.add(ui.method_param_key)
+    keys.update(f.key for f in ui.common_fields)
+    for m in ui.methods:
+        keys.update(m.defaults.keys())
+        keys.update(f.key for f in m.fields)
+    return frozenset(keys)
+
+
+def _get_dotted(d: dict[str, Any], dotted: str) -> Any:
+    cur: Any = d
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def _summ(v: Any) -> Any:
+    """Short JSON-safe summary of a value for the report (long lists are abbreviated)."""
+    if isinstance(v, (list, tuple)) and len(v) > 12:
+        return {"len": len(v), "head": [_summ(x) for x in list(v)[:6]]}
+    if isinstance(v, dict):
+        return {str(k): _summ(x) for k, x in list(v.items())[:12]}
+    if isinstance(v, float) and v != v:
+        return None
+    return v
+
+
+def apply_patch_reported(
+    params: dict[str, Any],
+    patch: dict[str, Any],
+    *,
+    step_name: str | None = None,
+    target: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], PatchResult]:
+    """Like ``apply_params_patch`` but never raises: returns the (possibly unchanged) params and a ``PatchResult``.
+
+    A patch that names something that does not exist (selector matching nothing, unknown param key, a ``tie_param``
+    with fewer than two carriers) comes back ``resolved=False`` with a reason; the params are then returned unchanged.
+    """
+    op = str(patch.get("op"))
+    tgt = dict(target if target is not None else _norm_target(patch))
+    res = PatchResult(op=op, target=tgt, resolved=True)
+    try:
+        validate_patch(patch)
+    except ValueError as e:
+        res.resolved, res.reason = False, str(e)
+        return copy.deepcopy(params), res
+    if op == "set_step_param":
+        key = str(patch["key"])
+        allowed = allowed_step_keys(step_name, params)
+        res.target = {**tgt, "param": key}
+        res.old_value = _summ(_get_dotted(params, key))
+        res.new_value = _summ(patch.get("value"))
+        if allowed is not None and key.split(".")[0] not in allowed:
+            res.resolved = False
+            res.reason = f"step {step_name!r} has no parameter {key.split('.')[0]!r}"
+            return copy.deepcopy(params), res
+    elif op in ("set_component_param", "tie_param", "untie_param"):
+        res.target = {**tgt, "select": patch.get("select"), "param": patch.get("key")}
+    elif op in ("swap_component_type", "drop_components"):
+        res.target = {**tgt, "select": patch.get("select")}
+    try:
+        out = apply_params_patch(params, patch)
+    except ValueError as e:
+        res.resolved, res.reason = False, str(e)
+        return copy.deepcopy(params), res
+    res.noop = canonical(out) == canonical(params)
+    if op == "tie_param" and res.noop:
+        res.resolved = False
+        res.reason = "fewer than two selected components carry the key: nothing was tied"
+    if op == "set_component_param" and not res.noop:
+        res.old_value = _summ(params.get("p0"))
+        res.new_value = _summ(out.get("p0"))
+    return out, res

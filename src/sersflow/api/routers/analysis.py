@@ -57,11 +57,17 @@ from sersflow.api.services.robustness_runner import (
     ROBUSTNESS_CONTENT,
     _load_labels as _rb_load_labels,
     applicable_spectra as _rb_applicable_spectra,
+    compute_patch_check as _rb_patch_check,
     estimate_for_options as _rb_estimate,
+    parse_options as _rb_parse_options,
+    check_patches_for_job as _rb_check_patches,
     execute_robustness_job,
     read_robustness_summary,
     reanalyse_job as _rb_reanalyse,
 )
+from sersflow.api.schemas.robustness_schema import SCHEMA_HEADER as _RB_SCHEMA_HEADER
+from sersflow.api.schemas.robustness_schema import robustness_schema_hash as _rb_schema_hash
+from sersflow.core.robustness.fit_hash import sha256_hex as _rb_sha256
 from sersflow.core.robustness.presets import PRESETS as ROBUSTNESS_PRESETS
 from sersflow.core.robustness.presets import build_preset as _rb_build_preset
 from sersflow.api.services.sweep_runner import (
@@ -810,6 +816,45 @@ def _robustness_build(rec: Any, payload: RobustnessJobCreateRequest) -> tuple[in
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+def _check_robustness_schema(request: Request) -> None:
+    """409 when the client's request schema (hash sent in a header) differs from this server's: a stale MCP server
+    would otherwise silently drop arguments its tool signature does not know."""
+    got = request.headers.get(_RB_SCHEMA_HEADER)
+    want = _rb_schema_hash()
+    if got and got != want:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Robustness request schema mismatch: the MCP server / client is out of date (or the API was not "
+                "restarted after a code change). Restart the older process. "
+                f"client={got[:12]} server={want[:12]}"
+            ),
+        )
+
+
+def _robustness_check_for(rec: Any, payload: RobustnessJobCreateRequest, opts: dict[str, Any], step_num: int):
+    """(parsed options, estimate, patch-check dict) of a robustness request: the design plus what each level does to
+    the optimizer input. 400 on invalid input."""
+    try:
+        _p, _ds, refs, ns = _rb_resolved_refs(rec, list(payload.spectrum_ids) if payload.spectrum_ids else None)
+        labels = _rb_load_labels(list(refs))
+        fit_idx, fit_step = _find_fitting_step(_p, step_num)
+        base_params = dict(fit_step.params or {})
+        tech = getattr(_p, "technique_family", None)
+        if tech and "technique_family" not in base_params:
+            base_params["technique_family"] = tech
+        arefs = _rb_applicable_spectra(list(refs), labels, base_params)
+        parsed = _rb_parse_options(opts)
+        estimate = _rb_estimate(opts, len(arefs), parsed=parsed)
+        report = _rb_patch_check(
+            pipeline=_p, design=parsed["design"], base_params=base_params, refs=arefs, ns=ns,
+            fitting_idx=fit_idx, fitting_step_num=step_num,
+        )
+        return parsed, estimate, report.to_dict()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.get("/robustness-presets", response_model=None)
 def list_robustness_presets() -> dict[str, Any]:
     return {"presets": [{"name": k, "description": v} for k, v in ROBUSTNESS_PRESETS.items()]}
@@ -818,25 +863,30 @@ def list_robustness_presets() -> dict[str, Any]:
 @router.post("/runs/{run_id}/robustness-plan", response_model=None)
 def post_robustness_plan(run_id: str, payload: RobustnessJobCreateRequest, request: Request) -> dict[str, Any]:
     """Dry run: the study spec (factors / responses, from a preset when asked) and its cost; nothing is fitted."""
+    _check_robustness_schema(request)
     user_id = current_user_id(request)
     rec = _require_run(run_id, user_id)
-    step_num, opts, step_params, notes = _robustness_build(rec, payload)
-    try:
-        _p, _ds, refs, _ns = _rb_resolved_refs(rec, list(payload.spectrum_ids) if payload.spectrum_ids else None)
-        labels = _rb_load_labels(list(refs))
-        n_spectra = len(_rb_applicable_spectra(list(refs), labels, step_params))
-        estimate = _rb_estimate(opts, n_spectra)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    return sanitize_floats(
+    step_num, opts, _step_params, notes = _robustness_build(rec, payload)
+    _parsed, estimate, check = _robustness_check_for(rec, payload, opts, step_num)
+    body = sanitize_floats(
         {
             "fitting_step_num": step_num,
             "factors": opts.get("factors"),
             "responses": opts.get("responses"),
             "notes": notes,
             "estimate": estimate,
+            # The spec exactly as this server parsed it: compare with what was sent to catch dropped arguments.
+            "received_spec": json.loads(json.dumps(opts)),
+            "spec_hash": _rb_sha256(opts),
+            "robustness_schema_hash": _rb_schema_hash(),
+            "patch_check": check,
         }
     )
+    if check["n_errors"] and not payload.allow_inert:
+        # Strict by default: inert / unresolved / duplicate levels would make the study report effects that were
+        # never tested. The table is the body so the caller can fix the levels.
+        raise HTTPException(status_code=422, detail=body)
+    return body
 
 
 @router.post("/runs/{run_id}/robustness-jobs", response_model=FitCurveJobCreateResponse)
@@ -844,15 +894,20 @@ def post_robustness_job(
     run_id: str, payload: RobustnessJobCreateRequest, request: Request
 ) -> FitCurveJobCreateResponse | JSONResponse:
     """Robustness study (factorial analyst-choice analysis); poll/download through the fit-curve job endpoints."""
+    _check_robustness_schema(request)
     user_id = current_user_id(request)
     rec = _require_run(run_id, user_id)
     if rec.status != "completed":
         raise HTTPException(status_code=400, detail="Run is not completed yet")
     step_num, opts, _step_params, _notes = _robustness_build(rec, payload)
-    try:
-        _rb_estimate(opts, 1)  # validates the design and responses
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    _parsed, _estimate, check = _robustness_check_for(rec, payload, opts, step_num)  # validates design + responses
+    if check["n_errors"] and not payload.allow_inert:
+        raise HTTPException(
+            status_code=422,
+            detail=sanitize_floats(
+                {"error": "patch-effect check failed; fix the levels or pass allow_inert=true", "patch_check": check}
+            ),
+        )
     jid = create_fit_curve_job(
         run_id=run_id,
         fitting_step_num=step_num,
@@ -875,6 +930,7 @@ def _robustness_job(job_id: str, user_id: Any) -> Any:
 @router.post("/robustness-jobs/{job_id}/resume", response_model=FitCurveJobCreateResponse)
 def post_robustness_resume(job_id: str, request: Request) -> FitCurveJobCreateResponse | JSONResponse:
     """Restart a failed / interrupted study: records already on disk are kept, only the missing fits run."""
+    _check_robustness_schema(request)
     job = _robustness_job(job_id, current_user_id(request))
     if job.status in ("running", "queued"):
         raise HTTPException(status_code=409, detail=f"job is {job.status}; resume only applies to failed or stuck jobs")
@@ -883,6 +939,18 @@ def post_robustness_resume(job_id: str, request: Request) -> FitCurveJobCreateRe
     update_fit_curve_job(job_id=job_id, status="queued", error="", finished=False)
     Thread(target=execute_robustness_job, args=(job_id,), daemon=True).start()
     return JSONResponse(status_code=202, content=FitCurveJobCreateResponse(job_id=job_id, status="queued").model_dump())
+
+
+@router.post("/robustness-jobs/{job_id}/check-patches", response_model=None)
+def post_robustness_check_patches(job_id: str, request: Request) -> dict[str, Any]:
+    """Retro-audit: re-run the patch-effect check on a stored study's spec and cohort (nothing is fitted or changed
+    except ``patch_check.json`` written next to the records)."""
+    _check_robustness_schema(request)
+    _robustness_job(job_id, current_user_id(request))
+    try:
+        return sanitize_floats(_rb_check_patches(job_id))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/robustness-jobs/{job_id}/summary", response_model=None)
@@ -900,6 +968,7 @@ def get_robustness_summary(job_id: str, request: Request) -> dict[str, Any]:
 @router.post("/robustness-jobs/{job_id}/reanalyse", response_model=None)
 def post_robustness_reanalyse(job_id: str, payload: RobustnessReanalyseRequest, request: Request) -> dict[str, Any]:
     """Recompute the summary with other responses / filter / interaction order from the stored fits (no refit)."""
+    _check_robustness_schema(request)
     job = _robustness_job(job_id, current_user_id(request))
     if job.status != "completed":
         raise HTTPException(status_code=400, detail=f"Robustness job is not ready (status {job.status})")

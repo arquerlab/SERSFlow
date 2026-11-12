@@ -465,6 +465,21 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
     if source_only or raw_only:
         runtime_pipeline_no_qc = Pipeline(steps=[])
 
+    # group_average is a cohort step, not an engine step: the engine can never stop "at" it, so asking for
+    # its view would run every later step (fits included) only to be discarded. The aggregated spectra
+    # already are the group step's output, so run nothing more.
+    group_view_only = False
+    if group_idx is not None and aggregated_view and not (source_only or raw_only):
+        if isinstance(payload.return_, SessionRunReturnIntermediates):
+            toks = [str(t) for t in payload.return_.steps]
+            group_view_only = bool(toks) and all(
+                step_index_for_token(rec.pipeline, t) == group_idx for t in toks
+            )
+        elif isinstance(payload.return_, SessionRunReturnFinal) and up_token:
+            group_view_only = step_index_for_token(rec.pipeline, up_token) == group_idx
+    if group_view_only:
+        runtime_pipeline_no_qc = Pipeline(steps=[])
+
     if isinstance(payload.return_, SessionRunReturnFinal):
         try:
             final = run_pipeline(
@@ -472,7 +487,7 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
                 pipeline=runtime_pipeline_no_qc,
                 cache=_cache,
                 config=cfg,
-                up_to_step=None if (source_only or raw_only) else payload.up_to_step,
+                up_to_step=None if (source_only or raw_only or group_view_only) else payload.up_to_step,
                 strict=True,
                 calibration_cohort=cal_cohort,
             )
@@ -512,16 +527,19 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
         if len(refs) > 50:
             raise HTTPException(status_code=400, detail="Too many spectra for intermediates; select a smaller subset")
         try:
-            _, inter = run_pipeline_with_intermediates(
-                inputs=refs,
-                pipeline=runtime_pipeline_no_qc,
-                collect_steps=set(payload.return_.steps),
-                cache=_cache,
-                config=cfg,
-                up_to_step=payload.up_to_step,
-                strict=True,
-                calibration_cohort=cal_cohort,
-            )
+            if group_view_only:
+                inter = {}
+            else:
+                _, inter = run_pipeline_with_intermediates(
+                    inputs=refs,
+                    pipeline=runtime_pipeline_no_qc,
+                    collect_steps=set(payload.return_.steps),
+                    cache=_cache,
+                    config=cfg,
+                    up_to_step=payload.up_to_step,
+                    strict=True,
+                    calibration_cohort=cal_cohort,
+                )
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=f"Uploaded file not found: {e}") from e
         # The group_average step is applied to the cohort (not the XY engine): asking for its output

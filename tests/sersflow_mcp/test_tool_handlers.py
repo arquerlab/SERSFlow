@@ -646,7 +646,11 @@ def test_robustness_tools_plan_gate_post_and_compact_summary(tmp_path: Path) -> 
     def handle(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/analysis/runs/r1/robustness-plan":
             seen.append((request.url.path, json.loads(request.content)))
-            return httpx.Response(200, json={"estimate": est, "factors": [], "responses": [], "notes": []})
+            # like the real API: echo the spec it parsed (the MCP tool compares it with what it sent)
+            return httpx.Response(
+                200,
+                json={"estimate": est, "factors": [], "responses": [], "notes": [], "received_spec": json.loads(request.content)},
+            )
         if request.url.path == "/analysis/runs/r1/robustness-jobs":
             seen.append((request.url.path, json.loads(request.content)))
             return httpx.Response(202, json={"job_id": "fcjob_r", "status": "queued"})

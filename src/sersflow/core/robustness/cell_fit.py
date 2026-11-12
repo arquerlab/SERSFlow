@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import math
 import zlib
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
 
-from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params, parse_fit_window
+from sersflow.core.preprocess.fitting import FitProblem, fit_curve, fit_problem_from_step_params, parse_fit_window
+from sersflow.core.robustness.fit_hash import fingerprint
 from sersflow.core.robustness.patches import apply_fit_patches, _keys, _n_params
 from sersflow.core.robustness.responses import evaluate_responses
 
@@ -126,6 +127,129 @@ def _common_window_score(
     }
 
 
+@dataclass(frozen=True)
+class PreparedFit:
+    """Everything the optimizer sees for one (spectrum, cell): the patched step params and the ``FitProblem``."""
+
+    params: dict[str, Any]
+    problem: FitProblem
+
+    def fingerprint(self) -> dict[str, Any]:
+        return fingerprint(self.problem)
+
+
+def prepare_fit(xy: Any, base_params: dict[str, Any], fit_patches: list[dict[str, Any]]) -> PreparedFit:
+    """Apply the fit patches and build the optimizer input (fit-window crop, weighting, components, bounds).
+
+    Cheap (no optimisation); raises ``ValueError`` for an empty spectrum / fit window or an invalid patched step.
+    """
+    params = apply_fit_patches(base_params, list(fit_patches))
+    prob = fit_problem_from_step_params(xy, params)
+    if prob is None:
+        raise ValueError("empty spectrum / fit window")
+    return PreparedFit(params=params, problem=prob)
+
+
+def solve_fit(
+    prepared: PreparedFit,
+    *,
+    spectrum_id: str,
+    cell_id: str,
+    responses: list[dict[str, Any]],
+    n_starts: int = 1,
+    seed: int = 0,
+    window: tuple[float, float] | None = None,
+    jitter_frac: float = 0.15,
+    cost_tol: float = 0.005,
+    resp_tol_rel: float = 0.02,
+    resp_tol_abs: float = 1e-3,
+) -> dict[str, Any]:
+    """Optimise a prepared fit (multi-start); returns the record fields (the caller sets ``error`` on failure)."""
+    params, prob = prepared.params, prepared.problem
+    rec: dict[str, Any] = {}
+    n_starts = max(1, int(n_starts))
+    ss = np.random.SeedSequence([int(seed) & 0xFFFFFFFF, zlib.crc32(spectrum_id.encode()), zlib.crc32(cell_id.encode())])
+    rng = np.random.default_rng(ss)
+    starts: list[dict[str, Any]] = []
+    best = None
+    for k in range(n_starts):
+        try:
+            pk = params if k == 0 else jitter_params(params, rng, jitter_frac)
+            pr = prob if k == 0 else replace(prob, p0=[float(v) for v in pk["p0"]])
+            res = fit_curve(pr)
+            chi2 = _fin(res.diagnostics.chi2)
+            ok = chi2 is not None
+            resp = evaluate_responses(responses, res.mapping, res.p_opt) if ok else {}
+            starts.append({"start": k, "chi2": chi2, "responses": resp, "success": bool(res.diagnostics.success)})
+            if ok and (best is None or chi2 < best[1]):
+                best = (res, chi2, k, pr)
+        except Exception as e:  # a failed start must not lose the others
+            starts.append({"start": k, "chi2": None, "responses": {}, "error": f"{type(e).__name__}: {e}"})
+    if best is None:
+        raise ValueError("; ".join(s.get("error", "no finite chi2") for s in starts)[:300])
+    res, chi2_best, k_best, pr = best
+    d = res.diagnostics
+    n_vary = int(d.n_vary) if d.n_vary is not None else 0
+    resp_best = starts[k_best]["responses"]
+
+    # Degeneracy: near-equal cost, different answer.
+    equiv = [
+        s
+        for s in starts
+        if s["chi2"] is not None and s["start"] != k_best and s["chi2"] <= chi2_best * (1.0 + cost_tol) + 1e-300
+    ]
+    degenerate_on: list[str] = []
+    spread: dict[str, float] = {}
+    for name, vb in resp_best.items():
+        if vb is None:
+            continue
+        vals = [vb] + [s["responses"].get(name) for s in equiv if s["responses"].get(name) is not None]
+        sp = float(max(vals) - min(vals))
+        spread[name] = sp
+        if sp > max(resp_tol_abs, resp_tol_rel * abs(vb)):
+            degenerate_on.append(name)
+
+    x = np.asarray(pr.x, dtype=float)
+    y = np.asarray(pr.y, dtype=float)
+    y_hat = np.asarray(res.y_hat, dtype=float)
+    rec.update(
+        {
+            "p_opt": [float(v) for v in np.asarray(res.p_opt, dtype=float)],
+            "mapping": mapping_to_json(res.mapping),
+            "responses": resp_best,
+            "best_start": k_best,
+            "n_starts": n_starts,
+            "n_starts_ok": sum(1 for s in starts if s["chi2"] is not None),
+            "n_equivalent_starts": len(equiv),
+            "degenerate": bool(degenerate_on),
+            "degenerate_responses": degenerate_on,
+            "start_spread": spread,
+            "start_chi2": [s["chi2"] for s in starts],
+            "x_lo": float(x.min()),
+            "x_hi": float(x.max()),
+            "n_points": int(x.size),
+            "weighting": d.weighting,
+            "rmse": _fin(d.rmse),
+            "chi2": chi2_best,
+            "bic": _fin(d.bic),
+            "aic": _fin(d.aic),
+            "n_vary": n_vary,
+            "n_at_bound": _fin(d.n_at_bound),
+            "bg_gt_data_frac": _fin(d.bg_gt_data_frac),
+            "resid_lag1_autocorr": _fin(d.resid_lag1_autocorr),
+            "resid_mean_edge_lo": _fin(d.resid_mean_edge_lo),
+            "resid_mean_edge_hi": _fin(d.resid_mean_edge_hi),
+            "success": bool(d.success),
+        }
+    )
+    if window is not None:
+        rec.update(_common_window_score(x, y, y_hat, pr.sigma, n_vary, window))
+    return rec
+
+
+PATCH_CHECK_VERSION = 1
+
+
 def fit_cell(
     xy: Any,
     base_params: dict[str, Any],
@@ -141,91 +265,44 @@ def fit_cell(
     cost_tol: float = 0.005,
     resp_tol_rel: float = 0.02,
     resp_tol_abs: float = 1e-3,
+    prefit_data_hash: str | None = None,
 ) -> dict[str, Any]:
-    """Fit ``xy`` with ``base_params`` + ``fit_patches``; JSON-safe record (never raises)."""
+    """Fit ``xy`` with ``base_params`` + ``fit_patches``; JSON-safe record (never raises).
+
+    ``prefit_data_hash`` (optional) is the hash of the pre-fit spectrum, stored with the record for the post-hoc audit.
+    """
     rec: dict[str, Any] = {"spectrum_id": spectrum_id, "cell_id": cell_id, "error": None}
     try:
-        params = apply_fit_patches(base_params, list(fit_patches))
-        prob = fit_problem_from_step_params(xy, params)
-        if prob is None:
-            raise ValueError("empty spectrum / fit window")
-        n_starts = max(1, int(n_starts))
-        ss = np.random.SeedSequence([int(seed) & 0xFFFFFFFF, zlib.crc32(spectrum_id.encode()), zlib.crc32(cell_id.encode())])
-        rng = np.random.default_rng(ss)
-        starts: list[dict[str, Any]] = []
-        best = None
-        for k in range(n_starts):
-            try:
-                pk = params if k == 0 else jitter_params(params, rng, jitter_frac)
-                pr = prob if k == 0 else replace(prob, p0=[float(v) for v in pk["p0"]])
-                res = fit_curve(pr)
-                chi2 = _fin(res.diagnostics.chi2)
-                ok = chi2 is not None
-                resp = evaluate_responses(responses, res.mapping, res.p_opt) if ok else {}
-                starts.append({"start": k, "chi2": chi2, "responses": resp, "success": bool(res.diagnostics.success)})
-                if ok and (best is None or chi2 < best[1]):
-                    best = (res, chi2, k, pr)
-            except Exception as e:  # a failed start must not lose the others
-                starts.append({"start": k, "chi2": None, "responses": {}, "error": f"{type(e).__name__}: {e}"})
-        if best is None:
-            raise ValueError("; ".join(s.get("error", "no finite chi2") for s in starts)[:300])
-        res, chi2_best, k_best, pr = best
-        d = res.diagnostics
-        n_vary = int(d.n_vary) if d.n_vary is not None else 0
-        resp_best = starts[k_best]["responses"]
-
-        # Degeneracy: near-equal cost, different answer.
-        equiv = [
-            s
-            for s in starts
-            if s["chi2"] is not None and s["start"] != k_best and s["chi2"] <= chi2_best * (1.0 + cost_tol) + 1e-300
-        ]
-        degenerate_on: list[str] = []
-        spread: dict[str, float] = {}
-        for name, vb in resp_best.items():
-            if vb is None:
-                continue
-            vals = [vb] + [s["responses"].get(name) for s in equiv if s["responses"].get(name) is not None]
-            sp = float(max(vals) - min(vals))
-            spread[name] = sp
-            if sp > max(resp_tol_abs, resp_tol_rel * abs(vb)):
-                degenerate_on.append(name)
-
-        x = np.asarray(pr.x, dtype=float)
-        y = np.asarray(pr.y, dtype=float)
-        y_hat = np.asarray(res.y_hat, dtype=float)
+        prep = prepare_fit(xy, base_params, fit_patches)
+        fp = prep.fingerprint()
         rec.update(
             {
-                "p_opt": [float(v) for v in np.asarray(res.p_opt, dtype=float)],
-                "mapping": mapping_to_json(res.mapping),
-                "responses": resp_best,
-                "best_start": k_best,
-                "n_starts": n_starts,
-                "n_starts_ok": sum(1 for s in starts if s["chi2"] is not None),
-                "n_equivalent_starts": len(equiv),
-                "degenerate": bool(degenerate_on),
-                "degenerate_responses": degenerate_on,
-                "start_spread": spread,
-                "start_chi2": [s["chi2"] for s in starts],
-                "x_lo": float(x.min()),
-                "x_hi": float(x.max()),
-                "n_points": int(x.size),
-                "weighting": d.weighting,
-                "rmse": _fin(d.rmse),
-                "chi2": chi2_best,
-                "bic": _fin(d.bic),
-                "aic": _fin(d.aic),
-                "n_vary": n_vary,
-                "n_at_bound": _fin(d.n_at_bound),
-                "bg_gt_data_frac": _fin(d.bg_gt_data_frac),
-                "resid_lag1_autocorr": _fin(d.resid_lag1_autocorr),
-                "resid_mean_edge_lo": _fin(d.resid_mean_edge_lo),
-                "resid_mean_edge_hi": _fin(d.resid_mean_edge_hi),
-                "success": bool(d.success),
+                "fit_config_hash": fp["config_hash"],
+                "fit_start_hash": fp["start_hash"],
+                "n_points_fit": fp["n_points"],
+                "fit_x_min": fp["x_min"],
+                "fit_x_max": fp["x_max"],
+                "fit_data_hash": fp["data_hash"],
+                "patch_check_version": PATCH_CHECK_VERSION,
             }
         )
-        if window is not None:
-            rec.update(_common_window_score(x, y, y_hat, pr.sigma, n_vary, window))
+        if prefit_data_hash is not None:
+            rec["prefit_data_hash"] = prefit_data_hash
+        rec.update(
+            solve_fit(
+                prep,
+                spectrum_id=spectrum_id,
+                cell_id=cell_id,
+                responses=responses,
+                n_starts=n_starts,
+                seed=seed,
+                window=window,
+                jitter_frac=jitter_frac,
+                cost_tol=cost_tol,
+                resp_tol_rel=resp_tol_rel,
+                resp_tol_abs=resp_tol_abs,
+            )
+        )
     except Exception as e:
         rec["error"] = f"{type(e).__name__}: {e}"
     return rec
