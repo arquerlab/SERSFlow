@@ -10,6 +10,9 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Callable, Iterable
 from uuid import uuid4
 
+import functools
+import threading
+
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
 
 
@@ -56,6 +59,21 @@ class UploadRegistryItem:
         return d
 
 
+# The registries are JSONL files that unload / purge / relabel read, filter and rewrite as a whole, while uploads
+# append to them. Without a lock, an upload that lands between the read and the rewrite loses its rows (the files
+# then have no owner). Re-entrant: mutators call each other. One API process owns the files, so a thread lock is enough.
+_REGISTRY_LOCK = threading.RLock()
+
+
+def _registry_locked(fn):  # type: ignore[no-untyped-def]
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):  # type: ignore[no-untyped-def]
+        with _REGISTRY_LOCK:
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
 def upload_root() -> Path:
     return Path(os.environ.get("SERSFLOW_UPLOAD_DIR", str(Path.cwd() / ".sersflow_uploads"))).resolve()
 
@@ -86,6 +104,7 @@ def _replace_with_retries(source: Path, target: Path, *, attempts: int = 8, dela
         raise last_error
 
 
+@_registry_locked
 def append_unloaded_registry(upload_root_dir: Path, items: Iterable[dict[str, Any]]) -> None:
     upload_root_dir.mkdir(parents=True, exist_ok=True)
     p = unloaded_registry_path(upload_root_dir)
@@ -113,6 +132,7 @@ def read_unloaded_registry(upload_root_dir: Path) -> list[dict[str, Any]]:
     return out
 
 
+@_registry_locked
 def write_unloaded_registry(upload_root_dir: Path, items: Iterable[dict[str, Any]]) -> None:
     upload_root_dir.mkdir(parents=True, exist_ok=True)
     p = unloaded_registry_path(upload_root_dir)
@@ -143,6 +163,7 @@ def write_unloaded_registry(upload_root_dir: Path, items: Iterable[dict[str, Any
             pass
 
 
+@_registry_locked
 def update_unloaded_labels(upload_root_dir: Path, relative_path: str, labels: dict[str, Any]) -> bool:
     if not relative_path or "\x00" in relative_path:
         return False
@@ -157,6 +178,7 @@ def update_unloaded_labels(upload_root_dir: Path, relative_path: str, labels: di
     return found
 
 
+@_registry_locked
 def update_upload_registry_labels(upload_root_dir: Path, relative_path: str, labels: dict[str, Any]) -> bool:
     if not relative_path or "\x00" in relative_path:
         return False
@@ -171,6 +193,7 @@ def update_upload_registry_labels(upload_root_dir: Path, relative_path: str, lab
     return found
 
 
+@_registry_locked
 def append_upload_registry(upload_root_dir: Path, items: Iterable[dict[str, Any]]) -> None:
     upload_root_dir.mkdir(parents=True, exist_ok=True)
     p = registry_path(upload_root_dir)
@@ -185,6 +208,7 @@ def append_upload_registry(upload_root_dir: Path, items: Iterable[dict[str, Any]
         pass
 
 
+@_registry_locked
 def append_upload_registry_unique(upload_root_dir: Path, items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     registry = read_upload_registry(upload_root_dir)
     active = {str(item.get("relative_path") or "") for item in registry}
@@ -217,6 +241,7 @@ def read_upload_registry(upload_root_dir: Path) -> list[dict[str, Any]]:
     return out
 
 
+@_registry_locked
 def write_upload_registry(upload_root_dir: Path, items: Iterable[dict[str, Any]]) -> None:
     upload_root_dir.mkdir(parents=True, exist_ok=True)
     p = registry_path(upload_root_dir)
@@ -308,6 +333,7 @@ def make_registry_item(
     )
 
 
+@_registry_locked
 def reactivate_unloaded_registry_entries(
     upload_root_dir: Path,
     relative_paths: Iterable[str],
@@ -337,6 +363,7 @@ def reactivate_unloaded_registry_entries(
     return restored, restored_paths
 
 
+@_registry_locked
 def unload_files_from_registry(
     *,
     upload_root_dir: Path,
@@ -396,6 +423,7 @@ def unload_files_from_registry(
     return unloaded, missing
 
 
+@_registry_locked
 def purge_files_from_registry(
     *,
     upload_root_dir: Path,

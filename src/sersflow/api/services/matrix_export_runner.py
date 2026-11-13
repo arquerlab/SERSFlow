@@ -157,7 +157,7 @@ def execute_matrix_export_job(matrix_job_id: str) -> None:
             npz_path,
             Y=Y,
             x=x0.astype(np.float64),
-            spectrum_ids=np.array(sids, dtype=object),
+            spectrum_ids=np.array([str(v) for v in sids], dtype=str),  # plain strings: loadable without pickle
         )
 
         manifest: dict[str, Any] = {
@@ -224,7 +224,7 @@ def import_matrix_job_from_csv(
             npz_path,
             Y=np.asarray(y, dtype=np.float32),
             x=np.asarray(x, dtype=np.float64),
-            spectrum_ids=np.array(sids, dtype=object),
+            spectrum_ids=np.array([str(v) for v in sids], dtype=str),  # plain strings: loadable without pickle
         )
         manifest: dict[str, Any] = {
             "matrix_job_id": jid,

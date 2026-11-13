@@ -6,6 +6,8 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.gzip import GZipMiddleware
 
+from sersflow.api.middleware.security import SecurityHeadersMiddleware
+
 from sersflow.api.middleware.auth import AuthMiddleware, auth_disabled
 from sersflow.api.middleware.data_scope import DataScopeMiddleware
 from sersflow.api.routers.auth import router as auth_router
@@ -30,6 +32,7 @@ from sersflow.api.routers.xps_region_sets import router as xps_region_sets_route
 app = FastAPI(title="SpecFlow API", version="0.2.0")
 app.add_middleware(DataScopeMiddleware)
 app.add_middleware(AuthMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 # Outermost: compress JSON (spectra arrays) and the JS/CSS bundle for clients that accept gzip.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
@@ -67,6 +70,9 @@ def _migrate_legacy_gl_lineshapes() -> None:
 
 @app.on_event("startup")
 def _warn_if_auth_disabled() -> None:
+    from sersflow.api.auth_session import warn_if_weak_secret
+
+    warn_if_weak_secret()
     if auth_disabled():
         logger.warning(
             "SERSFLOW_AUTH_DISABLED is set — API is open with user_id=dev. Do not use in production."

@@ -41,8 +41,23 @@ def load_pca_artifact(path: str | Path) -> dict[str, Any]:
     return data
 
 
+def load_matrix_npz(npz_path: str | Path) -> dict[str, np.ndarray]:
+    """
+    Arrays of a matrix-job ``matrix.npz`` (``Y``, ``x``, ``spectrum_ids``).
+
+    Files are written with plain string ids and loaded WITHOUT pickle. Files written before that stored the ids as
+    a pickled object array; only for those is pickle allowed (they were produced by this server).
+    """
+    try:
+        with np.load(str(npz_path), allow_pickle=False) as data:
+            return {k: np.asarray(data[k]) for k in data.files}
+    except ValueError:
+        with np.load(str(npz_path), allow_pickle=True) as data:
+            return {k: np.asarray(data[k]) for k in data.files}
+
+
 def iter_matrix_csv_bytes(npz_path: str | Path) -> Iterator[bytes]:
-    data = np.load(str(npz_path), allow_pickle=True)
+    data = load_matrix_npz(npz_path)
     y = np.asarray(data["Y"])
     x = np.asarray(data["x"]).ravel()
     spectrum_ids = [str(v) for v in np.asarray(data["spectrum_ids"]).ravel().tolist()]

@@ -53,6 +53,8 @@ def parse_expression(expr: str) -> ParsedExpression:
     text = str(expr or "").strip()
     if not text:
         raise ValueError("expression is empty")
+    if len(text) > MAX_EXPRESSION_CHARS:
+        raise ValueError(f"expression is too long ({len(text)} characters; the limit is {MAX_EXPRESSION_CHARS})")
     refs = expression_refs(text)
 
     def repl(m: re.Match[str]) -> str:
@@ -65,8 +67,45 @@ def parse_expression(expr: str) -> ParsedExpression:
         tree = ast.parse(template, mode="eval")
     except SyntaxError as e:
         raise ValueError(f"syntax error in {text!r}: {e.msg}") from e
-    _check_node(tree, text)
+    except (RecursionError, MemoryError) as e:
+        raise ValueError("expression is nested too deeply") from e
+    try:
+        _check_node(tree, text)
+    except RecursionError as e:
+        raise ValueError("expression is nested too deeply") from e
     return ParsedExpression(refs=refs, template=template)
+
+
+MAX_EXPRESSION_CHARS = 2000
+_MAX_INT_EXPONENT = 64
+
+
+def _int_only(node: ast.AST) -> bool:
+    """True for a subtree made of integer literals and operators only: the one place Python computes exact
+    (arbitrarily large) integers. Anything involving a parameter or a float is ordinary float arithmetic."""
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, int) and not isinstance(node.value, bool)
+    if isinstance(node, ast.UnaryOp):
+        return _int_only(node.operand)
+    if isinstance(node, ast.BinOp):
+        return _int_only(node.left) and _int_only(node.right)
+    return False
+
+
+def _contains_pow(node: ast.AST) -> bool:
+    return any(isinstance(n, ast.BinOp) and isinstance(n.op, ast.Pow) for n in ast.walk(node))
+
+
+def _check_int_power(node: ast.BinOp, text: str) -> None:
+    """Refuse integer towers such as ``(9**9999)**9999`` that would take minutes and gigabytes to evaluate."""
+    if not (_int_only(node.left) and _int_only(node.right)):
+        return
+    exponent = node.right.operand if isinstance(node.right, ast.UnaryOp) else node.right
+    small = isinstance(exponent, ast.Constant) and abs(int(exponent.value)) <= _MAX_INT_EXPONENT
+    if not small or _contains_pow(node.left):
+        raise ValueError(
+            f"integer power too large in {text!r}; write the number directly (e.g. 1e30) or use a float base"
+        )
 
 
 def _check_node(node: ast.AST, text: str) -> None:
@@ -87,6 +126,8 @@ def _check_node(node: ast.AST, text: str) -> None:
     elif isinstance(node, ast.BinOp):
         if not isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow)):
             raise ValueError(f"operator not allowed in {text!r} (use + - * / **)")
+        if isinstance(node.op, ast.Pow):
+            _check_int_power(node, text)
         _check_node(node.left, text)
         _check_node(node.right, text)
     elif isinstance(node, ast.Call):

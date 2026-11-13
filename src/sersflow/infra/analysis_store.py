@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 from uuid import uuid4
 
+from sersflow.infra.artifact_cleanup import remove_artifact_dirs
 from sersflow.infra.sqlite_db import connect, schema_once
 
 
@@ -246,18 +247,41 @@ def set_run_warnings(*, run_id: str, warnings: dict[str, Any] | None) -> None:
         con.execute("UPDATE analysis_runs SET warnings_json = ? WHERE run_id = ?", (payload, run_id))
 
 
+def _job_artifact_dirs(con: sqlite3.Connection, run_ids: list[str]) -> list[str]:
+    """Artifact folders of the export / Monte Carlo / sweep / robustness / report jobs of these runs.
+
+    Their rows go with the run (ON DELETE CASCADE); the folders have to be removed explicitly or they stay on
+    disk forever, unreachable.
+    """
+    dirs: list[str] = []
+    for i in range(0, len(run_ids), 500):
+        chunk = run_ids[i : i + 500]
+        ph = ",".join("?" for _ in chunk)
+        rows = con.execute(f"SELECT job_id FROM fit_curve_jobs WHERE run_id IN ({ph})", chunk).fetchall()
+        dirs.extend(f"fit_curve_jobs/{r['job_id']}" for r in rows)
+    return dirs
+
+
 def delete_run(*, run_id: str) -> bool:
     ensure_schema()
     with connect() as con:
+        dirs = _job_artifact_dirs(con, [run_id])
         cur = con.execute("DELETE FROM analysis_runs WHERE run_id = ?", (run_id,))
-        return int(cur.rowcount or 0) > 0
+        deleted = int(cur.rowcount or 0) > 0
+    if deleted:
+        remove_artifact_dirs(dirs)
+    return deleted
 
 
 def delete_runs_for_dataset(*, dataset_id: str) -> int:
     ensure_schema()
     with connect() as con:
+        run_ids = [str(r["run_id"]) for r in con.execute("SELECT run_id FROM analysis_runs WHERE dataset_id = ?", (dataset_id,))]
+        dirs = _job_artifact_dirs(con, run_ids)
         cur = con.execute("DELETE FROM analysis_runs WHERE dataset_id = ?", (dataset_id,))
-        return int(cur.rowcount or 0)
+        n = int(cur.rowcount or 0)
+    remove_artifact_dirs(dirs)
+    return n
 
 
 def find_run_by_client_job_key(client_job_key: str, *, dataset_id: str | None = None) -> AnalysisRunRecord | None:
@@ -470,7 +494,9 @@ def prune_unpinned_runs(*, dataset_id: str, max_keep: int | None = None) -> int:
         if len(ids) <= cap:
             return 0
         to_del = ids[cap:]
+        dirs = _job_artifact_dirs(con, [str(i) for i in to_del])
         con.executemany("DELETE FROM analysis_runs WHERE run_id = ?", [(i,) for i in to_del])
+    remove_artifact_dirs(dirs)
     return len(to_del)
 
 

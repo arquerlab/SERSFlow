@@ -53,6 +53,8 @@ from sersflow.api.services.technique_guard import (
     prepare_pipeline_for_run,
 )
 from sersflow.api.deps import current_user_id
+from sersflow.api.services.explore_export import load_matrix_npz
+from sersflow.api.services.limits import read_limited
 from sersflow.api.services.ownership import (
     get_dataset_for_user,
     get_explore_run_for_user,
@@ -331,7 +333,7 @@ def import_matrix_job_csv(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Matrix CSV file is required")
     try:
-        data = file.file.read()
+        data = read_limited(file.file, what="matrix CSV")
         if not data:
             raise ValueError("Matrix CSV file is empty")
         jid = import_matrix_job_from_csv(
@@ -541,7 +543,7 @@ def post_fpca_discrete(payload: FPCADiscreteRequest, request: Request) -> Explor
     mj = get_matrix_job_for_user(payload.matrix_job_id, user_id)
     if mj is None or mj.status != "completed" or not mj.npz_path:
         raise HTTPException(status_code=400, detail="matrix job not completed or npz missing")
-    data = np.load(mj.npz_path, allow_pickle=True)
+    data = load_matrix_npz(mj.npz_path)
     Y = np.asarray(data["Y"], dtype=np.float32)
     x = np.asarray(data["x"], dtype=np.float64)
     if Y.ndim != 2 or Y.shape[0] < 2:
@@ -600,7 +602,7 @@ def post_spectrum_cluster(payload: SpectrumClusterRequest, request: Request) -> 
     mj = get_matrix_job_for_user(payload.matrix_job_id, user_id)
     if mj is None or mj.status != "completed" or not mj.npz_path:
         raise HTTPException(status_code=400, detail="matrix job not completed or npz missing")
-    data = np.load(mj.npz_path, allow_pickle=True)
+    data = load_matrix_npz(mj.npz_path)
     Y = np.asarray(data["Y"], dtype=np.float32)
     sids_obj = data["spectrum_ids"]
     spectrum_ids = [str(x) for x in np.asarray(sids_obj).ravel().tolist()]
@@ -638,7 +640,7 @@ def post_fpca_fda(payload: FPCAFDARequest, request: Request) -> ExploreJobRespon
     mj = get_matrix_job_for_user(payload.matrix_job_id, user_id)
     if mj is None or mj.status != "completed" or not mj.npz_path:
         raise HTTPException(status_code=400, detail="matrix job not completed or npz missing")
-    data = np.load(mj.npz_path, allow_pickle=True)
+    data = load_matrix_npz(mj.npz_path)
     Y = np.asarray(data["Y"], dtype=np.float32)
     x = np.asarray(data["x"], dtype=np.float64)
     sids_obj = data["spectrum_ids"]

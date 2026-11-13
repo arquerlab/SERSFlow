@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from sersflow.api.schemas.datasets import DatasetImportResponse, DatasetMetadata, SpectrumRef
+from sersflow.api.services.limits import check_zip_member
 from sersflow.api.services.ownership import OwnershipError, assert_path_owner
 from sersflow.infra.blob_store import data_root, ensure_within_data_root, resolve_blob_path
 from sersflow.infra.datasets_store import create_dataset, get_dataset, to_schema
@@ -19,6 +20,7 @@ from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, up
 
 DATASET_SCHEMA_VERSION = "sersflow.dataset.v1"
 _BLOB_SUFFIX_RE = re.compile(r"\.[a-z0-9]{1,12}")
+_MAX_MANIFEST_BYTES = 256 * 1024 * 1024
 
 
 def _utc_now_iso() -> str:
@@ -179,6 +181,7 @@ def import_dataset_package(data: bytes, *, owner_user_id: str) -> DatasetImportR
         raise ValueError("Invalid dataset package zip") from e
     with zf:
         try:
+            check_zip_member(zf.getinfo("manifest.json"), limit=_MAX_MANIFEST_BYTES)
             manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
         except KeyError as e:
             raise ValueError("Dataset package is missing manifest.json") from e
@@ -203,6 +206,7 @@ def import_dataset_package(data: bytes, *, owner_user_id: str) -> DatasetImportR
             if not blob_rel or not zip_path or not blob_id:
                 raise ValueError("Dataset manifest has an incomplete blob entry")
             try:
+                check_zip_member(zf.getinfo(zip_path))  # declared size, before inflating it into memory
                 payload = zf.read(zip_path)
             except KeyError as e:
                 raise ValueError(f"Dataset package is missing blob file {zip_path}") from e

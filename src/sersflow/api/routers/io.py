@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 
 from sersflow.api.deps import current_user_id
+from sersflow.api.services.limits import PayloadTooLarge, copy_limited
 from sersflow.api.services.ownership import (
     OwnershipError,
     assert_paths_owner,
@@ -312,8 +313,12 @@ def upload_files(
             name = Path(rel_subpath).name
             target = batch_dir / rel_subpath
             target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open("wb") as out_f:
-                shutil.copyfileobj(f.file, out_f)
+            try:
+                with target.open("wb") as out_f:
+                    copy_limited(f.file, out_f, what=f"upload {name!r}")
+            except PayloadTooLarge as e:
+                target.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail=str(e)) from e
             saved += 1
             try:
                 size = target.stat().st_size

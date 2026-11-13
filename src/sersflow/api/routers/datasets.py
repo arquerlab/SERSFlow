@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile
 
 from sersflow.api.deps import current_user_id
+from sersflow.api.services.limits import PayloadTooLarge, read_limited
 from sersflow.api.schemas.datasets import (
     DatasetCreateRequest,
     DatasetCreateResponse,
@@ -110,8 +111,10 @@ def import_dataset_endpoint(request: Request, file: UploadFile = File(...)) -> D
     if not file.filename:
         raise HTTPException(status_code=400, detail="Dataset package file is required")
     try:
-        data = file.file.read()
+        data = read_limited(file.file, what="dataset package")
         return import_dataset_package(data, owner_user_id=user_id)
+    except PayloadTooLarge as e:
+        raise HTTPException(status_code=413, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     finally:

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from sersflow.infra.artifact_cleanup import remove_artifact_dirs
 from sersflow.infra.sqlite_db import connect, schema_once
 
 
@@ -270,7 +271,10 @@ def delete_matrix_job(matrix_job_id: str) -> bool:
     ensure_schema()
     with connect() as con:
         cur = con.execute("DELETE FROM matrix_jobs WHERE matrix_job_id = ?", (matrix_job_id,))
-        return cur.rowcount > 0
+        deleted = cur.rowcount > 0
+    if deleted:
+        remove_artifact_dirs([f"matrix/{matrix_job_id}"])  # matrix.npz; the row alone used to be deleted
+    return deleted
 
 
 def create_explore_run(
@@ -355,7 +359,7 @@ def prune_explore_runs(*, dataset_id: str, max_keep: int | None = None) -> int:
     with connect() as con:
         rows = con.execute(
             """
-            SELECT explore_id FROM explore_runs
+            SELECT explore_id, artifact_subdir FROM explore_runs
             WHERE dataset_id = ? AND pinned = 0
             ORDER BY created_at DESC
             """,
@@ -365,5 +369,14 @@ def prune_explore_runs(*, dataset_id: str, max_keep: int | None = None) -> int:
         if len(ids) <= cap:
             return 0
         to_del = ids[cap:]
+        subdirs = {str(r["artifact_subdir"]) for r in rows[cap:] if r["artifact_subdir"]}
         con.executemany("DELETE FROM explore_runs WHERE explore_id = ?", [(i,) for i in to_del])
+        # Several explore runs of one kind share a folder (explore/pca_<run id>): only remove folders that no
+        # remaining explore run points at.
+        orphaned = [
+            d
+            for d in sorted(subdirs)
+            if con.execute("SELECT 1 FROM explore_runs WHERE artifact_subdir = ? LIMIT 1", (d,)).fetchone() is None
+        ]
+    remove_artifact_dirs(orphaned)
     return len(to_del)

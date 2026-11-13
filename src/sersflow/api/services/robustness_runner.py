@@ -129,7 +129,8 @@ def parse_options(opts: dict[str, Any]) -> dict[str, Any]:
         "noise_reference_cell": ref or design.cells[0].cell_id,
         "noise_seed": int(noise.get("seed") or 0),
         "reference_cell": opts.get("reference_cell"),
-        "workers": int(opts.get("workers") or default_workers()),
+        # Never more processes than CPUs, whatever the request asks for (the schema allows up to 128).
+        "workers": max(1, min(int(opts.get("workers") or default_workers()), os.cpu_count() or 1)),
         "allow_large": bool(opts.get("allow_large")),
         "allow_inert": bool(opts.get("allow_inert")),
     }

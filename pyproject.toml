@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
   "fastapi",
   "uvicorn[standard]",
-  "python-multipart",
+  "python-multipart>=0.0.18",
   "pandas",
   "numpy",
   "scipy",

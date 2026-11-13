@@ -1,12 +1,13 @@
 fastapi
 uvicorn[standard]
-python-multipart
+python-multipart>=0.0.18
 pandas
 numpy
 scipy
 scikit-learn
 matplotlib
 renishawWiRE
+bcrypt
 pybaselines
 lmfitxps>=4.2.0
 h5py>=3.8

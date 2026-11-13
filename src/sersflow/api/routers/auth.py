@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
+import threading
+import time
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from sersflow.api.auth_session import COOKIE_NAME, cookie_secure, sign_session
+from sersflow.api.auth_session import COOKIE_NAME, cookie_secure, session_ttl_seconds, sign_session
 from sersflow.api.data_scope import ACT_AS_ALL, ACT_AS_COOKIE, get_data_scope, resolve_data_scope
 from sersflow.api.deps import current_user_id
 from sersflow.api.middleware.auth import DEV_USER_ID, auth_disabled
@@ -14,10 +17,53 @@ from sersflow.infra.auth_store import (
     get_user_by_id,
     get_user_by_username,
     list_users,
+    session_state,
     verify_user,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+# Failed-login throttle, per username (requests arrive through one reverse proxy, so the client IP is not usable).
+# In-memory: it resets on restart, which is acceptable for slowing down password guessing.
+_LOGIN_MAX_FAILURES = 10
+_LOGIN_WINDOW_S = 300.0
+_login_failures: dict[str, list[float]] = {}
+_login_lock = threading.Lock()
+
+
+def _login_retry_after(username: str) -> int:
+    """Seconds until this username may try again (0 when not throttled)."""
+    key = username.strip().lower()
+    now = time.monotonic()
+    with _login_lock:
+        recent = [t for t in _login_failures.get(key, []) if now - t < _LOGIN_WINDOW_S]
+        if recent:
+            _login_failures[key] = recent
+        else:
+            _login_failures.pop(key, None)
+        if len(recent) >= _LOGIN_MAX_FAILURES:
+            return max(1, int(_LOGIN_WINDOW_S - (now - recent[0])) + 1)
+    return 0
+
+
+def _record_login_failure(username: str) -> None:
+    key = username.strip().lower()
+    with _login_lock:
+        if len(_login_failures) > 10_000:  # bound memory against made-up usernames
+            _login_failures.clear()
+        _login_failures.setdefault(key, []).append(time.monotonic())
+
+
+def _clear_login_failures(username: str) -> None:
+    with _login_lock:
+        _login_failures.pop(username.strip().lower(), None)
+
+
+def reset_login_throttle() -> None:
+    with _login_lock:
+        _login_failures.clear()
 
 
 def _dev_user() -> UserRecord:
@@ -94,21 +140,32 @@ def _require_superuser(request: Request):
 
 
 @router.post("/login")
-def login(payload: LoginRequest, response: Response) -> dict[str, Any]:
+def login(payload: LoginRequest, request: Request, response: Response) -> dict[str, Any]:
     if auth_disabled():
         # Open mode: no credentials required; UI/API treat the actor as synthetic dev.
         return _user_payload(_dev_user())
+    wait_s = _login_retry_after(payload.username)
+    if wait_s:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed sign-in attempts for this user. Try again later.",
+            headers={"Retry-After": str(wait_s)},
+        )
     user = verify_user(username=payload.username, password=payload.password)
     if user is None:
+        _record_login_failure(payload.username)
+        logger.warning("failed sign-in for username %r", payload.username.strip()[:64])
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    token = sign_session(user_id=user.user_id)
+    _clear_login_failures(payload.username)
+    state = session_state(user.user_id)
+    token = sign_session(user_id=user.user_id, version=state[0] if state else 0)
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
         samesite="lax",
-        secure=cookie_secure(),
-        max_age=60 * 60 * 24 * 7,
+        secure=cookie_secure(request),
+        max_age=session_ttl_seconds(),
         path="/",
     )
     if user.is_superuser:
@@ -117,7 +174,7 @@ def login(payload: LoginRequest, response: Response) -> dict[str, Any]:
             value=ACT_AS_ALL,
             httponly=True,
             samesite="lax",
-            secure=cookie_secure(),
+            secure=cookie_secure(request),
             max_age=60 * 60 * 24 * 30,
             path="/",
         )
@@ -185,7 +242,7 @@ def set_act_as(payload: ActAsRequest, request: Request, response: Response) -> A
         value=cookie_value,
         httponly=True,
         samesite="lax",
-        secure=cookie_secure(),
+        secure=cookie_secure(request),
         max_age=60 * 60 * 24 * 30,
         path="/",
     )

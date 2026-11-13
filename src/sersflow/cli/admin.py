@@ -3,15 +3,34 @@ from __future__ import annotations
 import argparse
 import sys
 
-from sersflow.infra.auth_store import create_user, set_superuser
+from sersflow.infra.auth_store import create_user, set_disabled, set_password, set_superuser
 from sersflow.infra.migration_store import assign_orphans
+
+
+def _read_password(args: argparse.Namespace) -> str:
+    """
+    Password from the optional positional argument, else from stdin (piped) or a hidden prompt.
+
+    Prefer the prompt: a password typed as an argument ends up in the shell history and the process list.
+    """
+    given = getattr(args, "password", None)
+    if given:
+        return str(given)
+    if not sys.stdin.isatty():
+        return sys.stdin.readline().rstrip("\r\n")
+    import getpass
+
+    first = getpass.getpass("Password: ")
+    if first != getpass.getpass("Repeat password: "):
+        raise ValueError("passwords do not match")
+    return first
 
 
 def _cmd_create_user(args: argparse.Namespace) -> int:
     try:
         user = create_user(
             username=args.username,
-            password=args.password,
+            password=_read_password(args),
             is_superuser=bool(args.superuser),
         )
     except ValueError as e:
@@ -19,6 +38,26 @@ def _cmd_create_user(args: argparse.Namespace) -> int:
         return 1
     role = "superuser" if user.is_superuser else "user"
     print(f"created {role} {user.username} ({user.user_id})")
+    return 0
+
+
+def _cmd_set_password(args: argparse.Namespace) -> int:
+    try:
+        user = set_password(username=args.username, password=_read_password(args))
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"password changed for {user.username}; their existing sessions are signed out")
+    return 0
+
+
+def _cmd_set_disabled(args: argparse.Namespace) -> int:
+    try:
+        user = set_disabled(username=args.username, disabled=bool(args.disabled))
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"{'disabled' if args.disabled else 'enabled'} {user.username} ({user.user_id})")
     return 0
 
 
@@ -90,13 +129,26 @@ def main(argv: list[str] | None = None) -> int:
 
     create = sub.add_parser("create-user", help="Create a username/password user")
     create.add_argument("username")
-    create.add_argument("password")
+    create.add_argument("password", nargs="?", help="omit to be prompted (recommended)")
     create.add_argument(
         "--superuser",
         action="store_true",
         help="Grant global access to all users' data",
     )
     create.set_defaults(func=_cmd_create_user)
+
+    setpw = sub.add_parser("set-password", help="Change a user's password and sign them out everywhere")
+    setpw.add_argument("username")
+    setpw.add_argument("password", nargs="?", help="omit to be prompted (recommended)")
+    setpw.set_defaults(func=_cmd_set_password)
+
+    disable = sub.add_parser("disable-user", help="Block sign-in and end the user's sessions (data is kept)")
+    disable.add_argument("username")
+    disable.set_defaults(func=_cmd_set_disabled, disabled=True)
+
+    enable = sub.add_parser("enable-user", help="Allow a disabled user to sign in again")
+    enable.add_argument("username")
+    enable.set_defaults(func=_cmd_set_disabled, disabled=False)
 
     grant = sub.add_parser("grant-superuser", help="Grant global access to an existing user")
     grant.add_argument("username")

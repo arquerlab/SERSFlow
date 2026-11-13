@@ -112,10 +112,18 @@ def _open_readonly(path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
 
 
+_MAX_COUNTS_BYTES = 256 * 1024 * 1024  # one spectrum's float32 counts; real ones are a few KB
+
+
 def _decode_counts(blob: bytes) -> np.ndarray:
     """CountRateData blobs are zlib-compressed float32; tolerate uncompressed ones."""
     try:
-        blob = zlib.decompress(blob)
+        inflater = zlib.decompressobj()
+        inflated = inflater.decompress(blob, _MAX_COUNTS_BYTES)
+        if inflater.unconsumed_tail:
+            # A few-KB blob that inflates to gigabytes would exhaust memory at upload time.
+            raise ValueError("SLE spectrum data is implausibly large (corrupt or malicious file)")
+        blob = inflated
     except zlib.error:
         pass
     return np.frombuffer(blob, dtype="<f4").astype(float)
