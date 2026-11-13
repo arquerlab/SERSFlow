@@ -643,6 +643,7 @@ def preview_purge(payload: PurgePreviewRequest | None, request: Request) -> dict
             upload_root_dir=root_dir,
             relative_paths=payload.relative_paths if payload else None,
             hidden_only=payload.hidden_only if payload else True,
+            row_filter=lambda rows: filter_registry_by_owner(rows, user_id),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

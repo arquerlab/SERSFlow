@@ -259,13 +259,20 @@ def delete_runs_for_dataset(*, dataset_id: str) -> int:
         return int(cur.rowcount or 0)
 
 
-def find_run_by_client_job_key(client_job_key: str) -> AnalysisRunRecord | None:
+def find_run_by_client_job_key(client_job_key: str, *, dataset_id: str | None = None) -> AnalysisRunRecord | None:
+    """Idempotency lookup. Pass ``dataset_id`` (one the caller may read) so a key never matches another user's run."""
     ensure_schema()
     with connect() as con:
-        row = con.execute(
-            "SELECT * FROM analysis_runs WHERE client_job_key = ?",
-            (client_job_key,),
-        ).fetchone()
+        if dataset_id is None:
+            row = con.execute(
+                "SELECT * FROM analysis_runs WHERE client_job_key = ?",
+                (client_job_key,),
+            ).fetchone()
+        else:
+            row = con.execute(
+                "SELECT * FROM analysis_runs WHERE client_job_key = ? AND dataset_id = ?",
+                (client_job_key, dataset_id),
+            ).fetchone()
         if row is None:
             return None
         return _row_to_run(row)

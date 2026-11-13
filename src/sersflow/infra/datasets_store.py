@@ -555,6 +555,33 @@ def _all_blob_paths() -> list[str]:
     return [str(r["blob_relative_path"]) for r in rows if r["blob_relative_path"]]
 
 
+def blobs_referenced_by_owner(blob_relative_paths: Iterable[str], *, owner_user_id: str) -> set[str]:
+    """Subset of the given blob paths used by a dataset (or a derived spectrum of a dataset) this owner owns."""
+    wanted = [p for p in dict.fromkeys(str(b) for b in blob_relative_paths if b)]
+    if not wanted:
+        return set()
+    ensure_schema()
+    found: set[str] = set()
+    with connect() as con:
+        for i in range(0, len(wanted), 500):
+            chunk = wanted[i : i + 500]
+            ph = ",".join("?" for _ in chunk)
+            for table in ("dataset_spectra", "derived_spectra"):
+                try:
+                    rows = con.execute(
+                        f"""
+                        SELECT DISTINCT s.blob_relative_path AS b
+                        FROM {table} s JOIN datasets d ON d.dataset_id = s.dataset_id
+                        WHERE d.owner_user_id = ? AND s.blob_relative_path IN ({ph})
+                        """,
+                        [owner_user_id, *chunk],
+                    ).fetchall()
+                except sqlite3.OperationalError:  # derived_spectra is created lazily
+                    continue
+                found.update(str(r["b"]) for r in rows)
+    return found
+
+
 def delete_unreferenced_dataset_blobs(blob_relative_paths: Iterable[str]) -> int:
     unique = sorted({p for p in blob_relative_paths if p})
     removed = 0

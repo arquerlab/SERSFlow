@@ -213,6 +213,7 @@ def post_matrix_job(payload: MatrixExportRequest, request: Request) -> MatrixExp
         pipeline,
         dataset_technique_family(ds.metadata),
         context=f"matrix job on dataset {payload.dataset_id}",
+        user_id=user_id,
     )
     if pipeline_json is not None:
         pipeline_json = pipeline.model_dump_json()

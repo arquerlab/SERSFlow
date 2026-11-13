@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from uuid import uuid4
 
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
@@ -457,9 +457,12 @@ def preview_purge_files(
     upload_root_dir: Path,
     relative_paths: list[str] | None = None,
     hidden_only: bool = True,
+    row_filter: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """
     Preview permanent deletion candidates without deleting files.
+
+    ``row_filter`` restricts the registry rows considered (the API passes the caller's owner filter).
     """
     if relative_paths is not None:
         if not isinstance(relative_paths, list) or not all(isinstance(x, str) for x in relative_paths):
@@ -473,6 +476,8 @@ def preview_purge_files(
         *read_upload_registry(upload_root_dir),
         *read_unloaded_registry(upload_root_dir),
     ]
+    if row_filter is not None:
+        source_rows = row_filter(list(source_rows))
     wanted = set(relative_paths) if relative_paths is not None else None
     by_rel: dict[str, dict[str, Any]] = {}
     for row in source_rows:

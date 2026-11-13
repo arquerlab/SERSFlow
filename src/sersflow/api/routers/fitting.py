@@ -7,6 +7,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Request
 
 from sersflow.api.deps import current_user_id
+from sersflow.api.services.reference_access import assert_references_visible
 from sersflow.api.services.ownership import OwnershipError
 
 from sersflow.api.schemas.fitting import (
@@ -128,6 +129,7 @@ def test_peak_model(payload: PeakModelTestRequest, request: Request) -> dict[str
     from sersflow.core.metrics.peak_model_test import noise_replicates, scan_parameter
 
     user_id = current_user_id(request)
+    assert_references_visible(user_id, [c.model_extra or {} for c in payload.fit.components])
     try:
         xy = _resolve_target_xy(payload.fit.target, owner_user_id=user_id)
         step_params = _step_params_from_request(payload.fit)
@@ -199,6 +201,7 @@ def _evaluate_only(prob: Any) -> Any:
 @router.post("/fit", response_model=FitResponse)
 def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
+    assert_references_visible(user_id, [c.model_extra or {} for c in payload.components])
     try:
         xy = _resolve_target_xy(payload.target, owner_user_id=user_id)
 

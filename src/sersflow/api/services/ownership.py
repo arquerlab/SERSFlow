@@ -15,7 +15,12 @@ from sersflow.core.io.upload_registry import (
     upload_root,
 )
 from sersflow.infra.analysis_store import get_run
-from sersflow.infra.datasets_store import DatasetRecord, get_dataset, get_dataset_internal
+from sersflow.infra.datasets_store import (
+    DatasetRecord,
+    blobs_referenced_by_owner,
+    get_dataset,
+    get_dataset_internal,
+)
 from sersflow.infra.explore_store import get_explore_run, get_matrix_job
 from sersflow.infra.sessions_store import SessionRecord, get_session
 
@@ -63,16 +68,50 @@ def registry_owner_for_path(relative_path: str) -> str | None:
     return _registry_owner_index.get(relative_path)
 
 
+def _path_owner(relative_path: str) -> str | None:
+    if relative_path.startswith("derived/"):  # group aggregates: owned via their dataset
+        from sersflow.infra.derived_spectra_store import derived_path_owner
+
+        return derived_path_owner(relative_path)
+    return registry_owner_for_path(relative_path)
+
+
+def assert_inputs_owner(user_id: str, inputs: list[SpectrumRef]) -> None:
+    """
+    Ownership check for spectrum refs supplied IN A REQUEST BODY (pipeline run / sweep / metrics).
+
+    The engine reads from ``blob_relative_path`` when a ref carries one, so checking ``relative_path`` alone is not
+    enough: a ref with a blob path is accepted only when that blob belongs to one of the caller's datasets, and its
+    ``relative_path`` (used for labels) must not be another user's upload.
+    """
+    if has_global_access(user_id):
+        return
+    effective = resolve_owner_user_id(user_id)
+    blob_refs = [r for r in inputs if str(r.blob_relative_path or "").strip()]
+    owned_blobs = (
+        blobs_referenced_by_owner((str(r.blob_relative_path) for r in blob_refs), owner_user_id=effective)
+        if blob_refs
+        else set()
+    )
+    for ref in inputs:
+        rel = str(ref.relative_path or "").strip()
+        blob = str(ref.blob_relative_path or "").strip()
+        if not blob:
+            if rel:
+                assert_path_owner(user_id, rel)
+            continue
+        if blob not in owned_blobs:
+            raise OwnershipError(rel or blob)
+        owner = _path_owner(rel) if rel else None
+        if owner is not None and owner != effective:
+            raise OwnershipError(rel)
+
+
 def assert_path_owner(user_id: str, relative_path: str) -> None:
     if has_global_access(user_id):
         return
     effective = resolve_owner_user_id(user_id)
-    if relative_path.startswith("derived/"):  # group aggregates: owned via their dataset
-        from sersflow.infra.derived_spectra_store import derived_path_owner
-
-        owner = derived_path_owner(relative_path)
-    else:
-        owner = registry_owner_for_path(relative_path)
+    owner = _path_owner(relative_path)
     if owner is None:
         raise OwnershipError(relative_path)
     if owner != effective:
@@ -167,6 +206,7 @@ def ownership_http_error(exc: OwnershipError, *, destructive: bool = False) -> H
 
 # Re-export internal getter for workers only.
 __all__ = [
+    "assert_inputs_owner",
     "assert_path_owner",
     "assert_paths_owner",
     "filter_registry_by_owner",

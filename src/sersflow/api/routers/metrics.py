@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from sersflow.api.deps import current_user_id
 from sersflow.api.schemas.metrics import MetricsComputeRequest, MetricsComputeResponse
 from sersflow.api.schemas.pipeline import Pipeline
-from sersflow.api.services.ownership import OwnershipError, assert_paths_owner, paths_from_pipeline_inputs
+from sersflow.api.services.ownership import OwnershipError, assert_inputs_owner
 from sersflow.core.metrics.compute import compute_metrics
 from sersflow.core.pipeline.cache import InProcessLRUCache
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
@@ -22,7 +22,7 @@ _cache = InProcessLRUCache(max_items=4096)
 def metrics_compute(payload: MetricsComputeRequest, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
     try:
-        assert_paths_owner(user_id, paths_from_pipeline_inputs(payload.inputs))
+        assert_inputs_owner(user_id, payload.inputs)
         pipeline = payload.pipeline or Pipeline(steps=[])
         cfg = EngineConfig(cache_namespace=payload.cache_namespace or "default")
         final = run_pipeline(inputs=payload.inputs, pipeline=pipeline, cache=_cache, config=cfg, strict=True)

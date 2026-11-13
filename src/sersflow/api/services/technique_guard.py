@@ -59,10 +59,17 @@ def prepare_pipeline_for_run(
     *,
     context: str = "dataset and pipeline",
     allow_empty_align: bool = False,
+    user_id: str | None = None,
 ) -> Pipeline:
     """
     Align technique families and reject dual XPS static+active backgrounds.
+
+    With ``user_id``, also reject (404) reference spectra the caller cannot read (``reference_id`` in fit components).
     """
+    if user_id is not None:
+        from sersflow.api.services.reference_access import assert_pipeline_references_visible
+
+        assert_pipeline_references_visible(user_id, pipeline)
     from sersflow.core.pipeline.xps_background_guard import assert_no_dual_xps_background
 
     aligned = align_or_require_pipeline_technique(

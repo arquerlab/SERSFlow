@@ -194,9 +194,10 @@ def list_dataset_filter_fields(dataset_id: str, request: Request) -> dict[str, A
 def delete_dataset_endpoint(dataset_id: str, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
     deleted = delete_dataset(dataset_id, owner_user_id=user_id)
-    sessions_deleted = delete_sessions_for_dataset(dataset_id)
     if not deleted:
+        # Not found OR not the caller's: leave its sessions alone.
         raise HTTPException(status_code=404, detail="Dataset not found")
+    sessions_deleted = delete_sessions_for_dataset(dataset_id)
     return {"deleted": True, "sessions_deleted": sessions_deleted}
 
 

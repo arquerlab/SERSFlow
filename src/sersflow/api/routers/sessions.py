@@ -97,6 +97,7 @@ def create_session_endpoint(payload: SessionCreateRequest, request: Request) -> 
         payload.pipeline or Pipeline(steps=[]),
         dataset_technique_family(ds.metadata),
         context=f"session create on dataset {payload.dataset_id}",
+        user_id=user_id,
         allow_empty_align=True,
     )
     subset = payload.subset or SubsetStrategy(kind="all")
@@ -130,6 +131,7 @@ def update_pipeline_endpoint(
         payload.pipeline,
         dataset_technique_family(ds.metadata),
         context=f"session {session_id} pipeline update",
+        user_id=user_id,
         allow_empty_align=True,
     )
     rec = update_session_pipeline(session_id, pipeline)
@@ -388,6 +390,7 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
         rec.pipeline,
         dataset_technique_family(ds.metadata),
         context=f"session {session_id} run",
+        user_id=user_id,
     )
 
     runtime_pipeline = hydrate_reference_transforms(

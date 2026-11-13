@@ -300,7 +300,7 @@ def create_analysis_run(payload: AnalysisRunCreateRequest, request: Request) -> 
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     if payload.client_job_key:
-        existing = find_run_by_client_job_key(payload.client_job_key)
+        existing = find_run_by_client_job_key(payload.client_job_key, dataset_id=payload.dataset_id)
         if existing is not None:
             return _idempotent_response(existing)
 
@@ -337,6 +337,7 @@ def create_analysis_run(payload: AnalysisRunCreateRequest, request: Request) -> 
         pipeline,
         dataset_technique_family(ds.metadata),
         context=f"analysis run on dataset {payload.dataset_id}",
+        user_id=user_id,
     )
     # Always snapshot the pipeline the run actually used (session runs too): the session pipeline is
     # edited later, and exports / fit-curve jobs / previews must keep using what produced the run.
@@ -363,7 +364,7 @@ def create_analysis_run(payload: AnalysisRunCreateRequest, request: Request) -> 
     except sqlite3.IntegrityError:
         if not payload.client_job_key:
             raise HTTPException(status_code=409, detail="Insert conflict") from None
-        existing = find_run_by_client_job_key(payload.client_job_key)
+        existing = find_run_by_client_job_key(payload.client_job_key, dataset_id=payload.dataset_id)
         if existing is None:
             raise HTTPException(status_code=409, detail="Duplicate client_job_key conflict") from None
         return _idempotent_response(existing)

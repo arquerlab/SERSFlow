@@ -7,7 +7,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Request
 
 from sersflow.api.deps import current_user_id
-from sersflow.api.services.ownership import OwnershipError, assert_paths_owner, paths_from_pipeline_inputs
+from sersflow.api.services.ownership import OwnershipError, assert_inputs_owner, paths_from_pipeline_inputs
 from sersflow.api.services.technique_guard import prepare_pipeline_for_run
 from sersflow.core.io.technique import assert_homogeneous_technique_families
 from sersflow.core.io.upload_registry import upload_root
@@ -58,12 +58,13 @@ def run_pipeline_endpoint(payload: PipelineRunRequest, request: Request) -> dict
     user_id = current_user_id(request)
     try:
         paths = paths_from_pipeline_inputs(payload.inputs)
-        assert_paths_owner(user_id, paths)
+        assert_inputs_owner(user_id, payload.inputs)
         input_family = _infer_input_technique_family(paths)
         pipeline = prepare_pipeline_for_run(
             payload.pipeline,
             input_family if input_family is not None else getattr(payload.pipeline, "technique_family", None),
             context="pipeline run",
+            user_id=user_id,
             allow_empty_align=input_family is None,
         )
         cfg = EngineConfig(cache_namespace=payload.cache_namespace or "default")
@@ -119,7 +120,7 @@ def sweep_pipeline_endpoint(payload: PipelineSweepRequest, request: Request) -> 
     """
     user_id = current_user_id(request)
     try:
-        assert_paths_owner(user_id, paths_from_pipeline_inputs(payload.inputs))
+        assert_inputs_owner(user_id, payload.inputs)
         paths = paths_from_pipeline_inputs(payload.inputs)
         input_family = _infer_input_technique_family(paths)
         step_name = payload.sweep.step
@@ -175,6 +176,7 @@ def sweep_pipeline_endpoint(payload: PipelineSweepRequest, request: Request) -> 
                 sweep_pipeline,
                 input_family if input_family is not None else getattr(sweep_pipeline, "technique_family", None),
                 context="pipeline sweep",
+                user_id=user_id,
                 allow_empty_align=input_family is None,
             )
 
