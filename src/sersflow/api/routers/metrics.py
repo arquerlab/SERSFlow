@@ -9,13 +9,13 @@ from sersflow.api.schemas.metrics import MetricsComputeRequest, MetricsComputeRe
 from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.api.services.ownership import OwnershipError, assert_inputs_owner
 from sersflow.core.metrics.compute import compute_metrics
-from sersflow.core.pipeline.cache import InProcessLRUCache
+from sersflow.core.pipeline.cache import shared_pipeline_cache
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
 
 
 router = APIRouter(prefix="/metrics", tags=["Metrics"])
 
-_cache = InProcessLRUCache(max_items=4096)
+_cache = shared_pipeline_cache()
 
 
 @router.post("/compute", response_model=MetricsComputeResponse)

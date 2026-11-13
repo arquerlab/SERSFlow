@@ -11,13 +11,13 @@ from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.reference_runtime import hydrate_reference_transforms, reference_spectrum_ids
 from sersflow.core.metrics.compute import compute_metrics
-from sersflow.core.pipeline.cache import InProcessLRUCache
+from sersflow.core.pipeline.cache import shared_pipeline_cache
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
 from sersflow.core.pipeline.hashing import canonical_json, sha256_hex
 from sersflow.infra.datasets_store import DatasetRecord
 
 
-_cache = InProcessLRUCache(max_items=4096)
+_cache = shared_pipeline_cache()
 
 
 def pipeline_hash(pipeline: Pipeline) -> str:

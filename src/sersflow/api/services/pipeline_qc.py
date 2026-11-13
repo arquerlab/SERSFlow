@@ -6,7 +6,7 @@ from typing import Any, Literal
 import numpy as np
 
 from sersflow.api.schemas.pipeline import Pipeline, PipelineStep
-from sersflow.core.pipeline.cache import InProcessLRUCache
+from sersflow.core.pipeline.cache import shared_pipeline_cache
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
 from sersflow.core.qc.low_signal import low_signal_metric_value
 from sersflow.core.qc.outliers import outlier_scores_from_xy
@@ -33,7 +33,7 @@ class QcResult:
     meta: dict[str, Any]
 
 
-_cache = InProcessLRUCache(max_items=4096)
+_cache = shared_pipeline_cache()
 
 
 def is_qc_step(step: PipelineStep) -> bool:

@@ -133,10 +133,12 @@ export const UploadDatasetPicker = forwardRef<
 
   async function fetchItems() {
     try {
-      await queryClient.invalidateQueries({ queryKey: UPLOADS_LIST_QUERY_KEY });
+      // fetchQuery alone refetches (staleTime 0) and updates the cache every subscriber reads; invalidating
+      // first made the same 5000-item list load twice per refresh.
       const data = await queryClient.fetchQuery({
         queryKey: [...UPLOADS_LIST_QUERY_KEY, 5000],
         queryFn: () => fetchUploadsList(5000),
+        staleTime: 0,
       });
       const fetched: UploadItem[] = data.items ?? [];
       const total = Number.isFinite(Number(data.count)) ? Number(data.count) : fetched.length;
@@ -174,11 +176,8 @@ export const UploadDatasetPicker = forwardRef<
     onSelectionChangeRef.current?.(paths, Object.keys(idxs).length ? idxs : undefined);
   }, [uploadsQ.data]);
 
-  useEffect(() => {
-    const channel = new BroadcastChannel("sersflow:uploads-changed");
-    channel.addEventListener("message", () => fetchItems());
-    return () => channel.close();
-  }, []);
+  // "uploads-changed" broadcasts are handled once, by PreprocessingWorkspace (it invalidates the uploads query,
+  // which updates `uploadsQ.data` above). A second listener here doubled every refetch.
 
   useLayoutEffect(() => {
     const top = pendingScrollTopRef.current;

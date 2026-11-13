@@ -25,7 +25,7 @@ from sersflow.core.preprocess.fit_diagnostics import (
     FitDiagnostics,
     diagnostics_as_feature_dict,
 )
-from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
+from sersflow.core.preprocess.fitting import FitResult, fit_curve, fit_problem_from_step_params
 from sersflow.core.preprocess.fitting_specs import (
     AREA_EXPORT_COMPONENT_TYPES,
     component_param_specs,
@@ -502,9 +502,10 @@ def collect_fitting_features_for_pipeline(
     per_step_input_xy: dict[int, XY] | None = None,
     spectrum_xps_region: str | None = None,
     status_out: list[dict[str, Any]] | None = None,
+    fit_results: dict[int, FitResult] | None = None,
 ) -> tuple[list[str], dict[str, float | None]]:
     """
-    Re-fit using stored step params and export optimized parameters per component.
+    Export optimized parameters per component of every fitting step (re-fitting unless the fit is supplied).
     Peak components also export a derived area column.
     Each fitting step also exports goodness-of-fit scalars (fit_*_gof_*).
 
@@ -624,12 +625,17 @@ def collect_fitting_features_for_pipeline(
             merged.update(nulls)
             _status(i, step, xps_region, "not_applicable", "no fit problem")
             continue
-        try:
-            res = fit_curve(prob)
-        except (ValueError, RuntimeError) as e:
-            merged.update(failed)
-            _status(i, step, xps_region, "failed", f"{type(e).__name__}: {e}")
-            continue
+        # ``fit_results`` (step_num -> FitResult) comes from the pipeline run that already fitted this exact
+        # input with these exact params; reusing it halves the cost of an analysis run. A step with no entry
+        # (its fit raised, or it came from a cache) is fitted here as before, which also reproduces the error.
+        res = fit_results.get(sn) if fit_results else None
+        if res is None:
+            try:
+                res = fit_curve(prob)
+            except (ValueError, RuntimeError) as e:
+                merged.update(failed)
+                _status(i, step, xps_region, "failed", f"{type(e).__name__}: {e}")
+                continue
 
         out = dict(nulls)
         unc = area_uncertainty(res.mapping, res.p_opt, res.p_cov)

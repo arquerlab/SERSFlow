@@ -25,7 +25,7 @@ from sersflow.api.services.dataset_restore import restore_dataset_uploads
 from sersflow.api.services.datasets_service import create_dataset_from_uploads
 from sersflow.api.services.filter_catalog import build_filter_fields_catalog, list_xps_regions_payload
 from sersflow.core.metrics.compute import compute_metrics
-from sersflow.core.pipeline.cache import InProcessLRUCache
+from sersflow.core.pipeline.cache import shared_pipeline_cache
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
 from sersflow.infra.datasets_store import (
     delete_dataset,
@@ -38,7 +38,7 @@ from sersflow.infra.sessions_store import delete_sessions_for_dataset
 
 
 router = APIRouter(prefix="/datasets", tags=["Datasets"])
-_cache = InProcessLRUCache(max_items=4096)
+_cache = shared_pipeline_cache()
 
 
 @router.post("", response_model=DatasetCreateResponse)

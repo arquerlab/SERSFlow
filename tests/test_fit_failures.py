@@ -140,6 +140,11 @@ def _run_with_one_failing_fit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
         return real_fit(prob)
 
     monkeypatch.setattr(fitting_features, "fit_curve", flaky_fit)
+    # The failure is simulated in the API process only (the pipeline workers are separate processes and fit
+    # normally), so make the feature rows refit here instead of reusing the workers' successful fits.
+    from sersflow.api.services import analysis_runner
+
+    monkeypatch.setattr(analysis_runner, "REUSE_WORKER_FITS", False)
 
     pipe = _pipe()
     sess = create_session(dataset_id=ds.dataset_id, pipeline=pipe, subset=SubsetStrategy(kind="all"))

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { getFitCurveJob, getFitCurveJobDownloadUrl, postReportJob } from "./api";
+import { getFitCurveJobDownloadUrl, isAbortError, postReportJob, waitForFitCurveJob } from "./api";
+import { useUnmountSignal } from "../lib/useUnmountSignal";
 
 type Props = {
   runId: string;
@@ -14,6 +15,7 @@ export function ReportDownload({ runId, stepNum, selectedIds, download }: Props)
   const [allSteps, setAllSteps] = useState(false);
   const [figures, setFigures] = useState(true);
   const [busy, setBusy] = useState(false);
+  const getUnmountSignal = useUnmountSignal();
   const [note, setNote] = useState<string | null>(null);
 
   async function run() {
@@ -25,19 +27,16 @@ export function ReportDownload({ runId, stepNum, selectedIds, download }: Props)
         fitting_step_nums: allSteps || stepNum == null ? null : [stepNum],
         include_figures: figures,
       });
-      for (let i = 0; i < 3600; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        const st = await getFitCurveJob(created.job_id);
-        if (st.status === "completed") {
-          await download(getFitCurveJobDownloadUrl(created.job_id), `fit_report_${runId}.zip`, setNote);
-          setNote((n) => n ?? "Report downloaded (open report.html; report.json is machine-readable).");
-          return;
-        }
-        if (st.status === "failed") throw new Error(st.error || "Report job failed");
-        setNote(`Report ${st.status}: ${st.progress_done}/${st.progress_total} fits`);
-      }
-      throw new Error("Report job timed out");
+      await waitForFitCurveJob(created.job_id, {
+        label: "Report job",
+        timeoutS: 3600,
+        signal: getUnmountSignal(),
+        onProgress: (st) => setNote(`Report ${st.status}: ${st.progress_done}/${st.progress_total} fits`),
+      });
+      await download(getFitCurveJobDownloadUrl(created.job_id), `fit_report_${runId}.zip`, setNote);
+      setNote((n) => n ?? "Report downloaded (open report.html; report.json is machine-readable).");
     } catch (e) {
+      if (isAbortError(e)) return;
       setNote(String((e as Error)?.message ?? e));
     } finally {
       setBusy(false);

@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  getFitCurveJob,
   getFitCurveJobDownloadUrl,
   getMonteCarloSummary,
+  isAbortError,
   postMonteCarloJob,
+  waitForFitCurveJob,
   type FittingPreviewItem,
 } from "./api";
+import { useUnmountSignal } from "../lib/useUnmountSignal";
 import {
   componentUncertaintyCells,
   formatInterval,
@@ -29,6 +31,7 @@ export function FitUncertaintyPanel({ runId, stepNum, selectedIds, items, downlo
   const [seed, setSeed] = useState(0);
   const [scope, setScope] = useState<"selected" | "all">("selected");
   const [busy, setBusy] = useState(false);
+  const getUnmountSignal = useUnmountSignal();
   const [note, setNote] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [summary, setSummary] = useState<MonteCarloSummary | null>(null);
@@ -56,21 +59,18 @@ export function FitUncertaintyPanel({ runId, stepNum, selectedIds, items, downlo
         spectrum_ids: scope === "selected" ? selectedIds : null,
       });
       setJobId(created.job_id);
-      for (let i = 0; i < 7200; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        const st = await getFitCurveJob(created.job_id);
-        if (st.status === "completed") {
-          const s = await getMonteCarloSummary(created.job_id);
-          setSummary(s);
-          setMcSpectrum(s.spectra.find((x) => !x.error)?.spectrum_id ?? "");
-          setNote(null);
-          return;
-        }
-        if (st.status === "failed") throw new Error(st.error || "Monte Carlo job failed");
-        setNote(`Monte Carlo ${st.status}: ${st.progress_done}/${st.progress_total} fits`);
-      }
-      throw new Error("Monte Carlo job timed out");
+      await waitForFitCurveJob(created.job_id, {
+        label: "Monte Carlo job",
+        timeoutS: 7200,
+        signal: getUnmountSignal(),
+        onProgress: (st) => setNote(`Monte Carlo ${st.status}: ${st.progress_done}/${st.progress_total} fits`),
+      });
+      const s = await getMonteCarloSummary(created.job_id);
+      setSummary(s);
+      setMcSpectrum(s.spectra.find((x) => !x.error)?.spectrum_id ?? "");
+      setNote(null);
     } catch (e) {
+      if (isAbortError(e)) return;
       setNote(String((e as Error)?.message ?? e));
     } finally {
       setBusy(false);

@@ -22,6 +22,7 @@ from sersflow.api.schemas.plot import (
     SpectrumPlotRequest,
 )
 from sersflow.core.io.load_file import load_dataset
+from sersflow.core.pipeline.engine import load_dataset_cached
 from sersflow.core.io.formats import get_format_for_path, list_formats
 from sersflow.core.io.formats.packs import EXPERIMENTAL_FIELD_LABELS
 from sersflow.core.io.multi_block_labels import (
@@ -72,7 +73,7 @@ def plot_spectrum(payload: SpectrumPlotRequest, request: Request) -> dict[str, A
         raise
 
     try:
-        ds = load_dataset(Path(p))
+        ds = load_dataset_cached(Path(p))
         title = payload.title or default_title_from_path(payload.relative_path)
         plot_mode = "xy"
         x_title = None
@@ -107,7 +108,7 @@ def plot_series_heatmap(payload: SeriesHeatmapRequest, request: Request) -> dict
         raise
 
     try:
-        ds = load_dataset(Path(p))
+        ds = load_dataset_cached(Path(p))
         if not isinstance(ds, SeriesDataset):
             raise ValueError("Not a series dataset")
         title = payload.title or default_title_from_path(payload.relative_path)
@@ -125,7 +126,7 @@ def series_info(relative_path: str, request: Request, max_points: int = 500) -> 
         raise
 
     try:
-        ds = load_dataset(Path(p))
+        ds = load_dataset_cached(Path(p))
         if not isinstance(ds, SeriesDataset):
             return {"is_series": False, "axis": [], "count": 0}
         axis, count = series_axis_preview(ds, max_points=max_points)
@@ -142,7 +143,7 @@ def plot_series_points(payload: SeriesPointsPlotRequest, request: Request) -> di
         raise
 
     try:
-        ds = load_dataset(Path(p))
+        ds = load_dataset_cached(Path(p))
         if not isinstance(ds, SeriesDataset):
             raise ValueError("Not a series dataset")
         title = payload.title or default_title_from_path(payload.relative_path)
@@ -160,7 +161,7 @@ def series_value(relative_path: str, index: int, request: Request) -> dict[str, 
         raise
 
     try:
-        ds = load_dataset(Path(p))
+        ds = load_dataset_cached(Path(p))
         if not isinstance(ds, SeriesDataset):
             raise ValueError("Not a series dataset")
         v = series_axis_value(ds, index=index)
@@ -177,7 +178,7 @@ def map_info(relative_path: str, request: Request, max_dim: int = 80) -> dict[st
         raise
 
     try:
-        ds = load_dataset(Path(p))
+        ds = load_dataset_cached(Path(p))
         if not isinstance(ds, MapDataset):
             return {"is_map": False, "x": [], "y": [], "index_grid": [], "count": 0}
         xs, ys, grid, count = map_grid_info(ds, max_dim=max_dim)
@@ -248,7 +249,7 @@ def plot_map_points(payload: MapPointsPlotRequest, request: Request) -> dict[str
         raise
 
     try:
-        ds = load_dataset(Path(p))
+        ds = load_dataset_cached(Path(p))
         if not isinstance(ds, MapDataset):
             raise ValueError("Not a map dataset")
         title = payload.title or default_title_from_path(payload.relative_path)
@@ -347,7 +348,7 @@ def multi_info(relative_path: str, request: Request) -> dict[str, Any]:
     except HTTPException:
         raise
     try:
-        ds = load_dataset(Path(p))
+        ds = load_dataset_cached(Path(p))
         if not isinstance(ds, MultiSpectrumDataset):
             return {"is_multi": False, "count": 0, "blocks": [], "fields": []}
         label_map: dict[str, dict[str, Any]] = {}
@@ -415,7 +416,7 @@ def plot_multi_points(payload: MultiPointsPlotRequest, request: Request) -> dict
     except HTTPException:
         raise
     try:
-        ds = load_dataset(Path(p))
+        ds = load_dataset_cached(Path(p))
         if not isinstance(ds, MultiSpectrumDataset):
             raise ValueError("Not a multi-spectrum (VAMAS) dataset")
         title = payload.title or default_title_from_path(payload.relative_path)

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { saveBlob } from "../lib/download";
 import {
   createRegionSet,
   deleteRegionSet,
@@ -64,12 +65,7 @@ function PeriodicPicker({ available, selected, onToggle }: { available: Set<stri
 }
 
 async function download(url: string, filename: string) {
-  const blob = await fetchBlob(url);
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  saveBlob(await fetchBlob(url), filename);
 }
 
 /**

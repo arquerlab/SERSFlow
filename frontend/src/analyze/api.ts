@@ -292,6 +292,59 @@ export function getFitCurveJob(jobId: string) {
   return fetchJson<FitCurveJobStatus>(`/analysis/fit-curve-jobs/${encodeURIComponent(jobId)}`);
 }
 
+/** True for the error thrown when a wait was cancelled (component unmounted): nothing to report to the user. */
+export function isAbortError(e: unknown): boolean {
+  return (e as { name?: string } | null)?.name === "AbortError";
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * Poll a fit-curve-style job (exports, Monte Carlo, sweep, report, step outputs) until it completes.
+ *
+ * One implementation for every panel: polls every second at first and backs off to 5 s for long jobs, stops as
+ * soon as `signal` aborts (pass the component's unmount signal, otherwise the loop keeps requesting for hours
+ * after the user left the page), throws the job's own error when it fails and `timeoutMessage` after `timeoutS`.
+ */
+export async function waitForFitCurveJob(
+  jobId: string,
+  opts: {
+    label: string;
+    timeoutS: number;
+    signal?: AbortSignal;
+    onProgress?: (st: FitCurveJobStatus) => void;
+  }
+): Promise<FitCurveJobStatus> {
+  const deadline = Date.now() + opts.timeoutS * 1000;
+  let delay = 1000;
+  while (Date.now() < deadline) {
+    await abortableDelay(delay, opts.signal);
+    const st = await getFitCurveJob(jobId);
+    if (opts.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    if (st.status === "completed") return st;
+    if (st.status === "failed") throw new Error(st.error || `${opts.label} failed`);
+    opts.onProgress?.(st);
+    delay = Math.min(5000, Math.round(delay * 1.25));
+  }
+  throw new Error(`${opts.label} timed out`);
+}
+
 /** F2: Monte Carlo parameter uncertainties for one fitting step (async job, polled with getFitCurveJob). */
 export function postMonteCarloJob(
   runId: string,

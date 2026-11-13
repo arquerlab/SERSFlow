@@ -32,7 +32,7 @@ from sersflow.api.services.fitting_preview import (
 from sersflow.api.services.observation_export import _labels_for_spectrum
 from sersflow.core.metrics.fit_uncertainty import area_percentages, component_areas
 from sersflow.core.metrics.fitting_features import _param_keys_for_component
-from sersflow.core.pipeline.engine import fitting_region_applies
+from sersflow.core.pipeline.engine import fitting_region_applies, run_in_pipeline_pool
 from sersflow.core.preprocess.fit_diagnostics import diagnostics_as_feature_dict
 from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
 from sersflow.infra.analysis_store import get_fit_curve_job, get_run, update_fit_curve_job
@@ -178,6 +178,33 @@ def _csv_bytes(headers: list[str], rows: list[dict[str, Any]]) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
+def _sweep_spectrum_task(task: dict[str, Any]) -> list[dict[str, Any]]:
+    """Pool worker: every grid point for ONE spectrum (so the spectrum is sent to the worker once)."""
+    rows: list[dict[str, Any]] = []
+    for grid in task["points_grid"]:
+        rowd: dict[str, Any] = {**task["labels"], "grid": list(grid), "error": None}
+        rowd.update({name: v for name, v in zip(task["axes_names"], grid)})
+        try:
+            fixed = _fixed_params(task["step_params"], task["axes"], grid)
+            prob = fit_problem_from_step_params(task["xy"], fixed)
+            if prob is None:
+                raise ValueError("empty spectrum / fit window")
+            res = fit_curve(prob)
+            metrics = diagnostics_as_feature_dict(res.diagnostics)
+            rowd.update({k: metrics.get(k) for k in _METRIC_COLUMNS})
+            for name, v in zip(task["param_names"], res.p_opt.astype(float).tolist()):
+                rowd[name] = v
+            # S1: %area per component, to see which components move with the swept parameter.
+            areas = component_areas(res.mapping, res.p_opt)
+            for m, pct in zip(res.mapping, area_percentages(areas)):
+                if pct is not None:
+                    rowd[f"pct:{m['component_id']}"] = float(pct)
+        except Exception as e:  # noqa: BLE001 - one bad fit must not kill the sweep
+            rowd["error"] = f"{type(e).__name__}: {e}"
+        rows.append(rowd)
+    return rows
+
+
 def execute_sweep_job(job_id: str) -> None:
     rec = get_fit_curve_job(job_id)
     if rec is None:
@@ -243,41 +270,42 @@ def execute_sweep_job(job_id: str) -> None:
             for k in _param_keys_for_component(c):
                 param_names.append(f"p:{c.get('component_id')}.{k}")
 
-        point_rows: list[dict[str, Any]] = []
-        pct_names: dict[str, None] = {}
-        done = 0
-        for grid in points_grid:
-            fixed = _fixed_params(step_params, axes, grid)
-            for r, xy, label_row in applicable:
-                rowd: dict[str, Any] = {
+        # One task per spectrum (all its grid points), run on the shared worker pool.
+        tasks = [
+            {
+                "xy": xy,
+                "step_params": step_params,
+                "axes": axes,
+                "axes_names": axes_names,
+                "points_grid": points_grid,
+                "param_names": param_names,
+                "labels": {
                     "spectrum_id": str(r.spectrum_id),
                     "experiment_id": label_row.get("experiment_id"),
                     "current_density_A_cm2": label_row.get("current_density_A_cm2"),
-                    "grid": list(grid),
-                    "error": None,
-                }
-                rowd.update({name: v for name, v in zip(axes_names, grid)})
-                try:
-                    prob = fit_problem_from_step_params(xy, fixed)
-                    if prob is None:
-                        raise ValueError("empty spectrum / fit window")
-                    res = fit_curve(prob)
-                    metrics = diagnostics_as_feature_dict(res.diagnostics)
-                    rowd.update({k: metrics.get(k) for k in _METRIC_COLUMNS})
-                    for name, v in zip(param_names, res.p_opt.astype(float).tolist()):
-                        rowd[name] = v
-                    # S1: %area per component, to see which components move with the swept parameter.
-                    areas = component_areas(res.mapping, res.p_opt)
-                    for m, pct in zip(res.mapping, area_percentages(areas)):
-                        if pct is not None:
-                            rowd[f"pct:{m['component_id']}"] = float(pct)
-                            pct_names.setdefault(f"pct:{m['component_id']}", None)
-                except Exception as e:  # one bad fit must not kill the sweep
-                    rowd["error"] = f"{type(e).__name__}: {e}"
+                },
+            }
+            for r, xy, label_row in applicable
+        ]
+        done = 0
+
+        def on_result(_i: int, rows_done: list[dict[str, Any]]) -> None:
+            nonlocal done
+            done += len(rows_done)
+            update_fit_curve_job(job_id=job_id, progress_done=done, progress_total=n_fits)
+
+        rows_by_spectrum = run_in_pipeline_pool(_sweep_spectrum_task, tasks, on_result)
+
+        # Same row order as before (grid point outer, spectrum inner), whatever order the workers finished in.
+        point_rows: list[dict[str, Any]] = []
+        pct_names: dict[str, None] = {}
+        for gi in range(len(points_grid)):
+            for rows in rows_by_spectrum:
+                rowd = rows[gi]
                 point_rows.append(rowd)
-                done += 1
-                if done % 10 == 0 or done == n_fits:
-                    update_fit_curve_job(job_id=job_id, progress_done=done, progress_total=n_fits)
+                for key in rowd:
+                    if key.startswith("pct:"):
+                        pct_names.setdefault(key, None)
 
         out_dir = os.path.join(artifacts_root(), "fit_curve_jobs", job_id)
         os.makedirs(out_dir, exist_ok=True)

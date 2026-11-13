@@ -31,7 +31,7 @@ from sersflow.api.services.fitting_preview import (
 )
 from sersflow.api.services.observation_export import _labels_for_spectrum
 from sersflow.core.metrics.fit_uncertainty import component_uncertainty_rows, run_monte_carlo, spread
-from sersflow.core.pipeline.engine import fitting_region_applies
+from sersflow.core.pipeline.engine import fitting_region_applies, run_in_pipeline_pool
 from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
 from sersflow.infra.analysis_store import get_fit_curve_job, get_run, update_fit_curve_job
 from sersflow.infra.explore_store import artifacts_root
@@ -158,6 +158,18 @@ def monte_carlo_for_spectrum(xy: Any, step_params: dict[str, Any], *, n_replicat
     return rows, rep_rows, meta
 
 
+def _mc_spectrum_task(task: dict[str, Any]) -> dict[str, Any]:
+    """Pool worker: best fit + Monte Carlo of ONE spectrum. Errors are returned, not raised (one bad spectrum
+    must not kill the job)."""
+    try:
+        rows, reps, meta = monte_carlo_for_spectrum(
+            task["xy"], task["step_params"], n_replicates=task["n_replicates"], seed=task["seed"], progress=task.get("progress")
+        )
+        return {"rows": rows, "reps": reps, "meta": meta, "error": None}
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 def execute_monte_carlo_job(job_id: str) -> None:
     rec = get_fit_curve_job(job_id)
     if rec is None:
@@ -219,36 +231,48 @@ def execute_monte_carlo_job(job_id: str) -> None:
         summary_rows: list[dict[str, Any]] = []
         replicate_rows: list[dict[str, Any]] = []
         spectra_meta: list[dict[str, Any]] = []
-        done_base = 0
-        for idx, (r, xy, label_row) in enumerate(applicable):
-            sid = str(r.spectrum_id)
+        # One task per spectrum; the seed belongs to the spectrum (seed + index), so the numbers do not depend
+        # on the order in which the worker processes finish.
+        tasks = [
+            {"xy": xy, "step_params": step_params, "n_replicates": n_rep, "seed": seed + idx}
+            for idx, (_r, xy, _row) in enumerate(applicable)
+        ]
+        if len(tasks) == 1:
+            # A single spectrum gains nothing from the pool; run it here and keep per-replicate progress.
+            def progress(k: int, n: int) -> None:
+                if k % 10 == 0 or k == n:
+                    update_fit_curve_job(job_id=job_id, progress_done=k, progress_total=n_fits)
+
+            results = [_mc_spectrum_task({**tasks[0], "progress": progress})]
+        else:
+            finished = 0
+
+            def on_result(_i: int, _res: Any) -> None:
+                nonlocal finished
+                finished += 1
+                update_fit_curve_job(job_id=job_id, progress_done=finished * n_rep, progress_total=n_fits)
+
+            results = run_in_pipeline_pool(_mc_spectrum_task, tasks, on_result)
+
+        for (r, _xy, label_row), res in zip(applicable, results):
             labels = {
-                "spectrum_id": sid,
+                "spectrum_id": str(r.spectrum_id),
                 "experiment_id": label_row.get("experiment_id"),
                 "current_density_A_cm2": label_row.get("current_density_A_cm2"),
             }
+            if res.get("error") is None:
+                summary_rows.extend({**labels, **row} for row in res["rows"])
+                replicate_rows.extend({**labels, **rep} for rep in res["reps"])
+                spectra_meta.append({**labels, **res["meta"], "error": None})
+            else:
+                spectra_meta.append({**labels, "error": res["error"]})
+        update_fit_curve_job(job_id=job_id, progress_done=n_fits, progress_total=n_fits)
 
-            def progress(k: int, n: int, _base: int = done_base) -> None:
-                if k % 10 == 0 or k == n:
-                    update_fit_curve_job(job_id=job_id, progress_done=_base + k, progress_total=n_fits)
-
-            try:
-                rows, reps, meta = monte_carlo_for_spectrum(
-                    xy, step_params, n_replicates=n_rep, seed=seed + idx, progress=progress
-                )
-                summary_rows.extend({**labels, **row} for row in rows)
-                replicate_rows.extend({**labels, **rep} for rep in reps)
-                spectra_meta.append({**labels, **meta, "error": None})
-            except Exception as e:  # one bad spectrum must not kill the job
-                spectra_meta.append({**labels, "error": f"{type(e).__name__}: {e}"})
-            done_base += n_rep
-            update_fit_curve_job(job_id=job_id, progress_done=done_base, progress_total=n_fits)
-
-        rep_cols: list[str] = []
+        rep_cols_seen: dict[str, None] = {}
         for rr in replicate_rows:
             for k in rr:
-                if k not in rep_cols:
-                    rep_cols.append(k)
+                rep_cols_seen.setdefault(k, None)
+        rep_cols = list(rep_cols_seen)
         summary = {
             "run_id": rec.run_id,
             "fitting_step_num": rec.fitting_step_num,

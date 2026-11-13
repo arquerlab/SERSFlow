@@ -23,6 +23,7 @@ from sersflow.api.schemas.fitting import (
 from sersflow.api.services.fit_diagnostics_public import diagnostics_to_public
 from sersflow.api.services.uploads import resolve_existing_upload
 from sersflow.core.io.load_file import load_dataset
+from sersflow.core.pipeline.engine import load_dataset_cached
 from sersflow.core.metrics.fit_uncertainty import component_uncertainty_rows
 from sersflow.core.preprocess.fitting import (
     expand_fit_curves_to_full,
@@ -61,7 +62,7 @@ def _resolve_target_xy(target: FitInlineSeries | FitSpectrumRef, *, owner_user_i
     if target.spectrum.relative_path:
         try:
             p = resolve_existing_upload(target.spectrum.relative_path, owner_user_id=owner_user_id)
-            ds = load_dataset(Path(p))
+            ds = load_dataset_cached(Path(p))
             if getattr(ds, "kind", None) == "multi":
                 from sersflow.core.spectrum import extract_xy
 
@@ -85,7 +86,7 @@ def _resolve_target(target: FitInlineSeries | FitSpectrumRef, *, owner_user_id: 
         raise HTTPException(status_code=404, detail="Uploaded file not found") from None
 
     try:
-        ds = load_dataset(Path(p))
+        ds = load_dataset_cached(Path(p))
         idx = target.spectrum.record_index or 0
         kind = getattr(ds, "kind", None)
         if kind == "spectrum":

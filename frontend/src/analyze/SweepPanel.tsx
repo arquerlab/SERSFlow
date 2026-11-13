@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Plotly from "plotly.js-dist-min";
-import { getFitCurveJob, getFitCurveJobDownloadUrl, getSweepSummary, postSweepJob, type FittingPreviewItem } from "./api";
+import {
+  getFitCurveJobDownloadUrl,
+  getSweepSummary,
+  isAbortError,
+  postSweepJob,
+  waitForFitCurveJob,
+  type FittingPreviewItem,
+} from "./api";
+import { useUnmountSignal } from "../lib/useUnmountSignal";
 import { scanGrid } from "../preprocess/peakModelTestFigures";
 
 function MiniPlot({ figure }: { figure: { data: unknown[]; layout: Record<string, unknown> } }) {
@@ -36,6 +44,7 @@ export function SweepPanel({ runId, stepNum, selectedIds, items, download }: Pro
   const [steps, setSteps] = useState(9);
   const [scope, setScope] = useState<"selected" | "all">("selected");
   const [busy, setBusy] = useState(false);
+  const getUnmountSignal = useUnmountSignal();
   const [note, setNote] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [summary, setSummary] = useState<Record<string, any> | null>(null);
@@ -56,18 +65,15 @@ export function SweepPanel({ runId, stepNum, selectedIds, items, download }: Pro
         spectrum_ids: scope === "selected" ? selectedIds : null,
       });
       setJobId(created.job_id);
-      for (let i = 0; i < 3600; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        const st = await getFitCurveJob(created.job_id);
-        if (st.status === "completed") {
-          setSummary(await getSweepSummary(created.job_id));
-          return;
-        }
-        if (st.status === "failed") throw new Error(st.error || "Sweep failed");
-        setNote(`Sweep ${st.status}: ${st.progress_done}/${st.progress_total} fits`);
-      }
-      throw new Error("Sweep timed out");
+      await waitForFitCurveJob(created.job_id, {
+        label: "Sweep",
+        timeoutS: 3600,
+        signal: getUnmountSignal(),
+        onProgress: (st) => setNote(`Sweep ${st.status}: ${st.progress_done}/${st.progress_total} fits`),
+      });
+      setSummary(await getSweepSummary(created.job_id));
     } catch (e) {
+      if (isAbortError(e)) return;
       setNote(String((e as Error)?.message ?? e));
     } finally {
       setBusy(false);

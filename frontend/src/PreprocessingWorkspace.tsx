@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { saveBlob as downloadBlob } from "./lib/download";
 import { useSearchParams } from "react-router-dom";
 import {
   LS_ANALYZE_DATASET,
@@ -135,17 +136,6 @@ function normalizePlotView(s: unknown): PlotView {
 function safeDownloadName(name: string, fallback: string): string {
   const base = String(name || fallback).trim() || fallback;
   return base.replace(/[^a-zA-Z0-9._-]+/g, "_");
-}
-
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 function notifyUploadsChanged() {

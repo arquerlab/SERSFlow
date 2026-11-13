@@ -22,14 +22,14 @@ from sersflow.api.schemas.pipeline import (
     ReturnMetricsOnly,
 )
 from sersflow.core.metrics.compute import compute_metrics
-from sersflow.core.pipeline.cache import InProcessLRUCache
+from sersflow.core.pipeline.cache import shared_pipeline_cache
 from sersflow.core.pipeline.engine import EngineConfig, run_pipeline
 from sersflow.core.preprocess.baseline import baseline_method_metadata
 
 
 router = APIRouter(prefix="/pipeline", tags=["Pipeline"])
 
-_cache = InProcessLRUCache(max_items=4096)
+_cache = shared_pipeline_cache()
 
 
 def _infer_input_technique_family(relative_paths: list[str]) -> str | None:

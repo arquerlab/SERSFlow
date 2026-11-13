@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import logging
 import threading
 from typing import Any
@@ -32,7 +33,12 @@ from sersflow.core.metrics.intensity_probes import (
     spectral_intensity_feature_key_groups_for_pipeline,
 )
 from sersflow.core.preprocess.fit_status import fit_summary_warnings, summarize_fit_statuses
-from sersflow.core.pipeline.engine import EngineConfig, run_pipeline, run_pipeline_parallel_no_cache
+from sersflow.core.pipeline.engine import (
+    FIT_RESULTS_KEY,
+    EngineConfig,
+    run_pipeline,
+    run_pipeline_parallel_no_cache,
+)
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 from sersflow.api.services.observation_export import _labels_for_spectrum
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
@@ -52,6 +58,9 @@ logger = logging.getLogger(__name__)
 COMMIT_BATCH = 250
 PROGRESS_EVERY = 100
 ANALYSIS_MAX_WORKERS = 8
+# Reuse the fit each pipeline worker already made instead of fitting every spectrum a second time when the
+# feature rows are built. ``SERSFLOW_ANALYSIS_REFIT=1`` restores the old double fit (for cross-checking).
+REUSE_WORKER_FITS = os.environ.get("SERSFLOW_ANALYSIS_REFIT", "").strip().lower() not in {"1", "true", "yes"}
 
 _analysis_lock = threading.Lock()
 
@@ -148,6 +157,7 @@ def _collect_feature_row(
     null_row: dict[str, Any],
     spectrum_xps_region: str | None = None,
     fit_status_out: list[dict[str, Any]] | None = None,
+    fit_results: dict[int, Any] | None = None,
 ) -> dict[str, Any]:
     feats = dict(null_row)
     accumulated: dict[str, Any] = {}
@@ -164,6 +174,7 @@ def _collect_feature_row(
         per_step_input_xy=per_step_input_xy,
         spectrum_xps_region=spectrum_xps_region,
         status_out=fit_status_out,
+        fit_results=fit_results,
     )
     _, intensity_values = collect_spectral_intensity_features_for_pipeline(xy, pipeline, per_step_input_xy=per_step_input_xy)
     _, integration_values = collect_integration_features_for_pipeline(xy, pipeline, per_step_input_xy=per_step_input_xy)
@@ -390,7 +401,11 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
         fit_statuses: dict[str, list[dict[str, Any]]] = {}
         extraction_errors: list[str] = []
         for sid, xy in final.items():
-            pin = per_inputs.get(sid) or {}
+            pin = dict(per_inputs.get(sid) or {})
+            # Fits already made by the pipeline workers (see engine.FIT_RESULTS_KEY); None = refit here.
+            worker_fits = pin.pop(FIT_RESULTS_KEY, None)
+            if not REUSE_WORKER_FITS:
+                worker_fits = None
             st_list: list[dict[str, Any]] = []
             try:
                 feats = _collect_feature_row(
@@ -400,6 +415,7 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
                     null_row=null_row,
                     spectrum_xps_region=region_by_sid.get(sid),
                     fit_status_out=st_list,
+                    fit_results=worker_fits,
                 )
             except Exception as e:
                 logger.warning("feature extraction failed for spectrum %s (skipped): %s", sid, e)

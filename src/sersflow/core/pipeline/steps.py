@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import contextlib
+import dataclasses
 import logging
+import threading
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import numpy as np
 from scipy.interpolate import interp1d
@@ -248,6 +251,27 @@ def _baseline(xy: XY, params: dict[str, Any]) -> XY:
     return xy.keep_var(xy.x, np.asarray(corrected, dtype=float))
 
 
+_fit_capture = threading.local()
+
+
+@contextlib.contextmanager
+def capture_fit_results() -> Iterator[list[Any]]:
+    """
+    Collect the ``FitResult`` of every fitting step run inside the block (in this thread).
+
+    The fitting step only returns the fitted curve; an analysis run also needs the optimised parameters,
+    covariance and diagnostics. Capturing them here lets the run reuse the fit instead of repeating it.
+    The curves are dropped from the captured copy (they are not needed and would be pickled across processes).
+    """
+    previous = getattr(_fit_capture, "sink", None)
+    sink: list[Any] = []
+    _fit_capture.sink = sink
+    try:
+        yield sink
+    finally:
+        _fit_capture.sink = previous
+
+
 def _fitting(xy: XY, params: dict[str, Any]) -> XY:
     """
     Nonlinear least-squares fit (sum of peak + polynomial_background components).
@@ -273,6 +297,9 @@ def _fitting(xy: XY, params: dict[str, Any]) -> XY:
         if prob is None:
             return xy
         res = fit_curve(prob)
+        sink = getattr(_fit_capture, "sink", None)
+        if sink is not None:
+            sink.append(dataclasses.replace(res, y_hat=np.empty(0), component_y_hat=[]))
         y_hat, _ = expand_fit_curves_to_full(xy, params, res.y_hat)
     except (ValueError, RuntimeError) as e:
         # Genuine failure: keep the raw spectrum so downstream steps still run, but it is NOT a fit.

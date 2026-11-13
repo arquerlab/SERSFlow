@@ -8,11 +8,11 @@ import os
 import re
 import threading
 from collections import OrderedDict
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import CancelledError, ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Protocol, Sequence
+from typing import Any, Callable, Iterable, Protocol, Sequence
 
 import numpy as np
 
@@ -83,6 +83,11 @@ def _load_dataset_cached(p: Path) -> Any:
         while len(_DATASET_CACHE) > _DATASET_CACHE_MAX:
             _DATASET_CACHE.popitem(last=False)
     return ds
+
+
+# Public name for read-only callers outside the engine (plot / fit preview routes): a request on a multi-block
+# file or a map no longer re-parses the whole file. The same rule applies: never modify the returned object.
+load_dataset_cached = _load_dataset_cached
 
 
 def _extract_xy_copy(ds: Any, record_index: Any) -> XY:
@@ -178,6 +183,10 @@ _POOL_LOCK = threading.Lock()
 _POOL_ATEXIT_REGISTERED = False
 
 
+# Reserved key in a spectrum's per-step-input dict (otherwise ``{step_num: XY}``): ``{step_num: FitResult}`` of
+# the fitting steps that actually ran a fit for that spectrum. Only present with ``collect_step_inputs``.
+FIT_RESULTS_KEY = "__fit_results__"
+
 _BLAS_THREAD_ENV = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
 
 
@@ -259,6 +268,49 @@ def _get_pipeline_pool(max_workers: int | None) -> ProcessPoolExecutor:
 def _reset_pipeline_pool() -> None:
     """Drop a broken pool so the next call recreates it."""
     _shutdown_pipeline_pool()
+
+
+def run_in_pipeline_pool(
+    fn: Callable[[Any], Any],
+    tasks: Sequence[Any],
+    on_result: Callable[[int, Any], None] | None = None,
+) -> list[Any]:
+    """
+    Run ``fn(task)`` for every task on the shared worker pool; returns the results in task order.
+
+    For fit jobs (Monte Carlo, parameter sweeps) that used to run every fit one after another in a thread of the
+    API process. ``fn`` must be a module-level function and tasks / results picklable. ``on_result(index, result)``
+    is called in the caller's thread as each task finishes (progress reporting). A single task runs inline. If the
+    pool breaks or is recreated mid-way, the unfinished tasks are run inline, so the result is the same either way.
+    """
+    n = len(tasks)
+    results: list[Any] = [None] * n
+
+    def _done(i: int, value: Any) -> None:
+        results[i] = value
+        if on_result is not None:
+            on_result(i, value)
+
+    if n <= 1:
+        for i, task in enumerate(tasks):
+            _done(i, fn(task))
+        return results
+
+    pending = set(range(n))
+    try:
+        pool = _get_pipeline_pool(None)
+        futures = {pool.submit(fn, task): i for i, task in enumerate(tasks)}
+        for fut in as_completed(futures):
+            i = futures[fut]
+            _done(i, fut.result())
+            pending.discard(i)
+    except (BrokenProcessPool, CancelledError) as e:
+        logger.warning("worker pool unavailable (%s); finishing %d task(s) inline", type(e).__name__, len(pending))
+        if isinstance(e, BrokenProcessPool):
+            _reset_pipeline_pool()
+        for i in sorted(pending):
+            _done(i, fn(tasks[i]))
+    return results
 
 
 def warm_pipeline_pool(max_workers: int | None = None) -> None:
@@ -857,6 +909,14 @@ def _run_indexed_steps_for_spectrum(
                                 technique_family=technique_family,
                             )
                             xy_out = impl.transform(inp_xy, params)
+                    elif name == "fitting" and collect_step_inputs and step_nums is not None:
+                        # Keep the FitResult next to the step input so the caller does not have to refit.
+                        from sersflow.core.pipeline.steps import capture_fit_results
+
+                        with capture_fit_results() as captured:
+                            xy_out = impl.transform(inp_xy, params)
+                        if captured:
+                            per_step_input.setdefault(FIT_RESULTS_KEY, {})[step_nums[j]] = captured[-1]  # type: ignore[index]
                     else:
                         xy_out = impl.transform(inp_xy, params)
                 if cache is not None:

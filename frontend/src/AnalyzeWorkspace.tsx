@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useUnmountSignal } from "./lib/useUnmountSignal";
+import { saveBlob as triggerBlobDownload } from "./lib/download";
 import { useSearchParams } from "react-router-dom";
 import {
   LS_ANALYZE_DATASET,
@@ -60,7 +62,8 @@ import {
   getExportFeaturesUrl,
   getExplorePcaExportUrl,
   fetchPipelineSteps,
-  getFitCurveJob,
+  isAbortError,
+  waitForFitCurveJob,
   getFitCurveJobDownloadUrl,
   getMatrixJobExportUrl,
   importMatrixJobCsv,
@@ -108,15 +111,6 @@ const SECTIONS: { id: AnalyzeSection; label: string }[] = [
 
 function coercePcaScaler(value: unknown, fallback: PcaScaler = "none"): PcaScaler {
   return value === "standard" || value === "none" ? value : fallback;
-}
-
-function triggerBlobDownload(blob: Blob, filename: string) {
-  const u = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = u;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(u);
 }
 
 async function safeDownload(url: string, filename: string, onErr: (msg: string) => void) {
@@ -848,6 +842,7 @@ export default function AnalyzeWorkspace() {
     queryFn: () => fetchPipelineSteps(runId),
     enabled: !!runId && selectedRun?.status === "completed",
   });
+  const getUnmountSignal = useUnmountSignal();
   const [stepExportNums, setStepExportNums] = useState<number[]>([]);
   const [stepExportBusy, setStepExportBusy] = useState<string | null>(null);
   const [stepExportNote, setStepExportNote] = useState<string | null>(null);
@@ -859,22 +854,20 @@ export default function AnalyzeWorkspace() {
     try {
       const created = await postStepOutputsJob(runId, { step_nums: stepExportNums, spectrum_ids: spectrumIds });
       const jobId = created.job_id;
-      for (let i = 0; i < 1200; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        const st = await getFitCurveJob(jobId);
-        if (st.status === "completed") {
-          await safeDownload(getFitCurveJobDownloadUrl(jobId), `step_outputs_${runId}.zip`, (m) => setStepExportNote(m));
-          return;
-        }
-        if (st.status === "failed") throw new Error(st.error || "Step outputs job failed");
-        setStepExportNote(
-          st.status === "running" && st.progress_total
-            ? `Running pipeline… ${st.progress_done}/${st.progress_total}`
-            : `Job ${st.status}`
-        );
-      }
-      throw new Error("Step outputs job timed out");
+      await waitForFitCurveJob(jobId, {
+        label: "Step outputs job",
+        timeoutS: 1200,
+        signal: getUnmountSignal(),
+        onProgress: (st) =>
+          setStepExportNote(
+            st.status === "running" && st.progress_total
+              ? `Running pipeline… ${st.progress_done}/${st.progress_total}`
+              : `Job ${st.status}`
+          ),
+      });
+      await safeDownload(getFitCurveJobDownloadUrl(jobId), `step_outputs_${runId}.zip`, (m) => setStepExportNote(m));
     } catch (e) {
+      if (isAbortError(e)) return;
       setStepExportNote(String((e as Error)?.message ?? e));
     } finally {
       setStepExportBusy(null);
@@ -1170,22 +1163,17 @@ export default function AnalyzeWorkspace() {
         format,
       });
       const jobId = created.job_id;
-      for (let i = 0; i < 600; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        const st = await getFitCurveJob(jobId);
-        if (st.status === "completed") {
-          await safeDownload(getFitCurveJobDownloadUrl(jobId), `fit_curves_all_${runId}_${format}.zip`, (m) =>
-            setFitExportNote(m)
-          );
-          return;
-        }
-        if (st.status === "failed") {
-          throw new Error(st.error || "Fit curve job failed");
-        }
-        setFitExportNote(`Job ${st.status}: ${st.progress_done}/${st.progress_total}`);
-      }
-      throw new Error("Fit curve job timed out");
+      await waitForFitCurveJob(jobId, {
+        label: "Fit curve job",
+        timeoutS: 600,
+        signal: getUnmountSignal(),
+        onProgress: (st) => setFitExportNote(`Job ${st.status}: ${st.progress_done}/${st.progress_total}`),
+      });
+      await safeDownload(getFitCurveJobDownloadUrl(jobId), `fit_curves_all_${runId}_${format}.zip`, (m) =>
+        setFitExportNote(m)
+      );
     } catch (e) {
+      if (isAbortError(e)) return;
       setFitExportNote(String((e as Error)?.message ?? e));
     } finally {
       setFitExportBusy(null);

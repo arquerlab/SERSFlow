@@ -41,7 +41,7 @@ from sersflow.api.services.technique_guard import (
     prepare_pipeline_for_run,
 )
 from sersflow.core.metrics.compute import compute_metrics
-from sersflow.core.pipeline.cache import InProcessLRUCache
+from sersflow.core.pipeline.cache import shared_pipeline_cache
 from sersflow.core.pipeline.engine import (
     EngineConfig,
     run_pipeline,
@@ -60,7 +60,7 @@ from sersflow.core.qc.outliers import outlier_scores_from_xy
 
 
 router = APIRouter(prefix="/sessions", tags=["Sessions"])
-_cache = InProcessLRUCache(max_items=4096)
+_cache = shared_pipeline_cache()
 SESSION_MAX_WORKERS = 8
 
 

@@ -1,15 +1,11 @@
 import Plotly from "plotly.js-dist-min";
 import { zipSync, strToU8 } from "fflate";
+import { saveBlob } from "../lib/download";
 
 export type CsvRow = Record<string, string | number | boolean | null | undefined>;
 
 export function downloadBlob(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  saveBlob(blob, filename);
 }
 
 export function downloadText(filename: string, text: string, mime = "text/plain;charset=utf-8") {

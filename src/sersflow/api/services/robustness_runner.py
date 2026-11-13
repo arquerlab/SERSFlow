@@ -311,16 +311,46 @@ def _noise_task(task: dict[str, Any]) -> dict[str, Any]:
     return _sanitize(rec)
 
 
-def run_tasks(tasks: list[dict[str, Any]], fn, workers: int, on_result) -> None:
-    """Run tasks inline (workers<=1) or in a process pool; ``on_result`` is called in the caller's thread."""
+class JobPool:
+    """One process pool for a whole robustness job, created on first use.
+
+    A job used to start a new pool for every upstream group and again for the noise baseline; each start pays
+    the worker spawn and import cost (seconds per worker on Windows).
+    """
+
+    def __init__(self, workers: int) -> None:
+        self.workers = int(workers)
+        self._pool: ProcessPoolExecutor | None = None
+
+    def get(self) -> ProcessPoolExecutor:
+        if self._pool is None:
+            self._pool = _make_pool(self.workers)
+        return self._pool
+
+    def close(self) -> None:
+        if self._pool is not None:
+            self._pool.shutdown(wait=False, cancel_futures=True)
+            self._pool = None
+
+
+def run_tasks(tasks: list[dict[str, Any]], fn, workers: int, on_result, pool: JobPool | None = None) -> None:
+    """Run tasks inline (workers<=1) or in a process pool; ``on_result`` is called in the caller's thread.
+
+    Pass the job's ``JobPool`` to reuse its worker processes; without one a pool is created for this call only.
+    """
     if not tasks:
         return
     if workers <= 1 or len(tasks) == 1:
         for t in tasks:
             on_result(fn(t))
         return
-    with _make_pool(min(workers, len(tasks))) as pool:
-        futs = [pool.submit(fn, t) for t in tasks]
+    if pool is not None:
+        futs = [pool.get().submit(fn, t) for t in tasks]
+        for f in as_completed(futs):
+            on_result(f.result())
+        return
+    with _make_pool(min(workers, len(tasks))) as own:
+        futs = [own.submit(fn, t) for t in tasks]
         for f in as_completed(futs):
             on_result(f.result())
 
@@ -543,6 +573,7 @@ def execute_robustness_job(job_id: str) -> None:
 
         rec_fh = open(rec_path, "a", encoding="utf-8")
         noise_fh = open(noise_path, "a", encoding="utf-8")
+        job_pool = JobPool(p["workers"])
         try:
             for ukey, gcells in groups.items():
                 todo_cells = {c.cell_id for c in gcells}
@@ -595,7 +626,7 @@ def execute_robustness_job(job_id: str) -> None:
                     done += len(batch)
                     update_fit_curve_job(job_id=job_id, progress_done=done, progress_total=progress_total)
 
-                run_tasks(tasks, _cell_task, p["workers"], on_cells)
+                run_tasks(tasks, _cell_task, p["workers"], on_cells, job_pool)
 
                 if need_noise:
                     ntasks = [
@@ -624,9 +655,10 @@ def execute_robustness_job(job_id: str) -> None:
                         done += 1
                         update_fit_curve_job(job_id=job_id, progress_done=done, progress_total=progress_total)
 
-                    run_tasks(ntasks, _noise_task, p["workers"], on_noise)
+                    run_tasks(ntasks, _noise_task, p["workers"], on_noise, job_pool)
                 del xy_by_id
         finally:
+            job_pool.close()
             rec_fh.close()
             noise_fh.close()
 
