@@ -533,6 +533,8 @@ export type FitRequest = {
   initial_area_ratios?: string | null;
   /** F1 weighting request; omitted = auto (Poisson for XPS when counts are known). */
   weighting?: FittingWeighting;
+  /** Instrumental Gaussian broadening FWHM (eV) convolved onto every peak; omitted = off. */
+  gaussian_fwhm_eV?: number;
   /** X1: false = evaluate the model at the given parameters (links applied) without optimising. */
   fit?: boolean;
 };

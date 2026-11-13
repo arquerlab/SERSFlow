@@ -21,8 +21,10 @@ from sersflow.core.preprocess.fitting_specs import (
     build_component_function_for,
     BOLTZMANN_EV_PER_K,
     XPS_BACKGROUND_COMPONENT_TYPES,
+    PEAK_COMPONENT_TYPES,
     build_component_function,
 )
+from sersflow.core.preprocess.gaussian_broadening import with_gaussian_broadening
 
 _SAFE = re.compile(r"[^0-9a-zA-Z_]+")
 
@@ -186,6 +188,10 @@ def _shirley_of_model(problem: FitProblem, comp: FitComponent, prefix: str):
     if src is None or src.component_type.strip().lower() not in (PEAK_COMPONENT_TYPES | {"reference_spectrum"}):
         raise ValueError(f"shirley_of_bg {comp.component_id!r}: option 'of' must name a peak component (got {of!r})")
     f_src, specs = build_component_function_for(src.component_type, degree=src.degree, options=src.options)
+    if src.component_type.strip().lower() in PEAK_COMPONENT_TYPES:
+        from sersflow.core.preprocess.gaussian_broadening import with_gaussian_broadening
+
+        f_src = with_gaussian_broadening(f_src, float(getattr(problem, "gaussian_fwhm_eV", 0.0) or 0.0))
     src_keys = [s.key for s in specs]
     hidden = [f"ref_{k}" for k in src_keys]
 
@@ -488,6 +494,8 @@ def _assemble_lmfit_model(
                 comp.component_type, degree=comp.degree, options=comp.options
             )
             param_keys = [p.key for p in param_specs]
+            if ct in PEAK_COMPONENT_TYPES:
+                f = with_gaussian_broadening(f, float(getattr(problem, "gaussian_fwhm_eV", 0.0) or 0.0))
             m = _make_peak_model(f, param_keys, prefix)
             peak_fns.append(f)
 

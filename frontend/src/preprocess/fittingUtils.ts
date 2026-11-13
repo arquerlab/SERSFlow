@@ -376,6 +376,11 @@ export type FittingEditorParams = {
    * last recipe apply (0 = recipe BE as applied).
    */
   peak_shift_eV?: number;
+  /**
+   * Instrumental Gaussian broadening, FWHM (eV): every peak of the step is convolved with this Gaussian
+   * (areas unchanged; fitted widths stay intrinsic). 0 / undefined = off. Backgrounds are not broadened.
+   */
+  gaussian_fwhm_eV?: number;
 };
 
 /** Step used by Peak shift ▲/▼ controls. */
@@ -726,6 +731,7 @@ export function defaultFittingEditorParams(catalog: FittingComponentSpecPublic[]
     amp_auto_bands: false,
     initial_area_ratios: "",
     peak_shift_eV: 0,
+    gaussian_fwhm_eV: 0,
   };
 }
 
@@ -867,6 +873,8 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
   const peakShift =
     typeof fp.peak_shift_eV === "number" && Number.isFinite(fp.peak_shift_eV) ? fp.peak_shift_eV : 0;
   if (peakShift !== 0) out.peak_shift_eV = peakShift;
+  const gFwhm = typeof fp.gaussian_fwhm_eV === "number" && Number.isFinite(fp.gaussian_fwhm_eV) ? fp.gaussian_fwhm_eV : 0;
+  if (gFwhm > 0) out.gaussian_fwhm_eV = gFwhm;
   return out;
 }
 
@@ -917,6 +925,10 @@ export function migrateFittingParamsToEditor(
       initial_area_ratios: typeof r.initial_area_ratios === "string" ? r.initial_area_ratios : "",
       peak_shift_eV:
         typeof r.peak_shift_eV === "number" && Number.isFinite(r.peak_shift_eV) ? r.peak_shift_eV : 0,
+      gaussian_fwhm_eV:
+        typeof r.gaussian_fwhm_eV === "number" && Number.isFinite(r.gaussian_fwhm_eV) && r.gaussian_fwhm_eV > 0
+          ? r.gaussian_fwhm_eV
+          : 0,
       components,
       amp_auto_bands: Boolean(r.amp_auto_bands),
     };
@@ -1040,6 +1052,10 @@ export function migrateFittingParamsToEditor(
     amp_auto_bands: amp_auto_bands_raw,
     initial_area_ratios,
     peak_shift_eV,
+    gaussian_fwhm_eV:
+      typeof p.gaussian_fwhm_eV === "number" && Number.isFinite(p.gaussian_fwhm_eV) && p.gaussian_fwhm_eV > 0
+        ? Number(p.gaussian_fwhm_eV)
+        : 0,
   };
   return syncAmpAutoBandsFlag({
     ...migrated,

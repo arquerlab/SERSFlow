@@ -338,6 +338,8 @@ export function buildFitRequest(
     fit_max_x: typeof flat.fit_max_x === "number" ? flat.fit_max_x : undefined,
     initial_area_ratios:
       typeof flat.initial_area_ratios === "string" && flat.initial_area_ratios.trim() ? flat.initial_area_ratios.trim() : undefined,
+    gaussian_fwhm_eV:
+      typeof flat.gaussian_fwhm_eV === "number" && flat.gaussian_fwhm_eV > 0 ? flat.gaussian_fwhm_eV : undefined,
     fit: opts.fit,
   };
 }

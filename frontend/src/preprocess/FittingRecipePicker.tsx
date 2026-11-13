@@ -132,6 +132,7 @@ export function mergeRecipeApplyIntoEditor(
     fit_max_x: current.fit_max_x ?? null,
     initial_area_ratios: ratios,
     peak_shift_eV: 0,
+    gaussian_fwhm_eV: current.gaussian_fwhm_eV ?? 0,
   };
   // Recipe apply: enable band amp Auto so chord+ratio guess runs on next fit.
   return setBandAmplitudeAutos(base, true);

@@ -123,14 +123,17 @@ def problem_canonical(problem: FitProblem) -> dict[str, Any]:
         {"component_id": c.component_id, "type": c.component_type, "degree": c.degree, "options": c.options or {}}
         for c in comps
     ]
+    settings: dict[str, Any] = {
+        "technique_family": problem.technique_family,
+        "xps_region": problem.xps_region,
+        "weighting": problem.weighting,
+    }
+    if getattr(problem, "gaussian_fwhm_eV", 0.0):
+        settings["gaussian_fwhm_eV"] = float(problem.gaussian_fwhm_eV)  # only when on: keeps old hashes
     return {
         "model": model,
         "params": params,
-        "settings": {
-            "technique_family": problem.technique_family,
-            "xps_region": problem.xps_region,
-            "weighting": problem.weighting,
-        },
+        "settings": settings,
         # Only seed the starting amplitudes / values; they never change the optimum of a well-posed fit.
         "start_settings": {
             "initial_guess_mode": problem.initial_guess_mode,

@@ -427,7 +427,7 @@ FIT_STEP_KEYS = frozenset(
     {
         "components", "p0", "bounds_lower", "bounds_upper", "vary", "param_links", "fit_min_x", "fit_max_x",
         "initial_guess_mode", "technique_family", "xps_region", "initial_area_ratios", "weighting",
-        "fit_outside", "recipe_id", "recipe",
+        "fit_outside", "recipe_id", "recipe", "gaussian_fwhm_eV",
     }
 )
 

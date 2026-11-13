@@ -259,6 +259,8 @@ class FitProblem:
     """Weighting actually applied: ``poisson`` | ``poisson_relative`` | ``none``."""
     weighting_note: str | None = None
     """Why that weighting was applied (e.g. requested mode, or why Poisson was not possible)."""
+    gaussian_fwhm_eV: float = 0.0
+    """Instrumental Gaussian broadening (FWHM, x units) convolved onto every peak component; 0 = off."""
     """
     default: use client p0; amp ≤ 0 on peaks is auto-estimated (chord height at center).
     auto (legacy): force auto amplitude for every peak component.
@@ -570,6 +572,8 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
             )
 
     sigma, w_applied, w_note = resolve_weighting(xy_fit, params, tech)
+    from sersflow.core.preprocess.gaussian_broadening import gaussian_fwhm_from_params
+
     return FitProblem(
         x=xy_fit.x.astype(float, copy=False),
         y=xy_fit.y.astype(float, copy=False),
@@ -586,6 +590,7 @@ def fit_problem_from_step_params(xy: XY, params: dict[str, Any]) -> FitProblem |
         sigma=sigma,
         weighting=w_applied,
         weighting_note=w_note,
+        gaussian_fwhm_eV=gaussian_fwhm_from_params(params),
     )
 
 

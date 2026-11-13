@@ -178,6 +178,8 @@ def _step_params_from_request(payload: FitRequest) -> dict[str, Any]:
         step_params["param_links"] = list(payload.param_links)
     if payload.weighting:
         step_params["weighting"] = payload.weighting
+    if payload.gaussian_fwhm_eV:
+        step_params["gaussian_fwhm_eV"] = float(payload.gaussian_fwhm_eV)
     if payload.fit_min_x is not None:
         step_params["fit_min_x"] = payload.fit_min_x
     if payload.fit_max_x is not None:
@@ -239,6 +241,8 @@ def fit_endpoint(payload: FitRequest, request: Request) -> dict[str, Any]:
             step_params["initial_area_ratios"] = str(payload.initial_area_ratios).strip()
         if payload.weighting is not None:
             step_params["weighting"] = payload.weighting
+        if payload.gaussian_fwhm_eV:
+            step_params["gaussian_fwhm_eV"] = float(payload.gaussian_fwhm_eV)
 
         prob = fit_problem_from_step_params(xy, step_params)
         if prob is None:

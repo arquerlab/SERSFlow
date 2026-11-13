@@ -2346,6 +2346,28 @@ export default function PreprocessingWorkspace() {
                           </button>
                         </span>
                       </label>
+                      <label
+                        className="inline"
+                        style={{ margin: 0, gap: "6px", alignItems: "center" }}
+                        title="Gaussian broadening, FWHM (eV): instrumental resolution convolved onto every peak of this step (areas unchanged, fitted widths stay intrinsic; backgrounds are not broadened). FWHM = 2.355 x sigma. 0 = off."
+                      >
+                        Gaussian broadening, FWHM (eV):
+                        <DraftNumberInput
+                          value={
+                            typeof fp.gaussian_fwhm_eV === "number" && Number.isFinite(fp.gaussian_fwhm_eV)
+                              ? fp.gaussian_fwhm_eV
+                              : 0
+                          }
+                          onChange={(n) =>
+                            updateSelectedFittingParams({
+                              ...fp,
+                              gaussian_fwhm_eV:
+                                typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.round(n * 1000) / 1000 : 0,
+                            })
+                          }
+                          style={{ width: "72px" }}
+                        />
+                      </label>
                       {fittingModelsQ.isLoading ? <div className="hint">Loading model catalog…</div> : null}
                       {fittingModelsQ.isError ? (
                         <div className="err">Could not load /fitting/models: {String((fittingModelsQ.error as Error)?.message ?? fittingModelsQ.error)}</div>

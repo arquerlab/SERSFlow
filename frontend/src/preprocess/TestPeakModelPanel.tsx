@@ -87,6 +87,7 @@ export function TestPeakModelPanel({ fp, inputs, technique }: Props) {
         param_links: flat.param_links ?? [],
         technique_family: technique,
         weighting: fp.weighting ?? "auto",
+        gaussian_fwhm_eV: flat.gaussian_fwhm_eV ?? undefined,
         fit_min_x: flat.fit_min_x ?? null,
         fit_max_x: flat.fit_max_x ?? null,
         initial_guess_mode: "default",

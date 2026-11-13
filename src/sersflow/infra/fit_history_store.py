@@ -34,6 +34,7 @@ _STATE_KEYS = (
     "weighting",
     "xps_region",
     "initial_area_ratios",
+    "gaussian_fwhm_eV",
 )
 
 
