@@ -9,6 +9,16 @@ export default defineConfig({
     outDir: "../src/sersflow/api/web/preprocess-dist",
     emptyOutDir: true,
     manifest: true,
+    rollupOptions: {
+      output: {
+        // Plotly (~4.5 MB) in its own chunk: its content hash then only changes when Plotly itself is upgraded,
+        // so browsers keep it cached across app releases and git stops storing a new copy on every build.
+        manualChunks(id: string) {
+          if (id.includes("plotly.js-dist-min")) return "plotly";
+          return undefined;
+        },
+      },
+    },
   },
   server: {
     port: 5173,

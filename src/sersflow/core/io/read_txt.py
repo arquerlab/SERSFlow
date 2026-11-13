@@ -4,7 +4,6 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 from sersflow.core.models.datasets import MapDataset, SeriesDataset, SpectrumDataset
 
@@ -45,6 +44,8 @@ def load_map_txt(
     file_path: Path, *, delimiter: str = "\t"
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load a Raman mapping txt file and normalize coordinate/intensity columns."""
+    import pandas as pd
+
     df = pd.read_csv(file_path, sep=delimiter, header=0, usecols=[0, 1, 2, 3], dtype="float32")
     df.columns = ["x", "y", "wn", "int"]
 
@@ -65,6 +66,8 @@ def load_map_txt(
 
 def load_tr_txt(file_path: Path, *, delimiter: str = "\t") -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Load a time resolved txt file and normalize coordinate/intensity columns."""
+    import pandas as pd
+
     df = pd.read_csv(file_path, sep=delimiter, header=0, usecols=[0, 1, 2], dtype="float32")
     df.columns = ["time", "wn", "int"]
 
@@ -83,6 +86,8 @@ def load_tr_txt(file_path: Path, *, delimiter: str = "\t") -> tuple[np.ndarray, 
 
 def load_spectrum_txt(file_path: Path, *, delimiter: str = "\t") -> tuple[np.ndarray, np.ndarray]:
     """Load a spectrum txt file and normalize coordinate/intensity columns."""
+    import pandas as pd
+
     df = pd.read_csv(file_path, sep=delimiter, header=0, usecols=[0, 1], dtype="float32")
     df.columns = ["wn", "int"]
     return df["wn"].to_numpy(dtype="float32"), df["int"].to_numpy(dtype="float32")

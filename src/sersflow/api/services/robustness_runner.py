@@ -42,7 +42,7 @@ from sersflow.api.services.fitting_preview import (
 )
 from sersflow.api.services.observation_export import _labels_for_spectrum
 from sersflow.core.metrics.fit_uncertainty import run_monte_carlo
-from sersflow.core.pipeline.engine import fitting_region_applies
+from sersflow.core.pipeline.engine import fitting_region_applies, limit_blas_threads_for_children
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
 from sersflow.core.provenance import software_info
@@ -259,8 +259,7 @@ def compute_patch_check(
 
 def _make_pool(workers: int) -> ProcessPoolExecutor:
     # BLAS threads multiply with processes; spawned children inherit these.
-    for k in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
-        os.environ.setdefault(k, "1")
+    limit_blas_threads_for_children()
     return ProcessPoolExecutor(max_workers=workers)
 
 

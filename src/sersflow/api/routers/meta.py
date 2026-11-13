@@ -105,8 +105,12 @@ def static_assets(asset_path: str) -> FileResponse:
     if not candidate.exists() or not candidate.is_file():
         return FileResponse(web_root / "index.html", status_code=404)
     resp = FileResponse(candidate)
+    rel = candidate.relative_to(web_root).as_posix()
+    if rel.startswith("preprocess-dist/assets/"):
+        # Vite output: the file name carries a content hash, so a given URL never changes content.
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     # Legacy JS modules change often; avoid sticky browser caches of outdated plot helpers.
-    if candidate.suffix.lower() in {".js", ".mjs", ".css", ".html", ".map"}:
+    elif candidate.suffix.lower() in {".js", ".mjs", ".css", ".html", ".map"}:
         resp.headers["Cache-Control"] = "no-cache, must-revalidate"
     return resp
 

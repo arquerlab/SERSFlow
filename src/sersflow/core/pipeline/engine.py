@@ -173,12 +173,47 @@ _QC_PASSTHROUGH_STEPS = frozenset({"low_signal_filter", "outlier_detection", "gr
 # ProcessPool spawn + worker import cost (especially painful on Windows spawn).
 _POOL: ProcessPoolExecutor | None = None
 _POOL_WORKERS: int | None = None
+_POOL_ENV: tuple[str | None, ...] | None = None
 _POOL_LOCK = threading.Lock()
 _POOL_ATEXIT_REGISTERED = False
 
 
-def _pool_max_workers(requested: int | None) -> int:
-    n = int(requested) if requested and requested > 0 else (os.cpu_count() or 1)
+_BLAS_THREAD_ENV = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+
+
+def limit_blas_threads_for_children() -> None:
+    """
+    One BLAS thread per worker process (spawned children inherit the environment).
+
+    N worker processes x the default BLAS thread count oversubscribes the machine and is what triggers
+    "OpenBLAS error: Memory allocation still failed". Explicit settings are respected (setdefault).
+    """
+    for k in _BLAS_THREAD_ENV:
+        os.environ.setdefault(k, "1")
+
+
+_POOL_ENV_KEYS = ("SERSFLOW_UPLOAD_DIR", "SERSFLOW_DATA_DIR", "SERSFLOW_DB_PATH", "SERSFLOW_ARTIFACTS_DIR")
+
+
+def _pool_env_signature() -> tuple[str | None, ...]:
+    return tuple(os.environ.get(k) for k in _POOL_ENV_KEYS)
+
+
+def _pool_max_workers(requested: int | None = None) -> int:
+    """
+    Size of the shared pool: ``SERSFLOW_PIPELINE_WORKERS`` or min(8, CPU count).
+
+    Deliberately independent of ``requested``: the pool is shared by every job in the API process, and resizing
+    it per call (the old behaviour) cancelled the futures of whatever run was in flight in another thread, whose
+    spectra then came back as empty. Workers are started on demand, so a small job does not spawn all of them.
+    """
+    raw = (os.environ.get("SERSFLOW_PIPELINE_WORKERS") or "").strip()
+    try:
+        n = int(raw) if raw else 0
+    except ValueError:
+        n = 0
+    if n <= 0:
+        n = min(8, os.cpu_count() or 1)
     return max(1, n)
 
 
@@ -196,18 +231,23 @@ def _shutdown_pipeline_pool() -> None:
 
 def _get_pipeline_pool(max_workers: int | None) -> ProcessPoolExecutor:
     """Return a process-wide ProcessPoolExecutor, creating it on first use."""
-    global _POOL, _POOL_WORKERS, _POOL_ATEXIT_REGISTERED
-    workers = _pool_max_workers(max_workers)
+    global _POOL, _POOL_WORKERS, _POOL_ENV, _POOL_ATEXIT_REGISTERED
+    env = _pool_env_signature()
     with _POOL_LOCK:
-        if _POOL is not None and _POOL_WORKERS == workers:
+        if _POOL is not None and _POOL_ENV == env:
             return _POOL
         if _POOL is not None:
+            # Workers resolve upload / data paths from the environment they were spawned with. It never changes
+            # in a running server; tests repoint it per test, and stale workers would read the wrong folders.
             try:
                 _POOL.shutdown(wait=False, cancel_futures=True)
             except Exception:  # noqa: BLE001
                 pass
             _POOL = None
             _POOL_WORKERS = None
+        _POOL_ENV = env
+        workers = _pool_max_workers(max_workers)
+        limit_blas_threads_for_children()
         _POOL = ProcessPoolExecutor(max_workers=workers)
         _POOL_WORKERS = workers
         if not _POOL_ATEXIT_REGISTERED:

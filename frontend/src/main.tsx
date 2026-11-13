@@ -18,7 +18,11 @@ function ensureLegacyStylesLoaded() {
   document.head.appendChild(link);
 }
 
-const qc = new QueryClient();
+// Mutations invalidate their queries explicitly, so refetching every query (full dataset spectra lists, up to
+// 500 pipelines, run lists) each time the window regains focus only costs requests.
+const qc = new QueryClient({
+  defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
+});
 ensureLegacyStylesLoaded();
 createRoot(document.getElementById("preprocess-root")!).render(
   <StrictMode>

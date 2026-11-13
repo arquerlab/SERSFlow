@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from sersflow.infra.sqlite_db import connect
+from sersflow.infra.sqlite_db import connect, schema_once
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,7 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+@schema_once
 def ensure_schema(con: sqlite3.Connection) -> None:
     con.executescript(
         """

@@ -798,13 +798,19 @@ export default function AnalyzeWorkspace() {
     enabled: !!runId && selectedRun?.status === "completed",
   });
 
-  // Load axis/metadata for PCA coloring, PC-vs-meta plots, and scores CSV enrichment.
-  useEffect(() => {
-    if (!runId || selectedRun?.status !== "completed") return;
+  // Columns to load for PCA coloring, PC-vs-meta plots, and scores CSV enrichment. Reduced to a string key so the
+  // fetch below only re-runs when the column SET changes: with the schema loaded it is always "all axis + meta",
+  // and changing a colour / X dropdown used to refetch the identical (up to 250k rows) payload.
+  const scoresMetaColsKey = useMemo(() => {
     const selected = [scoresColorMeta, pcVsMetaX, pcVsMetaColor].map((s) => String(s || "").trim()).filter(Boolean);
     const schemaCols = [...(schemaQ.data?.axis_keys ?? []), ...(schemaQ.data?.meta_keys ?? [])];
     // Prefer full axis+meta when available so scores CSV downloads stay interpretable.
-    const uniq = Array.from(new Set(schemaCols.length ? schemaCols : selected));
+    return JSON.stringify(Array.from(new Set(schemaCols.length ? schemaCols : selected)));
+  }, [scoresColorMeta, pcVsMetaX, pcVsMetaColor, schemaQ.data?.axis_keys, schemaQ.data?.meta_keys]);
+
+  useEffect(() => {
+    if (!runId || selectedRun?.status !== "completed") return;
+    const uniq = JSON.parse(scoresMetaColsKey) as string[];
     if (!uniq.length) {
       setScoresMetaById({});
       return;
@@ -835,7 +841,7 @@ export default function AnalyzeWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [runId, selectedRun?.status, scoresColorMeta, pcVsMetaX, pcVsMetaColor, schemaQ.data?.axis_keys, schemaQ.data?.meta_keys]);
+  }, [runId, selectedRun?.status, scoresMetaColsKey]);
 
   const pipelineStepsQ = useQuery({
     queryKey: ["pipelineSteps", runId],
@@ -4080,7 +4086,9 @@ export default function AnalyzeWorkspace() {
                   ) : null}
                   <div style={{ width: "100%", height: 520, minHeight: 520 }}>
                     <PlotlyWrapper
-                      figure={{ data: f.data, layout: f.layout }}
+                      // Pass the stored object itself: a fresh `{ data, layout }` per render made PlotlyWrapper
+                      // purge and re-plot every diagnostic figure on any state change in this workspace.
+                      figure={f}
                       previousFigure={null}
                       plotStyle={{ mode: "overlay", stackSep: 0 }}
                       ghostOverlayEnabled={false}

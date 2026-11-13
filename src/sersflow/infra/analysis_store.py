@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 from uuid import uuid4
 
-from sersflow.infra.sqlite_db import connect
+from sersflow.infra.sqlite_db import connect, schema_once
 
 
 def _utc_now_iso() -> str:
@@ -51,6 +51,7 @@ class AnalysisRunRecord:
     """Run-level warnings + fit_failures summary (K2), JSON object or None."""
 
 
+@schema_once
 def ensure_schema() -> None:
     with connect() as con:
         con.executescript(

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sersflow.infra.sqlite_db import connect
+from sersflow.infra.sqlite_db import connect, schema_once
 
 
 def _utc_now_iso() -> str:
@@ -27,6 +27,7 @@ def max_explore_runs_per_dataset() -> int:
     return max(1, min(n, 10_000))
 
 
+@schema_once
 def ensure_schema() -> None:
     with connect() as con:
         con.executescript(

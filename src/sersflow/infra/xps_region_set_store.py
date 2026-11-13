@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sersflow.infra.sqlite_db import connect
+from sersflow.infra.sqlite_db import connect, schema_once
 from sersflow.infra.user_access import has_global_access, resolve_owner_user_id
 
 _FIELDS = ("label", "element", "line", "be_eV", "be_min_eV", "be_max_eV")
@@ -38,6 +38,7 @@ class RegionSet:
         }
 
 
+@schema_once
 def ensure_schema() -> None:
     with connect() as con:
         con.executescript(

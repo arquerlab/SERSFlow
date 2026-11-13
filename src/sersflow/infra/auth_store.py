@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import bcrypt
 
-from sersflow.infra.sqlite_db import connect
+from sersflow.infra.sqlite_db import connect, schema_once
 
 
 def _utc_now_iso() -> str:
@@ -31,6 +31,7 @@ def _row_to_user(row: sqlite3.Row) -> UserRecord:
     )
 
 
+@schema_once
 def ensure_schema() -> None:
     with connect() as con:
         con.executescript(

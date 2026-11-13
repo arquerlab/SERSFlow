@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import re
 from typing import Any, Callable
 
@@ -519,14 +520,19 @@ _GL_PRODUCT_K_FN = "sf_gl_product_area_k"
 _GENERIC_AREA_K_FN = "sf_area_per_height"
 
 
+@functools.lru_cache(maxsize=None)
+def _shape_keys(ctype: str) -> tuple[str, ...]:
+    """Parameter keys of a peak type without ``amp``. Cached: this runs on every residual evaluation."""
+    from sersflow.core.preprocess.fitting_specs import component_param_specs
+
+    return tuple(s.key for s in component_param_specs(ctype) if s.key != "amp")
+
+
 def _generic_area_per_height(ctype: str, *vals: float, window: tuple[float, float] | None = None) -> float:
     """Area / height of any finite-area peak type (F3), shape values in ``component_param_specs`` order."""
-    from sersflow.core.preprocess.fitting_specs import component_param_specs
     from sersflow.core.preprocess.peak_area import area_per_height
 
-    specs = [s.key for s in component_param_specs(ctype)]
-    keys = [k for k in specs if k not in ("amp",)]
-    d = {k: float(v) for k, v in zip(keys, vals)}
+    d = {k: float(v) for k, v in zip(_shape_keys(ctype), vals)}
     if window is not None:
         d["_window"] = window
     return float(area_per_height(ctype, d))
@@ -898,8 +904,10 @@ def _full_flat_covariance(result: Any, flat_names: list[str]) -> np.ndarray | No
     linked = [i for i, name in enumerate(flat_names) if getattr(result.params.get(name), "expr", None)]
     if linked:
         base = np.array([float(result.params[flat_names[i]].value) for i in linked], dtype=float)
+        # One copy for all perturbations (a Parameters copy rebuilds its expression interpreter); each
+        # varied parameter is restored before the next one is moved, so the differences are unchanged.
+        p = result.params.copy()
         for j, vn in enumerate(var_names):
-            p = result.params.copy()
             par = p[vn]
             v0 = float(par.value)
             h = 1e-6 * max(abs(v0), 1e-6)
@@ -910,6 +918,8 @@ def _full_flat_covariance(result: Any, flat_names: list[str]) -> np.ndarray | No
             p.update_constraints()
             vals = np.array([float(p[flat_names[i]].value) for i in linked], dtype=float)
             jac[linked, j] = (vals - base) / h
+            par.value = v0
+        p.update_constraints()
     return jac @ c @ jac.T
 
 

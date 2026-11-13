@@ -15,7 +15,7 @@ from sersflow.core.io.load_file import load_dataset
 from sersflow.core.io.upload_registry import resolve_uploaded_path, upload_root
 from sersflow.core.models.datasets import MapDataset, MultiSpectrumDataset, SeriesDataset, SpectrumDataset
 from sersflow.infra.blob_store import delete_blob_if_unreferenced, resolve_blob_path, store_blob_from_file
-from sersflow.infra.sqlite_db import connect
+from sersflow.infra.sqlite_db import connect, schema_once
 
 
 def _utc_now_iso() -> str:
@@ -58,6 +58,7 @@ def _migrate_dataset_schema(con: sqlite3.Connection) -> None:
     )
 
 
+@schema_once
 def ensure_schema() -> None:
     with connect() as con:
         con.executescript(
@@ -83,6 +84,15 @@ def ensure_schema() -> None:
             """
         )
         _migrate_dataset_schema(con)
+        # Lookups by path / blob (purge checks, blob garbage collection, ownership of request-supplied blobs)
+        # and the ORDER BY position of every dataset load.
+        con.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_dataset_spectra_blob_rel ON dataset_spectra(blob_relative_path);
+            CREATE INDEX IF NOT EXISTS idx_dataset_spectra_rel_path ON dataset_spectra(relative_path);
+            CREATE INDEX IF NOT EXISTS idx_dataset_spectra_position ON dataset_spectra(dataset_id, position);
+            """
+        )
         _backfill_existing_blob_refs(con)
         try:
             con.execute("ALTER TABLE datasets ADD COLUMN owner_user_id TEXT NULL")
@@ -451,6 +461,39 @@ def _load_dataset_row(dataset_id: str, *, owner_user_id: str | None) -> DatasetR
             for r in spectra_rows
         ]
         return DatasetRecord(dataset_id=row["dataset_id"], metadata=md, spectra=spectra)
+
+
+def get_dataset_metadata(dataset_id: str, *, owner_user_id: str) -> DatasetMetadata | None:
+    """
+    Metadata of a dataset the user may read, WITHOUT its spectra list (None when missing or not theirs).
+
+    Use this (or ``dataset_visible_to``) for access checks and name lookups: ``get_dataset`` builds a
+    ``SpectrumRef`` for every spectrum, which is wasteful on polled endpoints and in per-row loops.
+    """
+    ensure_schema()
+    with connect() as con:
+        if has_global_access(owner_user_id):
+            row = con.execute("SELECT metadata_json FROM datasets WHERE dataset_id = ?", (dataset_id,)).fetchone()
+        else:
+            row = con.execute(
+                "SELECT metadata_json FROM datasets WHERE dataset_id = ? AND owner_user_id = ?",
+                (dataset_id, resolve_owner_user_id(owner_user_id)),
+            ).fetchone()
+    return _load_metadata(row["metadata_json"]) if row is not None else None
+
+
+def dataset_visible_to(dataset_id: str, *, owner_user_id: str) -> bool:
+    """True when the dataset exists and the user may read it (single-row lookup, no spectra)."""
+    ensure_schema()
+    with connect() as con:
+        if has_global_access(owner_user_id):
+            row = con.execute("SELECT 1 FROM datasets WHERE dataset_id = ?", (dataset_id,)).fetchone()
+        else:
+            row = con.execute(
+                "SELECT 1 FROM datasets WHERE dataset_id = ? AND owner_user_id = ?",
+                (dataset_id, resolve_owner_user_id(owner_user_id)),
+            ).fetchone()
+    return row is not None
 
 
 def list_datasets(*, owner_user_id: str, limit: int = 50, offset: int = 0) -> list[DatasetListItem]:

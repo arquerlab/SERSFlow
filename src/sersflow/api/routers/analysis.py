@@ -104,7 +104,7 @@ from sersflow.infra.analysis_store import (
     list_runs,
     prune_unpinned_runs,
 )
-from sersflow.infra.datasets_store import spectrum_export_lookup
+from sersflow.infra.datasets_store import dataset_visible_to, get_dataset_metadata, spectrum_export_lookup
 from sersflow.infra.pipelines_store import list_pipelines
 from sersflow.api.services.observation_export import (
     build_analysis_manifest,
@@ -209,6 +209,7 @@ def _run_to_summary(
     owner_user_id: str,
     include_columns: bool = False,
     pipeline_name_by_hash: dict[str, str] | None = None,
+    dataset_names: dict[str, str | None] | None = None,
 ) -> AnalysisRunSummary:
     cols = None
     if include_columns and rec.feature_columns_json:
@@ -216,12 +217,18 @@ def _run_to_summary(
             cols = json.loads(rec.feature_columns_json)
         except json.JSONDecodeError:
             cols = None
+    # ``dataset_names`` is a per-request memo so a run list looks each dataset up once (and without spectra).
     ds_name = None
-    try:
-        ds = get_dataset_for_user(rec.dataset_id, owner_user_id)
-        ds_name = ds.metadata.name if ds else None
-    except Exception:
-        ds_name = None
+    if dataset_names is not None and rec.dataset_id in dataset_names:
+        ds_name = dataset_names[rec.dataset_id]
+    else:
+        try:
+            md = get_dataset_metadata(rec.dataset_id, owner_user_id=owner_user_id)
+            ds_name = md.name if md else None
+        except Exception:
+            ds_name = None
+        if dataset_names is not None:
+            dataset_names[rec.dataset_id] = ds_name
 
     pipe_sum = None
     if rec.pipeline_json:
@@ -401,11 +408,26 @@ def list_analysis_runs(
     limit: int = Query(50, ge=1, le=200),
 ) -> list[AnalysisRunSummary]:
     user_id = current_user_id(request)
-    if get_dataset_for_user(dataset_id, user_id) is None:
+    if not dataset_visible_to(dataset_id, owner_user_id=user_id):
         raise HTTPException(status_code=404, detail="Dataset not found")
     rows = list_runs(dataset_id=dataset_id, limit=limit)
-    name_by_hash = _pipeline_hash_to_name_map(owner_user_id=user_id)
-    return [_run_to_summary(r, owner_user_id=user_id, include_columns=False, pipeline_name_by_hash=name_by_hash) for r in rows]
+    # The library scan (load + hash up to 500 pipelines) is only needed for old runs without a stored name.
+    name_by_hash = (
+        _pipeline_hash_to_name_map(owner_user_id=user_id)
+        if any(not getattr(r, "pipeline_name", None) for r in rows)
+        else {}
+    )
+    dataset_names: dict[str, str | None] = {}
+    return [
+        _run_to_summary(
+            r,
+            owner_user_id=user_id,
+            include_columns=False,
+            pipeline_name_by_hash=name_by_hash,
+            dataset_names=dataset_names,
+        )
+        for r in rows
+    ]
 
 
 @router.get("/runs/{run_id}", response_model=AnalysisRunDetailResponse)

@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.api.schemas.sessions import Session, SessionCacheInfo, SubsetStrategy
-from sersflow.infra.sqlite_db import connect
+from sersflow.infra.sqlite_db import connect, schema_once
 
 
 def _utc_now_iso() -> str:
@@ -25,6 +25,7 @@ class SessionRecord:
     updated_at: str
 
 
+@schema_once
 def ensure_schema() -> None:
     with connect() as con:
         con.executescript(

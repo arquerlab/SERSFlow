@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sersflow.infra.sqlite_db import connect
+from sersflow.infra.sqlite_db import connect, schema_once
 from sersflow.infra.user_access import has_global_access, resolve_owner_user_id
 
 MAX_UNPINNED = 50
@@ -64,6 +64,7 @@ class FitSnapshot:
         return out
 
 
+@schema_once
 def ensure_schema() -> None:
     with connect() as con:
         con.executescript(

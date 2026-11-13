@@ -1,15 +1,32 @@
 {
-  "_DatasetPicker-DAZ5IRCN.js": {
-    "file": "assets/DatasetPicker-DAZ5IRCN.js",
-    "name": "DatasetPicker"
+  "_DatasetPicker-DmfypaOS.js": {
+    "file": "assets/DatasetPicker-DmfypaOS.js",
+    "name": "DatasetPicker",
+    "imports": [
+      "_rolldown-runtime-DF2fYuay.js",
+      "_plotly-BmupXCoY.js"
+    ]
+  },
+  "_plotly-BmupXCoY.js": {
+    "file": "assets/plotly-BmupXCoY.js",
+    "name": "plotly",
+    "imports": [
+      "_rolldown-runtime-DF2fYuay.js"
+    ]
+  },
+  "_rolldown-runtime-DF2fYuay.js": {
+    "file": "assets/rolldown-runtime-DF2fYuay.js",
+    "name": "rolldown-runtime"
   },
   "index.html": {
-    "file": "assets/index-DTAt0Z4I.js",
+    "file": "assets/index-Dp1hsecS.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
     "imports": [
-      "_DatasetPicker-DAZ5IRCN.js"
+      "_rolldown-runtime-DF2fYuay.js",
+      "_DatasetPicker-DmfypaOS.js",
+      "_plotly-BmupXCoY.js"
     ],
     "dynamicImports": [
       "src/AnalyzeWorkspace.tsx"
@@ -19,12 +36,14 @@
     ]
   },
   "src/AnalyzeWorkspace.tsx": {
-    "file": "assets/AnalyzeWorkspace-01Ht1VKX.js",
+    "file": "assets/AnalyzeWorkspace-DNiv5A0O.js",
     "name": "AnalyzeWorkspace",
     "src": "src/AnalyzeWorkspace.tsx",
     "isDynamicEntry": true,
     "imports": [
-      "_DatasetPicker-DAZ5IRCN.js"
+      "_rolldown-runtime-DF2fYuay.js",
+      "_DatasetPicker-DmfypaOS.js",
+      "_plotly-BmupXCoY.js"
     ]
   }
 }

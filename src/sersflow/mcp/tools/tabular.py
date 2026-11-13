@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import pandas as pd
 
 from sersflow.mcp.tools._util import tool_call
 
@@ -64,6 +63,8 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 }
             if not p.is_file():
                 raise FileNotFoundError(f"File not found: {p}")
+            import pandas as pd  # lazy: a third of MCP start-up time otherwise
+
             if p.suffix.lower() in {".parquet", ".pq"}:
                 df = pd.read_parquet(p)
             else:

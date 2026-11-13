@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
+
+if TYPE_CHECKING:  # scikit-learn is imported inside the functions that need it (slow import)
+    from sklearn.decomposition import PCA
 
 
 OutlierMethod = Literal[
@@ -92,6 +93,9 @@ def pca_scores(
     n_components: int,
     scaler: PcaScaler,
 ) -> tuple[np.ndarray, PCA, dict[str, object]]:
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+
     X_in = _impute_nonfinite_with_col_mean(X)
     meta: dict[str, object] = {"scaler": scaler}
     if scaler == "standard":
@@ -115,6 +119,8 @@ def pca_reconstruction_error_scores(
     n_components: int,
     scaler: PcaScaler,
 ) -> tuple[np.ndarray, dict[str, object]]:
+    from sklearn.preprocessing import StandardScaler
+
     X_in = _impute_nonfinite_with_col_mean(X)
     meta: dict[str, object] = {"scaler": scaler}
     if scaler == "standard":

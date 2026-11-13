@@ -17,7 +17,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from sersflow.infra.sqlite_db import connect
+from sersflow.infra.sqlite_db import connect, schema_once
 from sersflow.infra.user_access import has_global_access, resolve_owner_user_id
 
 
@@ -53,6 +53,7 @@ class ReferenceSpectrum:
         }
 
 
+@schema_once
 def ensure_schema() -> None:
     with connect() as con:
         con.executescript(

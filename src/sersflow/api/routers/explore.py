@@ -311,7 +311,7 @@ def export_matrix_job_csv(matrix_job_id: str, request: Request) -> StreamingResp
 
 
 @router.post("/matrix-jobs/import", response_model=MatrixExportResponse)
-async def import_matrix_job_csv(
+def import_matrix_job_csv(
     request: Request,
     dataset_id: str = Form(...),
     file: UploadFile = File(...),
@@ -331,7 +331,7 @@ async def import_matrix_job_csv(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Matrix CSV file is required")
     try:
-        data = await file.read()
+        data = file.file.read()
         if not data:
             raise ValueError("Matrix CSV file is empty")
         jid = import_matrix_job_from_csv(
@@ -345,7 +345,7 @@ async def import_matrix_job_csv(
         raise HTTPException(status_code=400, detail=str(e)) from e
     finally:
         try:
-            await file.close()
+            file.file.close()
         except Exception:
             pass
 

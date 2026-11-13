@@ -18,6 +18,7 @@ from sersflow.infra.analysis_store import get_run
 from sersflow.infra.datasets_store import (
     DatasetRecord,
     blobs_referenced_by_owner,
+    dataset_visible_to,
     get_dataset,
     get_dataset_internal,
 )
@@ -156,8 +157,7 @@ def get_session_for_user(session_id: str, user_id: str) -> SessionRecord | None:
         return None
     if has_global_access(user_id):
         return sess
-    effective = resolve_owner_user_id(user_id)
-    if get_dataset(sess.dataset_id, owner_user_id=effective) is None:
+    if not dataset_visible_to(sess.dataset_id, owner_user_id=user_id):
         return None
     return sess
 
@@ -168,8 +168,7 @@ def get_run_for_user(run_id: str, user_id: str):
         return None
     if has_global_access(user_id):
         return rec
-    effective = resolve_owner_user_id(user_id)
-    if get_dataset(rec.dataset_id, owner_user_id=effective) is None:
+    if not dataset_visible_to(rec.dataset_id, owner_user_id=user_id):
         return None
     return rec
 
@@ -180,8 +179,7 @@ def get_matrix_job_for_user(matrix_job_id: str, user_id: str):
         return None
     if has_global_access(user_id):
         return mj
-    effective = resolve_owner_user_id(user_id)
-    if get_dataset(mj.dataset_id, owner_user_id=effective) is None:
+    if not dataset_visible_to(mj.dataset_id, owner_user_id=user_id):
         return None
     return mj
 
@@ -192,8 +190,7 @@ def get_explore_run_for_user(explore_id: str, user_id: str):
         return None
     if has_global_access(user_id):
         return er
-    effective = resolve_owner_user_id(user_id)
-    if get_dataset(er.dataset_id, owner_user_id=effective) is None:
+    if not dataset_visible_to(er.dataset_id, owner_user_id=user_id):
         return None
     return er
 

@@ -277,7 +277,7 @@ def _format_mib_3(bytes_count: int | float) -> str:
 
 
 @router.post("/upload")
-async def upload_files(
+def upload_files(
     request: Request,
     files: list[UploadFile] = File(...),
     source_modified_ms_json: str | None = Form(None),

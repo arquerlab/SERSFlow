@@ -105,18 +105,18 @@ def export_dataset_endpoint(dataset_id: str, request: Request) -> Response:
 
 
 @router.post("/import", response_model=DatasetImportResponse)
-async def import_dataset_endpoint(request: Request, file: UploadFile = File(...)) -> DatasetImportResponse:
+def import_dataset_endpoint(request: Request, file: UploadFile = File(...)) -> DatasetImportResponse:
     user_id = current_user_id(request)
     if not file.filename:
         raise HTTPException(status_code=400, detail="Dataset package file is required")
     try:
-        data = await file.read()
+        data = file.file.read()
         return import_dataset_package(data, owner_user_id=user_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     finally:
         try:
-            await file.close()
+            file.file.close()
         except Exception:
             pass
 

@@ -4,6 +4,7 @@ import logging
 import os
 
 from fastapi import FastAPI
+from fastapi.middleware.gzip import GZipMiddleware
 
 from sersflow.api.middleware.auth import AuthMiddleware, auth_disabled
 from sersflow.api.middleware.data_scope import DataScopeMiddleware
@@ -29,6 +30,8 @@ from sersflow.api.routers.xps_region_sets import router as xps_region_sets_route
 app = FastAPI(title="SpecFlow API", version="0.2.0")
 app.add_middleware(DataScopeMiddleware)
 app.add_middleware(AuthMiddleware)
+# Outermost: compress JSON (spectra arrays) and the JS/CSS bundle for clients that accept gzip.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 app.include_router(meta_router)
