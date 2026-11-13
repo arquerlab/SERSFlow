@@ -713,6 +713,31 @@ def _count_params_at_bound(params, names) -> int:
     return n
 
 
+# A bounded parameter is handed to MINPACK through an arcsin transform. At the exact midpoint of its bounds the
+# internal value is ~0, and the forward-difference step (~1.5e-8 x |internal|) shrinks to ~1e-21 in parameter units,
+# below float resolution for a value like a 780 eV position: the numerical derivative is exactly 0 and the
+# parameter never moves. Start such parameters slightly off-centre (only the start value changes, not the bounds).
+_MIDPOINT_START_TOL = 1e-3
+_MIDPOINT_START_NUDGE = 2e-3
+
+
+def _nudge_midpoint_starts(params: Any, flat_names: list[str]) -> list[str]:
+    """Move varied, doubly-bounded parameters that start at (or within 0.05 % of) the middle of their bounds."""
+    nudged: list[str] = []
+    for name in flat_names:
+        p = params.get(name)
+        if p is None or not p.vary or getattr(p, "expr", None):
+            continue
+        lo, hi = float(p.min), float(p.max)
+        if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
+            continue
+        u = 2.0 * (float(p.value) - lo) / (hi - lo) - 1.0
+        if abs(u) < _MIDPOINT_START_TOL:
+            p.value = lo + (hi - lo) * (1.0 + _MIDPOINT_START_NUDGE) / 2.0
+            nudged.append(name)
+    return nudged
+
+
 def _fit_curve_lmfit(problem: FitProblem) -> FitResult:
     try:
         from lmfit import Parameters  # noqa: F401
@@ -791,6 +816,7 @@ def _fit_curve_lmfit(problem: FitProblem) -> FitResult:
                 vary=vary,
             )
 
+    _nudge_midpoint_starts(params, flat_names)
     _apply_param_links(params, problem, name_by_comp_key)
 
     xf = problem.x.astype(float)
