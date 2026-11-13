@@ -194,7 +194,14 @@ def _satellite_factor(step_params: dict[str, Any], opts: dict[str, Any]) -> dict
     ]
     ids = sorted({str(lk["source_component_id"]) for lk in links})
     comps = step_params.get("components") or []
-    if not ids or len(ids) >= len([c for c in comps if not is_background_type(str(c.get("component_type")))]):
+    n_peaks = len([c for c in comps if not is_background_type(str(c.get("component_type")))])
+    flagged = {str(c.get("component_id")) for c in comps if c.get("satellite") is True}
+    if flagged:
+        # Recipes tag their satellites; every other peak is also area-ratio linked by default, but is a main peak.
+        ids = [i for i in ids if i in flagged]
+    elif len(ids) >= n_peaks - 1:
+        return None  # every peak follows the first one: no way to tell satellites from main peaks
+    if not ids or len(ids) >= n_peaks:
         return None
     sel = {"component_ids": ids}
     return {

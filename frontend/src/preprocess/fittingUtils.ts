@@ -354,6 +354,11 @@ export type FittingEditorParams = {
    * Used to remove a stacked recipe and its peaks without touching the shared baseline.
    */
   recipe_components?: Record<string, string[]>;
+  /**
+   * Area-ratio (amp) links released by the recipe "Free" button, kept per recipe id so "Fix" restores the exact
+   * recipe ratios. Absent/empty = nothing stored.
+   */
+  recipe_area_links?: Record<string, FittingParamLink[]>;
   /** Pass energy used when applying the recipe (eV). */
   recipe_pass_energy?: number;
   /** F1 least-squares weighting; undefined = "auto" (Poisson for XPS when counting statistics are known). */
@@ -457,6 +462,101 @@ function normalizeRecipeComponents(raw: unknown): Record<string, string[]> {
     if (cleaned.length) out[key] = cleaned;
   }
   return out;
+}
+
+function normalizeRecipeAreaLinks(raw: unknown): Record<string, FittingParamLink[]> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, FittingParamLink[]> = {};
+  for (const [rid, links] of Object.entries(raw as Record<string, unknown>)) {
+    const key = String(rid || "").trim();
+    const cleaned = normalizeParamLinks(links);
+    if (key && cleaned.length) out[key] = cleaned;
+  }
+  return out;
+}
+
+/** Peaks of a recipe: tagged with ``options.recipe`` (survives renames), plus the legacy id list. */
+export function recipePeakIds(fp: FittingEditorParams, recipeId: string): string[] {
+  const rid = recipeId.trim();
+  if (!rid) return [];
+  const present = new Set(fp.components.map((c) => String(c.component_id ?? "").trim()));
+  const out: string[] = [];
+  for (const c of fp.components) {
+    if (String((c.options as Record<string, unknown> | undefined)?.recipe ?? "").trim() === rid) {
+      out.push(String(c.component_id ?? "").trim());
+    }
+  }
+  for (const id of fp.recipe_components?.[rid] ?? []) {
+    const t = String(id ?? "").trim();
+    if (t && present.has(t) && !out.includes(t)) out.push(t);
+  }
+  return out;
+}
+
+function isAmpLinkBetween(l: FittingParamLink, ids: Set<string>): boolean {
+  return (
+    l.source_key === "amp" &&
+    l.target_key === "amp" &&
+    (l.mode === "area_ratio" || l.mode === "scale") &&
+    ids.has(l.source_component_id) &&
+    ids.has(l.target_component_id)
+  );
+}
+
+/** Amp (area-ratio) links currently holding the peaks of one recipe together. */
+export function recipeAreaLinks(fp: FittingEditorParams, recipeId: string): FittingParamLink[] {
+  const ids = new Set(recipePeakIds(fp, recipeId));
+  return (fp.param_links ?? []).filter((l) => isAmpLinkBetween(l, ids));
+}
+
+export function canFixRecipeAreaRatios(fp: FittingEditorParams, recipeId: string): boolean {
+  return (fp.recipe_area_links?.[recipeId.trim()] ?? []).length > 0;
+}
+
+function withAmpVary(fp: FittingEditorParams, ids: Set<string>, vary: boolean): FittingComponentEditor[] {
+  return fp.components.map((c) =>
+    ids.has(c.component_id)
+      ? { ...c, rows: c.rows.map((r) => (r.key === "amp" ? { ...r, vary } : r)) }
+      : c
+  );
+}
+
+/** Release the area ratios of a recipe's peaks (amplitudes become free); the links are stored for "Fix". */
+export function freeRecipeAreaRatios(fp: FittingEditorParams, recipeId: string): FittingEditorParams {
+  const rid = recipeId.trim();
+  const links = recipeAreaLinks(fp, rid);
+  if (!links.length) return fp;
+  const dropped = new Set(links);
+  const freed = new Set(links.map((l) => l.source_component_id));
+  return {
+    ...fp,
+    components: withAmpVary(fp, freed, true),
+    param_links: (fp.param_links ?? []).filter((l) => !dropped.has(l)),
+    recipe_area_links: { ...(fp.recipe_area_links ?? {}), [rid]: links },
+  };
+}
+
+/** Re-impose the stored recipe area ratios (amplitudes of the dependent peaks stop varying). */
+export function fixRecipeAreaRatios(fp: FittingEditorParams, recipeId: string): FittingEditorParams {
+  const rid = recipeId.trim();
+  const stored = fp.recipe_area_links?.[rid] ?? [];
+  if (!stored.length) return fp;
+  const ids = new Set(fp.components.map((c) => c.component_id));
+  const driven = new Set(
+    (fp.param_links ?? []).filter((l) => l.source_key === "amp").map((l) => l.source_component_id)
+  );
+  const restore = stored.filter(
+    (l) => ids.has(l.source_component_id) && ids.has(l.target_component_id) && !driven.has(l.source_component_id)
+  );
+  const rest = { ...(fp.recipe_area_links ?? {}) };
+  delete rest[rid];
+  if (!restore.length) return { ...fp, recipe_area_links: rest };
+  return {
+    ...fp,
+    components: withAmpVary(fp, new Set(restore.map((l) => l.source_component_id)), false),
+    param_links: [...(fp.param_links ?? []), ...restore],
+    recipe_area_links: rest,
+  };
 }
 
 export function polynomialParamKeys(degree: number): string[] {
@@ -658,7 +758,13 @@ export function renameFittingComponent(
       ids.map(remap),
     ])
   );
-  return { ...fp, components, param_links, recipe_components };
+  const recipe_area_links = Object.fromEntries(
+    Object.entries(fp.recipe_area_links ?? {}).map(([recipeId, links]) => [
+      recipeId,
+      links.map((l) => remapLink(l, remap)),
+    ])
+  );
+  return { ...fp, components, param_links, recipe_components, recipe_area_links };
 }
 
 const TRAILING_NUM_RE = /^(.*?)([-_ ]?)(\d+)$/;
@@ -857,6 +963,8 @@ export function flattenFittingForPipeline(fp: FittingEditorParams): Record<strin
   }
   const recipeComponents = normalizeRecipeComponents(fp.recipe_components);
   if (Object.keys(recipeComponents).length) out.recipe_components = recipeComponents;
+  const areaLinks = normalizeRecipeAreaLinks(fp.recipe_area_links);
+  if (Object.keys(areaLinks).length) out.recipe_area_links = areaLinks;
   if (typeof fp.recipe_pass_energy === "number" && Number.isFinite(fp.recipe_pass_energy)) {
     out.recipe_pass_energy = fp.recipe_pass_energy;
   }
@@ -914,6 +1022,7 @@ export function migrateFittingParamsToEditor(
       recipe_id,
       recipe_ids: normalizeRecipeIds(r.recipe_ids, recipe_id || undefined),
       recipe_components: normalizeRecipeComponents(r.recipe_components),
+      recipe_area_links: normalizeRecipeAreaLinks(r.recipe_area_links),
       recipe_pass_energy:
         typeof r.recipe_pass_energy === "number" && Number.isFinite(r.recipe_pass_energy)
           ? r.recipe_pass_energy
@@ -947,6 +1056,7 @@ export function migrateFittingParamsToEditor(
   const recipe_id = typeof p.recipe_id === "string" ? p.recipe_id : "";
   const recipe_ids = normalizeRecipeIds(p.recipe_ids, recipe_id || undefined);
   const recipe_components = normalizeRecipeComponents(p.recipe_components);
+  const recipe_area_links = normalizeRecipeAreaLinks(p.recipe_area_links);
   const recipe_pass_energy =
     typeof p.recipe_pass_energy === "number" && Number.isFinite(p.recipe_pass_energy)
       ? Number(p.recipe_pass_energy)
@@ -1044,6 +1154,7 @@ export function migrateFittingParamsToEditor(
     recipe_id: recipe_ids[0] ?? recipe_id,
     recipe_ids,
     recipe_components,
+    recipe_area_links,
     recipe_pass_energy,
     weighting,
     residual_view,

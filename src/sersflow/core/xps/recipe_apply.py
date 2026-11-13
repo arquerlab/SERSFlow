@@ -410,6 +410,8 @@ def apply_compound_fit_to_fitting_params(
     lock_spin_orbit: bool = True,
     spin_orbit_partner_splitting_eV: float | None = None,
     spin_orbit_partner_subshell: str | None = None,
+    link_positions: bool = True,
+    lock_area_ratios: bool = True,
 ) -> dict[str, Any]:
     """
     Fitting-step params for a recipe.
@@ -530,7 +532,15 @@ def apply_compound_fit_to_fitting_params(
         be_std_raw = peak.get("be_std_eV")
         be_std = float(be_std_raw) if isinstance(be_std_raw, (int, float)) else None
         fwhm = fwhm_vals[i]
-        components.append({"component_id": ids[i], "component_type": ctype})
+        # ``recipe`` tags the peak with its recipe (survives renames; drives the recipe Fix/Free area button).
+        components.append(
+            {
+                "component_id": ids[i],
+                "component_type": ctype,
+                "recipe": fit.id,
+                **({"satellite": True} if peak.get("satellite") is True else {}),
+            }
+        )
         specs = component_param_specs(ctype)
         keys = [s.key for s in specs]
         param_keys_per.append(keys)
@@ -777,6 +787,70 @@ def apply_compound_fit_to_fitting_params(
                 )
         elif sat_idx:
             warnings.append("satellite peaks flagged but no area_pct reference peak; ratios not locked")
+
+    # Default constraint scheme (recipes load fully linked): only the FIRST peak's position and amplitude vary.
+    #  - every other position follows an earlier peak by its recipe offset (unless a doublet / delta link exists),
+    #  - every other AREA is held at the recipe ratio to the first independent peak (area_ratio links),
+    #  - FWHM / shape stay fixed (vary=false, below).
+    if link_positions and len(peak_comp_ids) > 1:
+        pos_driver = {s: t for s, sk, t, tk in
+                      ((l["source_component_id"], l["source_key"], l.get("target_component_id"), l.get("target_key"))
+                       for l in param_links) if sk == "pos" and tk == "pos"}
+
+        def _pos_follows(a: str, b: str) -> bool:
+            seen: set[str] = set()
+            while a in pos_driver and a not in seen:
+                seen.add(a)
+                a = pos_driver[a]
+                if a == b:
+                    return True
+            return False
+
+        n_pos_links = 0
+        for i in range(1, len(peak_comp_ids)):
+            cid = peak_comp_ids[i]
+            if (cid, "pos") in driven:
+                continue
+            for j in range(i - 1, -1, -1):
+                tid = peak_comp_ids[j]
+                if tid == cid or _pos_follows(tid, cid):
+                    continue
+                add_link(cid, "pos", tid, "pos", "offset",
+                         offset=float(peak_value_rows[i]["pos"] - peak_value_rows[j]["pos"]))
+                pos_driver[cid] = tid
+                n_pos_links += 1
+                break
+        if n_pos_links:
+            warnings.append(f"{n_pos_links} peak position(s) linked to an earlier peak at the recipe offset")
+
+    if lock_area_ratios:
+        peak_comp_types = [str(c.get("component_type") or "").strip().lower() for c in components[peak_offset:]]
+        ref = next((i for i, a in enumerate(areas) if a is not None and (peak_comp_ids[i], "amp") not in driven), None)
+        if ref is not None:
+            n_area = 0
+            n_missing = 0
+            for i, a in enumerate(areas):
+                if i == ref or (peak_comp_ids[i], "amp") in driven:
+                    continue
+                if a is None:
+                    n_missing += 1
+                    continue
+                if peak_comp_types[i] in _AREA_RATIO_TYPES and peak_comp_types[ref] in _AREA_RATIO_TYPES:
+                    add_link(peak_comp_ids[i], "amp", peak_comp_ids[ref], "amp", "area_ratio",
+                             ratio=float(a) / float(areas[ref]))
+                else:
+                    add_link(peak_comp_ids[i], "amp", peak_comp_ids[ref], "amp", "scale",
+                             scale=height_scale_for_area_ratio(
+                                 area_i=float(a), area_0=float(areas[ref]),
+                                 factor_i=factors[i], factor_0=factors[ref]))
+                n_area += 1
+            if n_area:
+                warnings.append(
+                    f"{n_area} peak area(s) held at the recipe ratio to {peak_comp_ids[ref]} "
+                    "(area_ratio links; use the Fix/Free button on the recipe to release them)"
+                )
+            if n_missing:
+                warnings.append(f"{n_missing} peak(s) have no area_pct in the recipe; their amplitude stays free")
 
     _FWHM_KEYS = frozenset({"fwhm", "fwhm_g", "fwhm_l", "fwhm_lorentz", "fwhm_gauss"})
     _SHAPE_KEYS = frozenset({"m", "eta", "alpha", "beta", "a", "n", "m_asym"})
@@ -1164,6 +1238,8 @@ def apply_recipe_id(
     lock_spin_orbit: bool = True,
     spin_orbit_partner_splitting_eV: float | None = None,
     spin_orbit_partner_subshell: str | None = None,
+    link_positions: bool = True,
+    lock_area_ratios: bool = True,
 ) -> dict[str, Any]:
     fit = get_compound_fit(recipe_id)
     if fit is None:
@@ -1177,6 +1253,8 @@ def apply_recipe_id(
         lock_spin_orbit=lock_spin_orbit,
         spin_orbit_partner_splitting_eV=spin_orbit_partner_splitting_eV,
         spin_orbit_partner_subshell=spin_orbit_partner_subshell,
+        link_positions=link_positions,
+        lock_area_ratios=lock_area_ratios,
     )
     rid = str(out.get("recipe_id") or recipe_id).strip()
     if rid:

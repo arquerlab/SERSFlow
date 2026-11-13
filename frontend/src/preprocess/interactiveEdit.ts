@@ -435,5 +435,8 @@ export function deleteComponent(fp0: FittingEditorParams, ci: number): FittingEd
     components: fp0.components.filter((_, i) => i !== ci),
     param_links: dropLinksOf(fp0.param_links, id),
     recipe_components: rc,
+    recipe_area_links: Object.fromEntries(
+      Object.entries(fp0.recipe_area_links ?? {}).map(([k, v]) => [k, dropLinksOf(v, id)])
+    ),
   };
 }

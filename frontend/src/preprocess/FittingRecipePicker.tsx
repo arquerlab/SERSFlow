@@ -12,7 +12,12 @@ import {
 } from "./api";
 import {
   applyPeakShiftEv,
+  canFixRecipeAreaRatios,
   defaultFittingEditorParams,
+  fixRecipeAreaRatios,
+  freeRecipeAreaRatios,
+  recipeAreaLinks,
+  recipePeakIds,
   isPeakComponentType,
   isXpsBgComponentType,
   migrateFittingParamsToEditor,
@@ -86,6 +91,19 @@ function nonBgComponentIds(fp: FittingEditorParams): string[] {
     .filter(Boolean);
 }
 
+/** Tag peaks with their recipe (kept through renames); the server stamps it too, this covers older servers. */
+function stampRecipe(fp: FittingEditorParams, rid: string, ids: Set<string>): FittingEditorParams {
+  if (!rid) return fp;
+  return {
+    ...fp,
+    components: fp.components.map((c) =>
+      ids.has(String(c.component_id ?? "").trim()) && !(c.options as Record<string, unknown> | undefined)?.recipe
+        ? { ...c, options: { ...(c.options ?? {}), recipe: rid } }
+        : c
+    ),
+  };
+}
+
 /** True when the editor looks like an untouched default single gaussian. */
 export function isDefaultFittingEditor(fp: FittingEditorParams): boolean {
   if (fp.components.length !== 1) return false;
@@ -135,7 +153,7 @@ export function mergeRecipeApplyIntoEditor(
     gaussian_fwhm_eV: current.gaussian_fwhm_eV ?? 0,
   };
   // Recipe apply: enable band amp Auto so chord+ratio guess runs on next fit.
-  return setBandAmplitudeAutos(base, true);
+  return setBandAmplitudeAutos(stampRecipe(base, rid, new Set(peakIds)), true);
 }
 
 /** Append peaks from a second recipe; skip backgrounds; rename colliding ids. */
@@ -223,7 +241,10 @@ export function appendRecipeApplyIntoEditor(
     initial_area_ratios,
     peak_shift_eV: curShift,
   };
-  return setBandAmplitudeAutos(base, true);
+  return setBandAmplitudeAutos(
+    stampRecipe(base, rid, new Set(addedComps.map((c) => c.component_id))),
+    true
+  );
 }
 
 /** Remove one stacked recipe and the peaks it contributed (shared baseline kept if others remain). */
@@ -234,10 +255,12 @@ export function removeRecipeFromEditor(
 ): FittingEditorParams {
   const rid = recipeId.trim();
   if (!rid) return current;
-  const owned = new Set((current.recipe_components?.[rid] ?? []).map((x) => x.trim()).filter(Boolean));
+  const owned = new Set(recipePeakIds(current, rid));
   const recipe_ids = recipeIdsOf(current).filter((id) => id !== rid);
   const recipe_components = { ...(current.recipe_components ?? {}) };
   delete recipe_components[rid];
+  const recipe_area_links = { ...(current.recipe_area_links ?? {}) };
+  delete recipe_area_links[rid];
 
   if (!recipe_ids.length) {
     const cleared = defaultFittingEditorParams(catalog);
@@ -283,6 +306,7 @@ export function removeRecipeFromEditor(
     recipe_id: recipe_ids[0] ?? "",
     recipe_ids,
     recipe_components,
+    recipe_area_links,
   };
 }
 
@@ -365,10 +389,12 @@ export function FittingRecipePicker({
       return {
         id,
         label: it?.label ?? id,
-        peakCount: (fittingParams.recipe_components?.[id] ?? []).length,
+        peakCount: recipePeakIds(fittingParams, id).length,
+        areaFixed: recipeAreaLinks(fittingParams, id).length > 0,
+        canFix: canFixRecipeAreaRatios(fittingParams, id),
       };
     });
-  }, [loadedRecipeIds, items, fittingParams.recipe_components]);
+  }, [loadedRecipeIds, items, fittingParams]);
 
   useLayoutEffect(() => {
     if (!showPanel) {
@@ -486,6 +512,15 @@ export function FittingRecipePicker({
   function onPassEnergyChange(pe: number) {
     if (!selectedId || multiRecipes) return;
     void loadRecipe(selectedId, pe, "replace");
+  }
+
+  function onToggleAreaRatios(id: string, fixed: boolean) {
+    const next = fixed ? freeRecipeAreaRatios(fittingParams, id) : fixRecipeAreaRatios(fittingParams, id);
+    const note = fixed
+      ? `Recipe ${id}: area ratios freed (amplitudes vary independently)`
+      : `Recipe ${id}: area ratios fixed at the recipe values`;
+    setWarnings([note]);
+    onApply(next, [note]);
   }
 
   function onRemoveRecipe(id: string) {
@@ -727,6 +762,22 @@ export function FittingRecipePicker({
                         : ""}
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    className="mini"
+                    data-testid={`recipe-area-toggle-${r.id}`}
+                    disabled={busy || (!r.areaFixed && !r.canFix)}
+                    title={
+                      r.areaFixed
+                        ? "Area ratios of this recipe's peaks are fixed at the recipe values. Click to free them."
+                        : r.canFix
+                          ? "Area ratios are free. Click to fix them again at the recipe values."
+                          : "No stored recipe area ratios (re-apply the recipe to get them)."
+                    }
+                    onClick={() => onToggleAreaRatios(r.id, r.areaFixed)}
+                  >
+                    {r.areaFixed ? "Free ratios" : "Fix ratios"}
+                  </button>
                   <button
                     type="button"
                     className="mini danger"

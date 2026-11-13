@@ -52,7 +52,9 @@ def test_co_multiplet_recipes_do_not_get_spin_orbit_links() -> None:
         labs = [str(p.get("label") or "") for p in fit.peaks]
         assert _find_so_pair(labs) is None
         # Spin-orbit logic only: satellite amp locks (default) are checked elsewhere.
-        out = apply_recipe_id(rid, pass_energy=20, include_background=False, lock_satellites=False)
+        out = apply_recipe_id(
+            rid, pass_energy=20, include_background=False, lock_satellites=False, lock_area_ratios=False
+        )
         assert not any(L.get("source_key") == "amp" for L in out["param_links"])
 
 
@@ -85,14 +87,19 @@ def test_apply_multiplet_cr2o3() -> None:
     out = apply_recipe_id("cr_2p32_cr2o3", include_background=False)
     assert len(out["components"]) == 5
     assert any(l["mode"] == "offset" for l in out["param_links"])
-    # Area ratios seed amplitudes only; no locked amp scale links.
-    assert not any(l.get("source_key") == "amp" for l in out["param_links"])
+    # Default scheme: peaks 2..5 follow peak_1 by area ratio; only peak_1 amp and pos are free.
+    amp_links = [l for l in out["param_links"] if l.get("source_key") == "amp"]
+    assert {l["source_component_id"] for l in amp_links} == {c["component_id"] for c in out["components"][1:]}
+    assert all(l["mode"] == "area_ratio" and l["target_component_id"] == out["components"][0]["component_id"] for l in amp_links)
+    assert all(c.get("recipe") == "cr_2p32_cr2o3" for c in out["components"])
+    assert len([l for l in out["param_links"] if l["source_key"] == "pos"]) == 4
 
 
 def test_recipe_fwhm_and_m_fixed_amps_free() -> None:
     # Baseline recipe behaviour (area_pct is only an amplitude seed); satellite locking is opt-out.
     out = apply_recipe_id(
-        "co_2p32_co_oh2", pass_energy=20, include_background=False, lock_satellites=False
+        "co_2p32_co_oh2", pass_energy=20, include_background=False, lock_satellites=False,
+        lock_area_ratios=False,
     )
     from sersflow.core.preprocess.fitting_specs import component_param_specs
 
@@ -243,8 +250,8 @@ def test_satellites_locked_to_main_peak_by_default() -> None:
     out = apply_recipe_id("co_2p32_coo", pass_energy=20, include_background=False)
     links = _amp_links(out)
     # CoO: peak_3 and peak_4 are flagged satellites; both tied to peak_1.
-    assert set(links) == {"peak_3", "peak_4"}
-    for sat, lk in links.items():
+    assert set(links) == {"peak_2", "peak_3", "peak_4"}
+    for sat, lk in ((k, v) for k, v in links.items() if k != "peak_2"):
         assert lk["target_component_id"] == "peak_1" and lk["target_key"] == "amp"
         i_sat = _flat_index(out, sat, "amp")
         i_ref = _flat_index(out, "peak_1", "amp")
@@ -253,14 +260,15 @@ def test_satellites_locked_to_main_peak_by_default() -> None:
         # link keeps the literature AREA ratio (areas 1.6 and 26.1 vs 46.6), whatever fwhm / m the fit uses
         assert lk["mode"] == "area_ratio"
         assert lk["ratio"] == pytest.approx({"peak_3": 1.6, "peak_4": 26.1}[sat] / 46.6, rel=1e-9)
-    # non-satellite multiplet peak stays free
-    assert out["vary"][_flat_index(out, "peak_2", "amp")] is True
+    # non-satellite multiplet peaks follow peak_1 too (default fully linked scheme)
+    assert out["vary"][_flat_index(out, "peak_2", "amp")] is False
     assert any("satellite" in w for w in out["warnings"])
 
 
 def test_lock_satellites_false_keeps_amplitudes_free() -> None:
     out = apply_recipe_id(
-        "co_2p32_coo", pass_energy=20, include_background=False, lock_satellites=False
+        "co_2p32_coo", pass_energy=20, include_background=False, lock_satellites=False,
+        lock_area_ratios=False,
     )
     assert _amp_links(out) == {}
     assert all(out["vary"][_flat_index(out, f"peak_{n}", "amp")] for n in (1, 2, 3, 4))
@@ -373,7 +381,7 @@ def test_iro2_satellite_lock_uses_finite_lf_area() -> None:
 
     out = apply_recipe_id("ir_4f_iro2_anhydrous", pass_energy=20)
     links = _amp_links(out)
-    assert set(links) == {"4f5_2", "4f7_2_sat", "4f5_2_sat", "5p1_2"}
+    assert set(links) == {"4f5_2", "4f7_2_sat", "4f5_2_sat", "5p1_2", "5p3_2"}
     # F3: LF parents support area_ratio, so the satellite AREA (not height) is locked to the 4f7/2 main line ...
     lk = links["4f7_2_sat"]
     assert lk["mode"] == "area_ratio" and lk["target_component_id"] == "4f7_2"

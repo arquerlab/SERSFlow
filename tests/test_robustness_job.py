@@ -279,7 +279,8 @@ def _co2p_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fracs=(0.15, 0.35
     monkeypatch.setenv("SERSFLOW_UPLOAD_DIR", str(tmp_path))
     monkeypatch.setenv("SERSFLOW_DATA_DIR", str(tmp_path / "data"))
     (tmp_path / "b1").mkdir()
-    step = apply_recipe_id("co_2p32_co3o4", pass_energy=20)
+    # independent multiplet amplitudes: the generated truth varies peak shares separately
+    step = apply_recipe_id("co_2p32_co3o4", pass_energy=20, lock_area_ratios=False)
     step.pop("xps_region", None)
     for k in ("recipe_id", "recipe_pass_energy", "pass_energy_resolution", "warnings", "recipe_ids"):
         step.pop(k, None)
