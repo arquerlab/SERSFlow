@@ -5,7 +5,6 @@ import sqlite3
 from dataclasses import dataclass
 
 import numpy as np
-from datetime import datetime, timezone
 from typing import Any, Iterable
 from uuid import uuid4
 
@@ -16,10 +15,7 @@ from sersflow.core.io.upload_registry import resolve_uploaded_path, upload_root
 from sersflow.core.models.datasets import MapDataset, MultiSpectrumDataset, SeriesDataset, SpectrumDataset
 from sersflow.infra.blob_store import delete_blob_if_unreferenced, resolve_blob_path, store_blob_from_file
 from sersflow.infra.sqlite_db import connect, schema_once
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from sersflow.core.jsonutil import utc_now_iso as _utc_now_iso
 
 
 @dataclass(frozen=True)
@@ -566,35 +562,12 @@ def delete_dataset(dataset_id: str, *, owner_user_id: str) -> bool:
     return deleted
 
 
-def delete_all_datasets() -> int:
-    """
-    Delete all datasets.
-
-    Returns:
-        Number of dataset rows deleted.
-    """
-    ensure_schema()
-    blob_paths = _all_blob_paths()
-    with connect() as con:
-        cur = con.execute("DELETE FROM datasets")
-        deleted = int(cur.rowcount or 0)
-    if deleted:
-        delete_unreferenced_dataset_blobs(blob_paths)
-    return deleted
-
-
 def _blob_paths_for_dataset(dataset_id: str) -> list[str]:
     with connect() as con:
         rows = con.execute(
             "SELECT DISTINCT blob_relative_path FROM dataset_spectra WHERE dataset_id = ? AND blob_relative_path IS NOT NULL",
             (dataset_id,),
         ).fetchall()
-    return [str(r["blob_relative_path"]) for r in rows if r["blob_relative_path"]]
-
-
-def _all_blob_paths() -> list[str]:
-    with connect() as con:
-        rows = con.execute("SELECT DISTINCT blob_relative_path FROM dataset_spectra WHERE blob_relative_path IS NOT NULL").fetchall()
     return [str(r["blob_relative_path"]) for r in rows if r["blob_relative_path"]]
 
 

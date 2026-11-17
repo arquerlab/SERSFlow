@@ -11,8 +11,6 @@ spectrum x grid point) and ``sweep_summary.csv`` (per grid point, aggregated ove
 
 from __future__ import annotations
 
-import csv
-import io
 import itertools
 import json
 import logging
@@ -23,21 +21,19 @@ from typing import Any
 
 import numpy as np
 
-from sersflow.api.services.fit_curve_export_runner import _max_spectra
-from sersflow.api.services.fitting_preview import (
-    _collect_fit_input_xy,
-    _find_fitting_step,
-    _resolved_refs_for_run,
-)
-from sersflow.api.services.observation_export import _labels_for_spectrum
 from sersflow.core.metrics.fit_uncertainty import area_percentages, component_areas
 from sersflow.core.metrics.fitting_features import _param_keys_for_component
-from sersflow.core.pipeline.engine import fitting_region_applies, run_in_pipeline_pool
+from sersflow.core.pipeline.engine import run_in_pipeline_pool
 from sersflow.core.preprocess.fit_diagnostics import diagnostics_as_feature_dict
 from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
-from sersflow.infra.analysis_store import get_fit_curve_job, get_run, update_fit_curve_job
-from sersflow.infra.explore_store import artifacts_root
-from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
+from sersflow.infra.analysis_store import update_fit_curve_job
+from sersflow.api.services.fit_job_common import (
+    applicable_spectra,
+    fit_job_dir,
+    fit_job_lifecycle,
+    load_fit_job_context,
+)
+from sersflow.core.jsonutil import rows_to_csv_bytes as _csv_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -126,14 +122,6 @@ def _fixed_params(
     return out
 
 
-def _fmt(v: Any) -> Any:
-    if v is None:
-        return ""
-    if isinstance(v, float) and not math.isfinite(v):
-        return ""
-    return v
-
-
 def _summary_rows(axes_names: list[str], points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_grid: dict[tuple, list[dict[str, Any]]] = {}
     for p in points:
@@ -169,15 +157,6 @@ def _summary_rows(axes_names: list[str], points: list[dict[str, Any]]) -> list[d
     return rows
 
 
-def _csv_bytes(headers: list[str], rows: list[dict[str, Any]]) -> bytes:
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(headers)
-    for r in rows:
-        w.writerow([_fmt(r.get(h)) for h in headers])
-    return buf.getvalue().encode("utf-8")
-
-
 def _sweep_spectrum_task(task: dict[str, Any]) -> list[dict[str, Any]]:
     """Pool worker: every grid point for ONE spectrum (so the spectrum is sent to the worker once)."""
     rows: list[dict[str, Any]] = []
@@ -206,54 +185,16 @@ def _sweep_spectrum_task(task: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def execute_sweep_job(job_id: str) -> None:
-    rec = get_fit_curve_job(job_id)
-    if rec is None:
-        logger.error("sweep job not found: %s", job_id)
-        return
-    try:
-        update_fit_curve_job(job_id=job_id, status="running", finished=False)
-        run = get_run(rec.run_id)
-        if run is None:
-            raise ValueError("analysis run not found")
-        if run.status != "completed":
-            raise ValueError("analysis run is not completed")
+    with fit_job_lifecycle(job_id, "sweep", logger) as rec:
+        if rec is None:
+            return
         opts = json.loads(rec.params_json or "{}")
         axes: list[dict[str, Any]] = list(opts.get("grid") or [])
-        spectrum_ids = opts.get("spectrum_ids")
         points_grid = grid_points(axes)
         axes_names = [f"{a['component_id']}.{a['key']}" for a in axes]
-
-        pipeline, _ds, refs, ns = _resolved_refs_for_run(run, list(spectrum_ids) if spectrum_ids else None)
-        if len(refs) > _max_spectra():
-            raise ValueError(f"too many spectra (max {_max_spectra()})")
-        fitting_idx, fitting_step = _find_fitting_step(pipeline, rec.fitting_step_num)
-        step_params = dict(fitting_step.params or {})
-        tech = getattr(pipeline, "technique_family", None)
-        if tech and "technique_family" not in step_params:
-            step_params["technique_family"] = tech
-
-        xy_by_id = _collect_fit_input_xy(
-            pipeline=pipeline, refs=refs, ns=ns, fitting_idx=fitting_idx, fitting_step_num=rec.fitting_step_num
-        )
-        paths = sorted({str(r.relative_path) for r in refs if r.relative_path})
-        con = with_connection()
-        try:
-            labels_by_path = fetch_upload_labels_for_paths(con, paths)
-        finally:
-            con.close()
-
-        applicable: list[tuple[Any, Any, dict[str, Any]]] = []
-        for r in refs:
-            xy = xy_by_id.get(str(r.spectrum_id))
-            if xy is None or xy.x.size == 0:
-                continue
-            ri = r.record_index if isinstance(r.record_index, int) else None
-            row = _labels_for_spectrum(labels_by_path.get(str(r.relative_path)) or {}, record_index=ri)
-            raw_region = row.get("xps_region")
-            region = str(raw_region).strip() if raw_region is not None and str(raw_region).strip() else None
-            if not fitting_region_applies(step_params=step_params, spectrum_xps_region=region):
-                continue
-            applicable.append((r, xy, row))
+        ctx = load_fit_job_context(rec, spectrum_ids=opts.get("spectrum_ids"))
+        step_params = ctx.step_params
+        applicable = applicable_spectra(ctx)
         n_fits = len(applicable) * len(points_grid)
         if n_fits == 0:
             raise ValueError("no spectrum of the cohort belongs to this fitting step's region")
@@ -307,7 +248,7 @@ def execute_sweep_job(job_id: str) -> None:
                     if key.startswith("pct:"):
                         pct_names.setdefault(key, None)
 
-        out_dir = os.path.join(artifacts_root(), "fit_curve_jobs", job_id)
+        out_dir = fit_job_dir(job_id)
         os.makedirs(out_dir, exist_ok=True)
         zip_path = os.path.join(out_dir, "export.zip")
         point_headers = [
@@ -361,6 +302,3 @@ def execute_sweep_job(job_id: str) -> None:
             artifact_path=zip_path,
             finished=True,
         )
-    except Exception as e:
-        logger.exception("sweep job failed: %s", job_id)
-        update_fit_curve_job(job_id=job_id, status="failed", error=str(e), finished=True)

@@ -4,16 +4,12 @@ import sqlite3
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from uuid import uuid4
 
 import bcrypt
 
 from sersflow.infra.sqlite_db import connect, schema_once
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from sersflow.core.jsonutil import utc_now_iso as _utc_now_iso
 
 
 @dataclass(frozen=True)

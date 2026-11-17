@@ -19,10 +19,6 @@ def data_root() -> Path:
     return Path(os.environ.get("SERSFLOW_DATA_DIR", str(Path.cwd() / ".sersflow_data"))).resolve()
 
 
-def blob_root() -> Path:
-    return data_root() / "blobs"
-
-
 def ensure_within_data_root(candidate: Path) -> Path:
     root = data_root()
     resolved = candidate.resolve()

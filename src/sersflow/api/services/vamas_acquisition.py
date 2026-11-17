@@ -10,23 +10,12 @@ import numpy as np
 from sersflow.core.io.read_vms import block_meta_dict, count_statistics, read_vms_blocks
 from sersflow.core.pipeline.engine import _resolve_ref_path
 from sersflow.infra.datasets_store import DatasetRecord
-
-
-def _finite_list(a: np.ndarray) -> list[float | None]:
-    return [float(v) if np.isfinite(v) else None for v in np.asarray(a, dtype=float)]
+from sersflow.core.jsonutil import finite_list as _finite_list, finite_or_none as _num
 
 
 def _text(v: Any) -> str | None:
     s = str(v).strip() if v is not None else ""
     return s or None
-
-
-def _num(v: Any) -> float | None:
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    return f if math.isfinite(f) else None
 
 
 def _geometry(ef: dict[str, Any]) -> dict[str, Any]:

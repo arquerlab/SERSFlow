@@ -47,6 +47,8 @@ from sersflow.core.pipeline.engine import (
     run_pipeline,
     run_pipeline_parallel_no_cache,
     run_pipeline_with_intermediates,
+    spectrum_ref_dict,
+    pipeline_step_dict,
 )
 from sersflow.infra.sessions_store import (
     create_session,
@@ -575,27 +577,11 @@ def run_session_endpoint(session_id: str, payload: SessionRunRequest, request: R
     retm = cast(SessionRunReturnMetricsOnly, payload.return_)
     if payload.scope == "all":
         inputs = [
-            {
-                "spectrum_id": r.spectrum_id,
-                "relative_path": r.relative_path,
-                "record_index": r.record_index,
-                "blob_id": r.blob_id,
-                "blob_relative_path": r.blob_relative_path,
-                "original_relative_path": r.original_relative_path,
-                "spectrum_labels": getattr(r, "spectrum_labels", None),
-            }
+            spectrum_ref_dict(r)
             for r in refs
         ]
         steps = [
-            {
-                "name": s.name,
-                "params": s.params,
-                "enabled": s.enabled,
-                "impl_version": s.impl_version,
-                "step_id": s.step_id,
-                "input_from": s.input_from,
-                "after_step_id": s.after_step_id,
-            }
+            pipeline_step_dict(s)
             for s in runtime_pipeline_no_qc.steps
         ]
         final = run_pipeline_parallel_no_cache(

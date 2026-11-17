@@ -11,7 +11,6 @@ import inspect
 from sersflow.core.preprocess.fit_diagnostics import FitDiagnostics, compute_fit_diagnostics
 from sersflow.core.preprocess.fitting_specs import (
     PEAK_COMPONENT_TYPES,
-    build_component_function,
     component_param_specs,
 )
 from sersflow.core.preprocess.peak_area import area_per_height

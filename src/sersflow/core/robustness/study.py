@@ -25,14 +25,7 @@ import numpy as np
 from sersflow.core.robustness.anova import decompose
 from sersflow.core.robustness.design import Design
 from sersflow.core.robustness.responses import evaluate_responses, trend_metrics
-
-
-def _num(v: Any) -> float | None:
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    return f if math.isfinite(f) else None
+from sersflow.core.jsonutil import finite_or_none as _num
 
 
 def record_response(rec: dict[str, Any], spec: dict[str, Any], all_specs: list[dict[str, Any]]) -> float | None:

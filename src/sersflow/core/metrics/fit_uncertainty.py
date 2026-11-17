@@ -24,6 +24,7 @@ import numpy as np
 
 from sersflow.core.preprocess.fitting import FitProblem, FitResult, fit_curve
 from sersflow.core.preprocess.fitting_specs import AREA_EXPORT_COMPONENT_TYPES
+from sersflow.core.jsonutil import finite_or_none as _fin
 
 
 def _component_param_dict(mapping_row: dict[str, Any], p: np.ndarray) -> dict[str, float]:
@@ -113,14 +114,6 @@ def area_uncertainty(mapping: list[dict[str, Any]], p_opt: np.ndarray, p_cov: np
         area_pct=pct,
         area_pct_stderr=[se(n_c + k, pct) for k in range(n_c)],
     )
-
-
-def _fin(v: Any) -> float | None:
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    return f if math.isfinite(f) else None
 
 
 def component_uncertainty_rows(res: FitResult) -> list[dict[str, Any]]:

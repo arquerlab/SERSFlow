@@ -302,15 +302,6 @@ def feature_keys_for_probes(params: dict[str, Any]) -> list[str]:
     return keys
 
 
-def merge_spectral_intensity_step_features(
-    pipeline_step_index: int,
-    multi_spectral_steps: bool,
-    features: dict[str, float | None],
-) -> dict[str, float | None]:
-    prefix = f"s{pipeline_step_index}_" if multi_spectral_steps else ""
-    return {f"{prefix}{k}": v for k, v in features.items()}
-
-
 def _raw_si_keys_and_nums(pipeline: Any) -> tuple[list[str], list[int]]:
     steps = getattr(pipeline, "steps", None) or []
     sns = assign_pipeline_step_nums(steps)

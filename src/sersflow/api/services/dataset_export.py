@@ -5,7 +5,6 @@ import io
 import json
 import re
 import zipfile
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -17,14 +16,11 @@ from sersflow.infra.blob_store import data_root, ensure_within_data_root, resolv
 from sersflow.infra.datasets_store import create_dataset, get_dataset, to_schema
 from sersflow.infra.sqlite_db import connect
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, upsert_upload_labels, with_connection
+from sersflow.core.jsonutil import utc_now_iso as _utc_now_iso
 
 DATASET_SCHEMA_VERSION = "sersflow.dataset.v1"
 _BLOB_SUFFIX_RE = re.compile(r"\.[a-z0-9]{1,12}")
 _MAX_MANIFEST_BYTES = 256 * 1024 * 1024
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _sha256_bytes(data: bytes) -> str:

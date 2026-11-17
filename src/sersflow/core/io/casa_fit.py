@@ -27,6 +27,7 @@ _REGION_RE = re.compile(r"^CASA region \(\*(?P<name>.*?)\*\) \(\*(?P<bg>.*?)\*\)
 _COMP_RE = re.compile(r"^CASA comp \(\*(?P<name>.*?)\*\) \(\*(?P<shape>.*?)\*\)\s+(?P<rest>.*)$")
 _GL_RE = re.compile(r"^(?P<kind>GL|SGL)\((?P<m>[-+0-9.eE]+)\)$", re.IGNORECASE)
 _TAG_RE = re.compile(r"\(\*(?P<tag>.*?)\*\)")
+_CALIB_RE = re.compile(r"^Calib\s+M\s*=\s*(?P<m>\S+)\s+A\s*=\s*(?P<a>\S+)\s*(?P<mode>.*)$")
 
 
 def _f(tok: str) -> float | None:
@@ -56,6 +57,25 @@ def _quantity(tokens: list[str], key: str) -> dict[str, Any] | None:
         "linked_to": link,
         "link_factor": vals[4] if link is not None else None,
     }
+
+
+def parse_casa_calibration(comment_lines: list[str] | tuple[str, ...] | None) -> dict[str, Any] | None:
+    """
+    Parse the CasaXPS energy-scale calibration line of one block, e.g. ``Calib M = 3.4120 A = 0 BE ADD``.
+
+    CasaXPS applies ``BE = photon energy - KE - M`` (``A`` is a multiplicative term, 0 = unused). The
+    loader's binding-energy axis subtracts the analyser work function instead, so the loader axis maps onto
+    the CasaXPS one by ``BE_casa = BE_loader + (work_function - M)``. Returns ``None`` when absent.
+    """
+    for line in comment_lines or []:
+        m = _CALIB_RE.match(str(line).strip())
+        if not m:
+            continue
+        shift = _f(m.group("m"))
+        if shift is None:
+            continue
+        return {"M_eV": shift, "A": _f(m.group("a")), "mode": m.group("mode").strip() or None}
+    return None
 
 
 def parse_casa_comments(

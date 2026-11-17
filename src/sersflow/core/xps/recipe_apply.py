@@ -62,15 +62,6 @@ def _normalize_region(region: str) -> str:
     return re.sub(r"_+", "", str(region or "").strip())
 
 
-def _prefer_pass_energy(
-    fit: CompoundFit,
-    requested: int | None,
-    *,
-    preferred_from_acquisition: int | None = None,
-) -> int:
-    return _resolve_pass_energy(fit, requested, preferred_from_acquisition)[0]
-
-
 def _resolve_pass_energy(
     fit: CompoundFit,
     requested: int | None,

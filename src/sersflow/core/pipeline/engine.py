@@ -5,7 +5,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import threading
 from collections import OrderedDict
 from concurrent.futures import CancelledError, ProcessPoolExecutor, as_completed
@@ -100,15 +99,6 @@ def _extract_xy_copy(ds: Any, record_index: Any) -> XY:
         var=None if var is None else np.array(var, copy=True),
         var_kind=getattr(xy, "var_kind", None),
     )
-
-
-def spectrum_xps_region_from_dataset(ds: Any, record_index: int | None) -> str | None:
-    """Return per-block ``xps_region`` from a loaded dataset, if present."""
-    labels = spectrum_labels_from_dataset(ds, record_index)
-    raw = labels.get("xps_region")
-    if raw is not None and str(raw).strip():
-        return str(raw).strip()
-    return None
 
 
 def spectrum_labels_from_dataset(ds: Any, record_index: int | None) -> dict[str, Any]:
@@ -465,6 +455,42 @@ def _step_id_raw(step: Any) -> str | None:
     return t or None
 
 
+def spectrum_ref_dict(ref: Any) -> dict[str, Any]:
+    """
+    Engine-input dict of a dataset spectrum ref (what ``run_pipeline_parallel_no_cache`` takes as ``inputs``).
+
+    The one place that lists the fields: leaving out ``spectrum_labels`` or the blob fields in a hand-written
+    copy silently changes results (label-based steps, spectra without a source file).
+    """
+    return {
+        "spectrum_id": ref.spectrum_id,
+        "relative_path": ref.relative_path,
+        "record_index": ref.record_index,
+        "blob_id": ref.blob_id,
+        "blob_relative_path": ref.blob_relative_path,
+        "original_relative_path": ref.original_relative_path,
+        "spectrum_labels": getattr(ref, "spectrum_labels", None),
+    }
+
+
+def pipeline_step_dict(step: Any, *, enabled: bool | None = None) -> dict[str, Any]:
+    """
+    Engine dict of a pipeline step, keeping its wiring (``input_from`` / ``after_step_id``) and ``step_id``.
+
+    Without those, repeated-step pipelines (crop from initial, several fittings) diverge from the Prepare preview.
+    ``enabled`` overrides the step's own flag (used to switch steps off for a partial run).
+    """
+    return {
+        "name": step.name,
+        "params": step.params,
+        "enabled": step.enabled if enabled is None else enabled,
+        "impl_version": step.impl_version,
+        "step_id": step.step_id,
+        "input_from": step.input_from,
+        "after_step_id": step.after_step_id,
+    }
+
+
 def _steps_as_dicts(steps_list: Sequence[Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for s in steps_list:
@@ -731,7 +757,7 @@ def _run_indexed_steps_for_spectrum(
         params = dict(_step_params_raw(step))
         if name == "fitting" and technique_family:
             params.setdefault("technique_family", technique_family)
-        if name == "metadata_filter":
+        if name == "metadata_filter" or (name == "x_axis_calibration" and str(params.get("method") or "").strip().lower() == "casa_calibration"):
             params["_spectrum_labels"] = labels_row
 
         input_from = _step_input_from_raw(step)

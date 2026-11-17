@@ -20,7 +20,7 @@ from sersflow.api.services.pipeline_qc import apply_pipeline_qc_filters, pipelin
 from sersflow.api.services.reference_runtime import filter_reference_spectra, hydrate_reference_transforms
 from sersflow.api.services.sessions_service import resolve_subset_indices
 from sersflow.core.metrics.fitting_features import p_opt_and_gof_from_features, stored_component_uncertainty_rows
-from sersflow.core.pipeline.engine import EngineConfig, fitting_region_applies, run_pipeline_parallel_no_cache
+from sersflow.core.pipeline.engine import EngineConfig, fitting_region_applies, run_pipeline_parallel_no_cache, spectrum_ref_dict, pipeline_step_dict
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 from sersflow.core.preprocess.fitting import (
     evaluate_fit_curves,
@@ -33,14 +33,10 @@ from sersflow.infra.analysis_store import get_run as store_get_run
 from sersflow.infra.analysis_store import get_spectrum_features_for_ids
 from sersflow.infra.datasets_store import get_dataset_internal
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
+from sersflow.core.jsonutil import finite_list as _nan_list
 
 logger = logging.getLogger(__name__)
 
-
-def _nan_list(a: np.ndarray | None) -> list[float | None] | None:
-    if a is None:
-        return None
-    return [float(v) if np.isfinite(v) else None for v in np.asarray(a, dtype=float)]
 
 _ANALYSIS_COHORT = SubsetStrategy(kind="all")
 
@@ -109,15 +105,7 @@ def cohort_inputs(refs: Any) -> list[dict[str, Any]] | None:
     if not cohort:
         return None
     return [
-        {
-            "spectrum_id": r.spectrum_id,
-            "relative_path": r.relative_path,
-            "record_index": r.record_index,
-            "blob_id": r.blob_id,
-            "blob_relative_path": r.blob_relative_path,
-            "original_relative_path": r.original_relative_path,
-            "spectrum_labels": getattr(r, "spectrum_labels", None),
-        }
+        spectrum_ref_dict(r)
         for r in cohort
     ]
 
@@ -185,15 +173,7 @@ def _pipeline_steps_without_fitting(pipeline: Any, *, fitting_idx: int) -> list[
         elif s.name == "fitting" and str(s.step_id or "").strip() not in keep_fitting_ids:
             enabled = False
         out.append(
-            {
-                "name": s.name,
-                "params": s.params,
-                "enabled": enabled,
-                "impl_version": s.impl_version,
-                "step_id": s.step_id,
-                "input_from": s.input_from,
-                "after_step_id": s.after_step_id,
-            }
+            pipeline_step_dict(s, enabled=enabled)
         )
     return out
 
@@ -209,15 +189,7 @@ def _collect_fit_input_xy(
     steps = _pipeline_steps_without_fitting(pipeline, fitting_idx=fitting_idx)
     step_nums = assign_pipeline_step_nums(pipeline.steps)
     inputs = [
-        {
-            "spectrum_id": r.spectrum_id,
-            "relative_path": r.relative_path,
-            "record_index": r.record_index,
-            "blob_id": r.blob_id,
-            "blob_relative_path": r.blob_relative_path,
-            "original_relative_path": r.original_relative_path,
-            "spectrum_labels": getattr(r, "spectrum_labels", None),
-        }
+        spectrum_ref_dict(r)
         for r in refs
     ]
     packed = run_pipeline_parallel_no_cache(
@@ -405,13 +377,3 @@ def fitting_preview_for_run(
         "items": items,
     }
 
-
-def iter_all_refs_for_fit_export(run_id: str) -> tuple[Any, Any, list[Any], str, int]:
-    """Return (pipeline, ds, refs, ns, fitting ready). Used by export jobs."""
-    rec = store_get_run(run_id)
-    if rec is None:
-        raise ValueError("analysis run not found")
-    if rec.status != "completed":
-        raise ValueError("analysis run is not completed")
-    effective_pipeline, ds, refs, ns = _resolved_refs_for_run(rec, None)
-    return effective_pipeline, ds, refs, ns, rec

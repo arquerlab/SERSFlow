@@ -31,7 +31,6 @@ from sersflow.core.preprocess.fitting_specs import (
     component_param_specs,
 )
 from sersflow.core.preprocess.peak_area import (
-    apv_area_per_height,
     area_per_height,
     gaussian_area_per_height,
     gl_area_per_height,
@@ -95,13 +94,6 @@ def voigt_peak_area(amp: float, fwhm_g: float, fwhm_l: float) -> float:
     if not math.isfinite(y0) or y0 <= 0.0:
         return float("nan")
     return float(amp / y0)
-
-
-def apv_peak_area(amp: float, fwhm_l: float, fwhm_r: float, eta_l: float, eta_r: float) -> float:
-    """Half-side sum of pseudo-Voigt areas (continuous unit-height branches)."""
-    if not math.isfinite(amp):
-        return float("nan")
-    return float(amp * apv_area_per_height(fwhm_l, fwhm_r, eta_l, eta_r))
 
 
 def asymmetric_voigt_peak_area(

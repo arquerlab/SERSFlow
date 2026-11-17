@@ -30,14 +30,7 @@ from sersflow.core.preprocess.fitting import FitProblem, fit_curve, fit_problem_
 from sersflow.core.robustness.fit_hash import fingerprint
 from sersflow.core.robustness.patches import apply_fit_patches, _keys, _n_params
 from sersflow.core.robustness.responses import evaluate_responses
-
-
-def _fin(v: Any) -> float | None:
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    return f if math.isfinite(f) else None
+from sersflow.core.jsonutil import finite_or_none as _fin
 
 
 def mapping_to_json(mapping: list[dict[str, Any]]) -> list[dict[str, Any]]:

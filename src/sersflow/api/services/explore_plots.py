@@ -45,18 +45,6 @@ def plot_scores_scatter(
     plt.close(fig)
 
 
-def plot_loading_curve(x: list[float], loading: list[float], out_path: str, *, title: str = "Loading") -> None:
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.plot(np.asarray(x, dtype=float), np.asarray(loading, dtype=float), lw=1.0)
-    ax.set_xlabel(RAMAN_SHIFT_AXIS_LABEL)
-    ax.set_ylabel("Loading")
-    ax.set_title(title)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=120)
-    plt.close(fig)
-
-
 def write_pca_plots(artifact_dir: str, pca_result: dict[str, Any]) -> dict[str, str]:
     """Returns map plot_name -> relative path."""
     out: dict[str, str] = {}

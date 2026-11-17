@@ -273,6 +273,21 @@ X_AXIS_CALIBRATION = StepUiSchema(
             ),
         ),
         StepMethodUi(
+            id="casa_calibration",
+            label="CasaXPS calibration (Calib M)",
+            defaults={
+                "offset": 0,
+                "fitting_step_id": "",
+                "pos_key": "",
+                "target_x": 0,
+                "reference_filters": [],
+                "group_by": "",
+                "reference_mode": "core_level",
+                "reference_region": "",
+            },
+            fields=(),
+        ),
+        StepMethodUi(
             id="single_reference_band",
             label="single reference band",
             defaults={

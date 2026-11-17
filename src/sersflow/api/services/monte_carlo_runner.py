@@ -12,30 +12,25 @@ spectra are collected once, like the parameter sweep. Output ``export.zip``:
 
 from __future__ import annotations
 
-import csv
-import io
 import json
 import logging
-import math
 import os
 import zipfile
 from typing import Any
 
 import numpy as np
 
-from sersflow.api.services.fit_curve_export_runner import _max_spectra
-from sersflow.api.services.fitting_preview import (
-    _collect_fit_input_xy,
-    _find_fitting_step,
-    _resolved_refs_for_run,
-)
-from sersflow.api.services.observation_export import _labels_for_spectrum
 from sersflow.core.metrics.fit_uncertainty import component_uncertainty_rows, run_monte_carlo, spread
-from sersflow.core.pipeline.engine import fitting_region_applies, run_in_pipeline_pool
+from sersflow.core.pipeline.engine import run_in_pipeline_pool
 from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
-from sersflow.infra.analysis_store import get_fit_curve_job, get_run, update_fit_curve_job
-from sersflow.infra.explore_store import artifacts_root
-from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
+from sersflow.infra.analysis_store import update_fit_curve_job
+from sersflow.api.services.fit_job_common import (
+    applicable_spectra,
+    fit_job_dir,
+    fit_job_lifecycle,
+    load_fit_job_context,
+)
+from sersflow.core.jsonutil import finite_or_none as _fin, rows_to_csv_bytes as _csv_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -70,31 +65,6 @@ SUMMARY_HEADERS = [
     "n_requested",
     "noise_model",
 ]
-
-
-def _fmt(v: Any) -> Any:
-    if v is None:
-        return ""
-    if isinstance(v, float) and not math.isfinite(v):
-        return ""
-    return v
-
-
-def _csv_bytes(headers: list[str], rows: list[dict[str, Any]]) -> bytes:
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(headers)
-    for r in rows:
-        w.writerow([_fmt(r.get(h)) for h in headers])
-    return buf.getvalue().encode("utf-8")
-
-
-def _fin(v: Any) -> float | None:
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    return f if math.isfinite(f) else None
 
 
 def monte_carlo_for_spectrum(xy: Any, step_params: dict[str, Any], *, n_replicates: int, seed: int, progress=None):
@@ -171,53 +141,15 @@ def _mc_spectrum_task(task: dict[str, Any]) -> dict[str, Any]:
 
 
 def execute_monte_carlo_job(job_id: str) -> None:
-    rec = get_fit_curve_job(job_id)
-    if rec is None:
-        logger.error("monte carlo job not found: %s", job_id)
-        return
-    try:
-        update_fit_curve_job(job_id=job_id, status="running", finished=False)
-        run = get_run(rec.run_id)
-        if run is None:
-            raise ValueError("analysis run not found")
-        if run.status != "completed":
-            raise ValueError("analysis run is not completed")
+    with fit_job_lifecycle(job_id, "monte carlo", logger) as rec:
+        if rec is None:
+            return
         opts = json.loads(rec.params_json or "{}")
         n_rep = int(opts.get("n_replicates") or 100)
         seed = int(opts.get("seed") or 0)
-        spectrum_ids = opts.get("spectrum_ids")
-
-        pipeline, _ds, refs, ns = _resolved_refs_for_run(run, list(spectrum_ids) if spectrum_ids else None)
-        if len(refs) > _max_spectra():
-            raise ValueError(f"too many spectra (max {_max_spectra()})")
-        fitting_idx, fitting_step = _find_fitting_step(pipeline, rec.fitting_step_num)
-        step_params = dict(fitting_step.params or {})
-        tech = getattr(pipeline, "technique_family", None)
-        if tech and "technique_family" not in step_params:
-            step_params["technique_family"] = tech
-
-        xy_by_id = _collect_fit_input_xy(
-            pipeline=pipeline, refs=refs, ns=ns, fitting_idx=fitting_idx, fitting_step_num=rec.fitting_step_num
-        )
-        paths = sorted({str(r.relative_path) for r in refs if r.relative_path})
-        con = with_connection()
-        try:
-            labels_by_path = fetch_upload_labels_for_paths(con, paths)
-        finally:
-            con.close()
-
-        applicable: list[tuple[Any, Any, dict[str, Any]]] = []
-        for r in refs:
-            xy = xy_by_id.get(str(r.spectrum_id))
-            if xy is None or xy.x.size == 0:
-                continue
-            ri = r.record_index if isinstance(r.record_index, int) else None
-            row = _labels_for_spectrum(labels_by_path.get(str(r.relative_path)) or {}, record_index=ri)
-            raw_region = row.get("xps_region")
-            region = str(raw_region).strip() if raw_region is not None and str(raw_region).strip() else None
-            if not fitting_region_applies(step_params=step_params, spectrum_xps_region=region):
-                continue
-            applicable.append((r, xy, row))
+        ctx = load_fit_job_context(rec, spectrum_ids=opts.get("spectrum_ids"))
+        step_params = ctx.step_params
+        applicable = applicable_spectra(ctx)
         n_fits = len(applicable) * n_rep
         if n_fits == 0:
             raise ValueError("no spectrum of the cohort belongs to this fitting step's region")
@@ -281,7 +213,7 @@ def execute_monte_carlo_job(job_id: str) -> None:
             "spectra": spectra_meta,
             "rows": summary_rows,
         }
-        out_dir = os.path.join(artifacts_root(), "fit_curve_jobs", job_id)
+        out_dir = fit_job_dir(job_id)
         os.makedirs(out_dir, exist_ok=True)
         with open(os.path.join(out_dir, SUMMARY_JSON), "w", encoding="utf-8") as f:
             json.dump(summary, f, allow_nan=False, default=lambda o: None)
@@ -298,9 +230,6 @@ def execute_monte_carlo_job(job_id: str) -> None:
             artifact_path=zip_path,
             finished=True,
         )
-    except Exception as e:
-        logger.exception("monte carlo job failed: %s", job_id)
-        update_fit_curve_job(job_id=job_id, status="failed", error=str(e), finished=True)
 
 
 def read_monte_carlo_summary(artifact_path: str) -> dict[str, Any]:

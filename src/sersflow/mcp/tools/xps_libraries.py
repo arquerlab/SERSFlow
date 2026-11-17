@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 from sersflow.api.schemas.pipeline import Pipeline, PipelineStep
 from sersflow.api.schemas.sessions import SessionPipelineUpdateRequest
 from sersflow.mcp import confirm as confirm_gates
-from sersflow.mcp import summarize
 from sersflow.mcp.tools._util import tool_call
 
 if TYPE_CHECKING:

@@ -28,22 +28,6 @@ def _num(v: Any, se: Any = None) -> str:
     return f"{x:.4g}" if abs(x) >= 1e5 or (x != 0 and abs(x) < 1e-3) else f"{x:.3f}".rstrip("0").rstrip(".")
 
 
-def _kv(d: dict[str, Any]) -> list[tuple[str, str]]:
-    return [(k, "-" if v is None else (json.dumps(v) if isinstance(v, (dict, list)) else str(v))) for k, v in d.items()]
-
-
-def _sections(report: dict[str, Any]) -> list[tuple[str, Any]]:
-    """Ordered (title, payload) list shared by both renderers."""
-    return [
-        ("Provenance", report),
-        ("Processing history", report.get("processing_history") or []),
-        ("Charge correction", report.get("charge_correction") or {}),
-        ("Quantification", report.get("quantification") or {}),
-        ("Spectra and fits", report.get("spectra") or []),
-        ("Report checklist", report.get("checklist") or []),
-    ]
-
-
 def _bg_text(bg: dict[str, Any]) -> str:
     """Background component: line shape, options (Av Width, offsets, SB source) and parameters with status."""
     opts = bg.get("options") or {}

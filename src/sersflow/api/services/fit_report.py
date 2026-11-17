@@ -14,6 +14,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from sersflow.core.pipeline.engine import spectrum_ref_dict
 from sersflow.api.services.fit_curve_export_runner import _max_spectra
 from sersflow.api.services.fitting_preview import (
     _resolved_refs_for_run,
@@ -33,6 +34,7 @@ from sersflow.core.report.fit_report_model import (
 )
 from sersflow.infra.analysis_store import get_run
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
+from sersflow.core.jsonutil import finite_or_none as _fin
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +55,6 @@ QUANT_NOT_PERFORMED = (
     "transmission or escape-depth correction yet (gap items Q1/Q2 deferred). Peak areas below are raw, "
     "background-subtracted areas in the units of the processed spectrum."
 )
-
-
-def _fin(v: Any) -> float | None:
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    return f if math.isfinite(f) else None
 
 
 def _json_safe(o: Any) -> Any:
@@ -134,15 +128,7 @@ def _charge_correction(pipeline: Any, refs: list[Any], ns: str) -> tuple[list[di
         from sersflow.core.pipeline.engine import _prepare_calibration_cohort
 
         inputs = [
-            {
-                "spectrum_id": r.spectrum_id,
-                "relative_path": r.relative_path,
-                "record_index": r.record_index,
-                "blob_id": r.blob_id,
-                "blob_relative_path": r.blob_relative_path,
-                "original_relative_path": r.original_relative_path,
-                "spectrum_labels": getattr(r, "spectrum_labels", None),
-            }
+            spectrum_ref_dict(r)
             for r in refs
         ]
         step_dicts = [_step_dict(s) for s in steps]

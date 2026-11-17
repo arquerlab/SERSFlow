@@ -567,12 +567,6 @@ def read_sle_blocks_with_report(path: str | Path) -> tuple[list[dict[str, Any]],
     return blocks, {"skipped_regions": skipped, "skipped_count": len(skipped)}
 
 
-def read_sle_blocks(path: str | Path) -> list[dict[str, Any]]:
-    """Parse a ``.sle`` file into block dicts (x, y, meta); see :func:`read_sle_blocks_with_report`."""
-    blocks, _report = read_sle_blocks_with_report(path)
-    return blocks
-
-
 def read_file_sle(file_path: Path):
     """Load a SPECS Prodigy ``.sle`` file as MultiSpectrumDataset (one entry per spectrum block)."""
     from sersflow.core.models.datasets import MultiSpectrumDataset

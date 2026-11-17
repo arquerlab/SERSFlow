@@ -2,14 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from sersflow.infra.sqlite_db import connect, schema_once
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from sersflow.core.jsonutil import utc_now_iso as _utc_now_iso
 
 
 @schema_once
@@ -64,16 +60,6 @@ def fetch_upload_labels_for_paths(
         except json.JSONDecodeError:
             out[rel] = {}
     return out
-
-
-def delete_upload_labels_for_paths(con: sqlite3.Connection, relative_paths: Iterable[str]) -> None:
-    ensure_upload_labels_schema(con)
-    paths = [p for p in relative_paths if p]
-    if not paths:
-        return
-    placeholders = ",".join("?" * len(paths))
-    con.execute(f"DELETE FROM upload_labels WHERE relative_path IN ({placeholders})", paths)
-    con.commit()
 
 
 def with_connection() -> sqlite3.Connection:

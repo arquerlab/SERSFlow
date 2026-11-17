@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 
@@ -62,29 +62,6 @@ def plot_spectrum(
     else:
         x = dataset.x
     return spectrum_figure_json(x=x, y=y, title=title, x_title=x_title, y_title=y_title)
-
-
-def plot_overlay(
-    datasets: Iterable[tuple[str, Dataset]],
-    *,
-    spectrum_index: int = 0,
-    title: str = "Overlay",
-    x_title: str = RAMAN_SHIFT_AXIS_TITLE,
-    y_title: str = "Intensity (counts)",
-) -> dict:
-    items = list(datasets)
-    if not items:
-        raise ValueError("No datasets provided for overlay")
-
-    x0 = items[0][1].x
-    ys: list[np.ndarray] = []
-    labels: list[str] = []
-    for label, ds in items:
-        if np.asarray(ds.x).shape != np.asarray(x0).shape or not np.allclose(ds.x, x0, equal_nan=True):
-            raise ValueError("All inputs must share the same x-axis for overlay")
-        ys.append(pick_1d_spectrum(ds, spectrum_index=spectrum_index))
-        labels.append(label)
-    return overlay_figure_json(x=x0, ys=ys, labels=labels, title=title, x_title=x_title, y_title=y_title)
 
 
 def plot_series_heatmap(

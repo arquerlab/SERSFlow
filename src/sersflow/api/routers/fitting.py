@@ -22,7 +22,6 @@ from sersflow.api.schemas.fitting import (
 )
 from sersflow.api.services.fit_diagnostics_public import diagnostics_to_public
 from sersflow.api.services.uploads import resolve_existing_upload
-from sersflow.core.io.load_file import load_dataset
 from sersflow.core.pipeline.engine import load_dataset_cached
 from sersflow.core.metrics.fit_uncertainty import component_uncertainty_rows
 from sersflow.core.preprocess.fitting import (
@@ -34,6 +33,7 @@ from sersflow.core.preprocess.fitting import (
 from sersflow.core.preprocess.fitting_specs import list_component_types
 from sersflow.core.preprocess.param_expressions import link_driver_ids, validate_param_links
 from sersflow.core.spectrum import XY
+from sersflow.core.jsonutil import finite_list as _nan_to_none
 
 
 router = APIRouter(prefix="/fitting", tags=["Fitting"])
@@ -43,12 +43,6 @@ router = APIRouter(prefix="/fitting", tags=["Fitting"])
 def list_fitting_models() -> dict[str, Any]:
     comps = [c.to_public_dict() for c in list_component_types()]
     return {"components": comps}
-
-
-def _nan_to_none(a: np.ndarray | None) -> list[float | None] | None:
-    if a is None:
-        return None
-    return [float(v) if np.isfinite(v) else None for v in np.asarray(a, dtype=float)]
 
 
 def _resolve_target_xy(target: FitInlineSeries | FitSpectrumRef, *, owner_user_id: str) -> XY:

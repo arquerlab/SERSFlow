@@ -16,7 +16,7 @@ import numpy as np
 
 from functools import lru_cache
 
-from sersflow.core.preprocess.fitting_models import _la0, gl_gauss, gl_product_area_k, la, lf
+from sersflow.core.preprocess.fitting_models import _la0, gl_product_area_k, la, lf
 
 _LN2 = math.log(2.0)
 # Area = height * FWHM * k for unit-height G / L

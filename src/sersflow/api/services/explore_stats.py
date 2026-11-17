@@ -13,7 +13,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 
 from sersflow.api.services.observation_export import iter_observation_wide_dicts
-from sersflow.infra.analysis_store import get_run, iter_spectrum_rows
+from sersflow.infra.analysis_store import get_run
 from sersflow.infra.datasets_store import spectrum_export_lookup
 from sersflow.infra.sqlite_db import connect
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths
@@ -81,29 +81,6 @@ def load_explore_feature_matrix(
         rows.append([_scalar_cell_to_float(row.get(c)) for c in column_names])
     X = np.asarray(rows, dtype=np.float64)
     return X, sids, column_names
-
-
-def load_feature_matrix_from_analysis_run(
-    run_id: str, feature_keys: list[str]
-) -> tuple[np.ndarray, list[str], list[str]]:
-    """Returns X (n_samples, n_features), spectrum_ids, feature_keys used (numeric only)."""
-    rows: list[list[float]] = []
-    sids: list[str] = []
-    for sid, feat in iter_spectrum_rows(run_id=run_id, chunk_size=500):
-        row: list[float] = []
-        for k in feature_keys:
-            v = feat.get(k)
-            if v is None:
-                row.append(np.nan)
-            else:
-                try:
-                    row.append(float(v))
-                except (TypeError, ValueError):
-                    row.append(np.nan)
-        rows.append(row)
-        sids.append(sid)
-    X = np.asarray(rows, dtype=np.float64)
-    return X, sids, feature_keys
 
 
 def pairwise_pearson_pvalues(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

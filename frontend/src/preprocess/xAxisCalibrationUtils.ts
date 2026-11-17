@@ -3,6 +3,7 @@ import { FALLBACK_PEAK_KEYS, isPeakComponentType } from "./fittingUtils";
 
 export type XAxisCalibrationMethod =
   | "fixed_offset"
+  | "casa_calibration"
   | "single_reference_band"
   | "grouped_reference_band"
   | "reference_peak"; // legacy alias of single_reference_band
@@ -90,6 +91,7 @@ function normalizeFilters(raw: unknown): XAxisReferenceFilter[] {
 
 function normalizeMethod(raw: string): XAxisCalibrationMethod {
   const m = raw.trim().toLowerCase();
+  if (m === "casa_calibration") return "casa_calibration";
   if (m === "single_reference_band") return "single_reference_band";
   if (m === "grouped_reference_band") return "grouped_reference_band";
   if (m === "reference_peak") return "reference_peak";

@@ -105,3 +105,14 @@ def test_casa_fits_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert "hv" in body["be_convention"] or "photon" in body["be_convention"]
     assert client.get(f"/datasets/{ds.dataset_id}/casa-fits", params={"region": "nope"}).json()["n_spectra"] == 0
     assert client.get("/datasets/ds_missing/casa-fits").status_code == 404
+
+
+def test_parse_casa_calibration_line() -> None:
+    from sersflow.core.io.casa_fit import parse_casa_calibration
+
+    assert parse_casa_calibration(["Casa Info Follows", "Calib M = 3.4120 A = 0 BE ADD"]) == {
+        "M_eV": 3.412,
+        "A": 0.0,
+        "mode": "BE ADD",
+    }
+    assert parse_casa_calibration(["no calibration here"]) is None

@@ -638,7 +638,7 @@ def _fermi_edge_spec() -> ComponentSpec:
                 label="Sigma",
                 default=0.25,
                 lower_default=0.05,
-                upper_default=0.4,
+                upper_default=2.0,
                 unit="eV",
                 ui={"step": 0.01},
             ),

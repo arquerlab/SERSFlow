@@ -20,17 +20,10 @@ from sersflow.core.metrics.fit_uncertainty import area_percentages, component_ar
 from sersflow.core.metrics.fitting_features import _param_keys_for_component
 from sersflow.core.preprocess.fitting import fit_curve, fit_problem_from_step_params
 from sersflow.core.spectrum import XY
+from sersflow.core.jsonutil import finite_or_none as _fin
 
 MAX_SCAN_POINTS = 101
 MAX_REPLICATES = 500
-
-
-def _fin(v: Any) -> float | None:
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    return f if math.isfinite(f) else None
 
 
 def scan_targets(step_params: dict[str, Any], key: str, component_id: str | None, component_type: str | None) -> list[int]:

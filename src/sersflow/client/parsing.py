@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import re
-import warnings
 from dataclasses import dataclass
-from typing import Any
 
 _UPLOAD_RE = re.compile(
     r"Uploaded\s+(\d+)\s+file\(s\)\s+to\s+batch\s+([^\s(]+)",

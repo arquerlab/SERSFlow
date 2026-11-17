@@ -93,43 +93,6 @@ def load_spectrum_txt(file_path: Path, *, delimiter: str = "\t") -> tuple[np.nda
     return df["wn"].to_numpy(dtype="float32"), df["int"].to_numpy(dtype="float32")
 
 
-def _count_columns_txt_with_delimiter(
-    file_path: str | Path,
-    *,
-    delimiter: str = "\t",
-    sample_lines: int = 3,
-    encoding: str = "utf-8",
-) -> int:
-    """
-    Estimate the *real* number of columns by sampling a few non-empty data lines.
-    - Skips the first non-empty line (assumed header).
-    - Splits by `delimiter`.
-    - Ignores empty trailing fields caused by extra delimiters.
-    - Returns the most common column count in the sample.
-    """
-    file_path = Path(file_path)
-    counts: Counter[int] = Counter()
-    with file_path.open("r", encoding=encoding, errors="replace") as f:
-        saw_header = False
-        for line in f:
-            s = line.strip()
-            if not s:
-                continue
-            if not saw_header:
-                saw_header = True
-                continue  # skip header
-            parts = s.split(delimiter)
-            while parts and parts[-1].strip() == "":
-                parts.pop()
-            if parts:
-                counts[len(parts)] += 1
-                if sum(counts.values()) >= sample_lines:
-                    break
-    if not counts:
-        raise ValueError(f"Could not infer column count from data lines in: {file_path}")
-    return counts.most_common(1)[0][0]
-
-
 def infer_txt_layout(
     file_path: str | Path,
     *,

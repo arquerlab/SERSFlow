@@ -30,9 +30,3 @@ def build_search_text(path: Path, parent_levels: int = 3) -> str:
 
     return "__".join(segments)
 
-
-def search_text_from(x: str | Path, *, parent_levels: int = 3) -> str:
-    """Path or pre-standardized string -> search text for extractors."""
-    if isinstance(x, Path):
-        return build_search_text(x, parent_levels=parent_levels)
-    return standardize_segment(str(x))

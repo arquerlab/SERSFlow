@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 
 def _as_number(v: Any) -> float | None:
@@ -65,15 +65,3 @@ def evaluate_filters(row: Mapping[str, Any], filters: Sequence[Mapping[str, Any]
             return False
     return True
 
-
-def select_indices_matching(
-    rows_by_index: Mapping[int, Mapping[str, Any]] | Iterable[tuple[int, Mapping[str, Any]]],
-    *,
-    filters: Sequence[Mapping[str, Any]] | None = None,
-) -> list[int]:
-    """Return indices whose row dicts pass ``evaluate_filters``."""
-    if isinstance(rows_by_index, Mapping):
-        items = list(rows_by_index.items())
-    else:
-        items = list(rows_by_index)
-    return [i for i, row in items if evaluate_filters(row, filters)]

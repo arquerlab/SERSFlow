@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from sersflow.core.io.multi_block_labels import INTERNAL_LABEL_KEYS, get_block_spectra
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection

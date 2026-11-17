@@ -2,16 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from uuid import uuid4
 
 from sersflow.api.schemas.pipeline import Pipeline
 from sersflow.api.schemas.sessions import Session, SessionCacheInfo, SubsetStrategy
 from sersflow.infra.sqlite_db import connect, schema_once
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from sersflow.core.jsonutil import utc_now_iso as _utc_now_iso
 
 
 @dataclass(frozen=True)
@@ -148,13 +144,6 @@ def delete_sessions_for_dataset(dataset_id: str) -> int:
     ensure_schema()
     with connect() as con:
         cur = con.execute("DELETE FROM sessions WHERE dataset_id = ?", (dataset_id,))
-        return int(cur.rowcount or 0)
-
-
-def delete_all_sessions() -> int:
-    ensure_schema()
-    with connect() as con:
-        cur = con.execute("DELETE FROM sessions")
         return int(cur.rowcount or 0)
 
 

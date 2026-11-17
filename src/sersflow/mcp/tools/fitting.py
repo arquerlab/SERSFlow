@@ -6,7 +6,6 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from sersflow.api.schemas.fitting import FitRequest
-from sersflow.mcp import summarize
 from sersflow.mcp.tools._util import tool_call
 
 if TYPE_CHECKING:

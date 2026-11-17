@@ -15,7 +15,7 @@ from sersflow.api.services.sessions_service import resolve_subset_indices
 from sersflow.api.services.reference_runtime import filter_reference_spectra, hydrate_reference_transforms
 from sersflow.api.services.pipeline_qc import apply_pipeline_qc_filters, pipeline_without_qc_steps
 from sersflow.api.schemas.pipeline import Pipeline
-from sersflow.core.pipeline.engine import EngineConfig, run_pipeline_parallel_no_cache
+from sersflow.core.pipeline.engine import EngineConfig, run_pipeline_parallel_no_cache, spectrum_ref_dict, pipeline_step_dict
 from sersflow.infra.datasets_store import get_dataset_internal
 from sersflow.infra.explore_store import artifacts_root, update_matrix_job
 from sersflow.infra.explore_store import get_matrix_job as store_get_matrix_job
@@ -80,28 +80,12 @@ def execute_matrix_export_job(matrix_job_id: str) -> None:
             []
             if raw_only
             else [
-                {
-                    "name": s.name,
-                    "params": s.params,
-                    "enabled": s.enabled,
-                    "impl_version": s.impl_version,
-                    "step_id": s.step_id,
-                    "input_from": s.input_from,
-                    "after_step_id": s.after_step_id,
-                }
+                pipeline_step_dict(s)
                 for s in pipeline.steps
             ]
         )
         inputs = [
-            {
-                "spectrum_id": r.spectrum_id,
-                "relative_path": r.relative_path,
-                "record_index": r.record_index,
-                "blob_id": r.blob_id,
-                "blob_relative_path": r.blob_relative_path,
-                "original_relative_path": r.original_relative_path,
-                "spectrum_labels": getattr(r, "spectrum_labels", None),
-            }
+            spectrum_ref_dict(r)
             for r in refs
         ]
         cfg = EngineConfig(cache_namespace=ns)
@@ -253,9 +237,3 @@ def import_matrix_job_from_csv(
         update_matrix_job(matrix_job_id=jid, status="failed", error=str(e), finished=True)
         raise
 
-
-def subset_from_session(session_id: str) -> SubsetStrategy:
-    sess = get_session(session_id)
-    if sess is None:
-        raise ValueError("session not found")
-    return sess.subset

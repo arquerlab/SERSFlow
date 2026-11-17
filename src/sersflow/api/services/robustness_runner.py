@@ -59,7 +59,7 @@ from sersflow.core.robustness.patches import (
 from sersflow.core.robustness.responses import evaluate_responses, validate_responses
 from sersflow.core.robustness.study import apply_filter, summarize_study
 from sersflow.infra.analysis_store import get_fit_curve_job, get_run, update_fit_curve_job
-from sersflow.infra.explore_store import artifacts_root
+from sersflow.api.services.fit_job_common import fit_job_dir
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
 
 logger = logging.getLogger(__name__)
@@ -534,7 +534,7 @@ def execute_robustness_job(job_id: str) -> None:
         progress_total = n_fits_total + (len(refs) if p["noise_replicates"] else 0)
         update_fit_curve_job(job_id=job_id, progress_done=0, progress_total=progress_total)
 
-        out_dir = os.path.join(artifacts_root(), "fit_curve_jobs", job_id)
+        out_dir = fit_job_dir(job_id)
         os.makedirs(out_dir, exist_ok=True)
         check_path = os.path.join(out_dir, PATCH_CHECK_JSON)
         if os.path.exists(check_path):  # resumed job: keep the check made when it was first run
@@ -832,7 +832,7 @@ def check_patches_for_job(job_id: str) -> dict[str, Any]:
         pipeline=pipeline, design=p["design"], base_params=base_params, refs=refs, ns=ns,
         fitting_idx=fitting_idx, fitting_step_num=rec.fitting_step_num,
     )
-    out_dir = os.path.join(artifacts_root(), "fit_curve_jobs", job_id)
+    out_dir = fit_job_dir(job_id)
     os.makedirs(out_dir, exist_ok=True)
     out = report.to_dict()
     out["job_id"] = job_id

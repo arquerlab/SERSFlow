@@ -615,6 +615,3 @@ def asymmetric_voigt(x, *params):
 def polynomial_background(x, *params):
     return np.polyval(params, x)
 
-
-def combined_models(*models):
-    return sum(models)

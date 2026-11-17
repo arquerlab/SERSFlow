@@ -22,7 +22,6 @@ from sersflow.core.preprocess.fitting_specs import (
     BOLTZMANN_EV_PER_K,
     XPS_BACKGROUND_COMPONENT_TYPES,
     PEAK_COMPONENT_TYPES,
-    build_component_function,
 )
 from sersflow.core.preprocess.gaussian_broadening import with_gaussian_broadening
 
@@ -86,12 +85,6 @@ def _auto_fermi_step_and_const(y: np.ndarray) -> tuple[float, float]:
     if const < 0:
         const = 0.0
     return step, float(const)
-
-
-def _auto_fermi_amplitude(y: np.ndarray) -> float:
-    """Estimate Fermi-edge step height from end medians."""
-    step, _const = _auto_fermi_step_and_const(y)
-    return step
 
 
 def _apply_auto_fermi_amplitudes(

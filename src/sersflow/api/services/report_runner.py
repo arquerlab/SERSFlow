@@ -10,7 +10,7 @@ import zipfile
 from sersflow.api.services.fit_report import build_fit_report
 from sersflow.core.report.render import render_html, render_markdown
 from sersflow.infra.analysis_store import get_fit_curve_job, update_fit_curve_job
-from sersflow.infra.explore_store import artifacts_root
+from sersflow.api.services.fit_job_common import fit_job_dir
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def execute_report_job(job_id: str) -> None:
             include_figures=bool(opts.get("include_figures", True)),
             progress=progress,
         )
-        out_dir = os.path.join(artifacts_root(), "fit_curve_jobs", job_id)
+        out_dir = fit_job_dir(job_id)
         os.makedirs(out_dir, exist_ok=True)
         js = json.dumps(report, indent=1, allow_nan=False)
         with open(os.path.join(out_dir, REPORT_JSON), "w", encoding="utf-8") as f:

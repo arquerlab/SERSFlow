@@ -7,7 +7,7 @@ import math
 import sqlite3
 import zipfile
 from threading import Thread
-from typing import Any, Iterator, Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -145,6 +145,29 @@ def _require_run(run_id: str, user_id: str) -> Any:
 
 # Max bytes for in-memory ZIP bundle (use separate manifest + CSV export for larger runs).
 _BUNDLE_MAX_BYTES = 80 * 1024 * 1024
+
+
+def _require_completed_run(run_id: str, user_id: str) -> Any:
+    """The caller's run, which must have finished (404 when missing / not theirs, 400 while it is running)."""
+    rec = _require_run(run_id, user_id)
+    if rec.status != "completed":
+        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    return rec
+
+
+def _queue_fit_job(target: Any, **job_fields: Any) -> JSONResponse:
+    """
+    Create a fit-curve-style job row, start ``target(job_id)`` in a background thread and answer 202.
+
+    Shared by every job endpoint (fit curves, step outputs, sweep, Monte Carlo, robustness, report), which all
+    poll and download through the fit-curve job endpoints.
+    """
+    jid = create_fit_curve_job(**job_fields)
+    Thread(target=target, args=(jid,), daemon=True).start()
+    return JSONResponse(
+        status_code=202,
+        content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump(),
+    )
 
 
 def _pipeline_hash_to_name_map(*, owner_user_id: str, limit: int = 500) -> dict[str, str]:
@@ -518,9 +541,7 @@ def get_observation_columns(
     JSON rows for selected columns (features, ``axis_*``, ``meta_*``) — same merge as observation wide CSV.
     """
     user_id = current_user_id(request)
-    rec = _require_run(run_id, user_id)
-    if rec.status != "completed":
-        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    rec = _require_completed_run(run_id, user_id)
     col_list = [c.strip() for c in cols.split(",") if c.strip()]
     if not col_list:
         raise HTTPException(status_code=400, detail="no columns requested")
@@ -569,9 +590,7 @@ def get_analysis_spectrum(run_id: str, spectrum_id: str, request: Request) -> di
     Final pipeline spectrum for one observation in a completed analysis run.
     """
     user_id = current_user_id(request)
-    rec = _require_run(run_id, user_id)
-    if rec.status != "completed":
-        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    rec = _require_completed_run(run_id, user_id)
 
     lookup = spectrum_export_lookup(rec.dataset_id)
     info = lookup.get(spectrum_id)
@@ -682,10 +701,9 @@ def post_step_outputs_job(
 ) -> FitCurveJobCreateResponse | JSONResponse:
     """Queue a step-outputs CSV zip; poll and download through the fit-curve job endpoints."""
     user_id = current_user_id(request)
-    rec = _require_run(run_id, user_id)
-    if rec.status != "completed":
-        raise HTTPException(status_code=400, detail="Run is not completed yet")
-    jid = create_fit_curve_job(
+    _require_completed_run(run_id, user_id)
+    return _queue_fit_job(
+        execute_step_outputs_job,
         run_id=run_id,
         fitting_step_num=0,
         content=STEP_OUTPUTS_CONTENT,
@@ -693,11 +711,6 @@ def post_step_outputs_job(
         params_json=json.dumps(
             {"step_nums": list(payload.step_nums), "spectrum_ids": payload.spectrum_ids}
         ),
-    )
-    Thread(target=execute_step_outputs_job, args=(jid,), daemon=True).start()
-    return JSONResponse(
-        status_code=202,
-        content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump(),
     )
 
 
@@ -735,9 +748,7 @@ def post_sweep_job(
 ) -> FitCurveJobCreateResponse | JSONResponse:
     """Parameter sweep over one fitting step; poll and download through the fit-curve job endpoints."""
     user_id = current_user_id(request)
-    rec = _require_run(run_id, user_id)
-    if rec.status != "completed":
-        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    rec = _require_completed_run(run_id, user_id)
     step_num = _resolve_fitting_step_num(
         rec, num=payload.fitting_step_num, index=payload.fitting_step_index
     )
@@ -750,17 +761,13 @@ def post_sweep_job(
         _fixed_params(dict(step.params or {}), axes, tuple(a["values"][0] for a in axes))  # validates ids/keys
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    jid = create_fit_curve_job(
+    return _queue_fit_job(
+        execute_sweep_job,
         run_id=run_id,
         fitting_step_num=step_num,
         content=SWEEP_CONTENT,
         format="csv",
         params_json=json.dumps({"grid": axes, "spectrum_ids": payload.spectrum_ids}),
-    )
-    Thread(target=execute_sweep_job, args=(jid,), daemon=True).start()
-    return JSONResponse(
-        status_code=202,
-        content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump(),
     )
 
 
@@ -770,13 +777,12 @@ def post_monte_carlo_job(
 ) -> FitCurveJobCreateResponse | JSONResponse:
     """F2 Monte Carlo uncertainties over one fitting step; poll/download through the fit-curve job endpoints."""
     user_id = current_user_id(request)
-    rec = _require_run(run_id, user_id)
-    if rec.status != "completed":
-        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    rec = _require_completed_run(run_id, user_id)
     step_num = _resolve_fitting_step_num(
         rec, num=payload.fitting_step_num, index=payload.fitting_step_index
     )
-    jid = create_fit_curve_job(
+    return _queue_fit_job(
+        execute_monte_carlo_job,
         run_id=run_id,
         fitting_step_num=step_num,
         content=MONTE_CARLO_CONTENT,
@@ -784,11 +790,6 @@ def post_monte_carlo_job(
         params_json=json.dumps(
             {"n_replicates": payload.n_replicates, "seed": payload.seed, "spectrum_ids": payload.spectrum_ids}
         ),
-    )
-    Thread(target=execute_monte_carlo_job, args=(jid,), daemon=True).start()
-    return JSONResponse(
-        status_code=202,
-        content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump(),
     )
 
 
@@ -919,9 +920,7 @@ def post_robustness_job(
     """Robustness study (factorial analyst-choice analysis); poll/download through the fit-curve job endpoints."""
     _check_robustness_schema(request)
     user_id = current_user_id(request)
-    rec = _require_run(run_id, user_id)
-    if rec.status != "completed":
-        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    rec = _require_completed_run(run_id, user_id)
     step_num, opts, _step_params, _notes = _robustness_build(rec, payload)
     _parsed, _estimate, check = _robustness_check_for(rec, payload, opts, step_num)  # validates design + responses
     if check["n_errors"] and not payload.allow_inert:
@@ -931,15 +930,14 @@ def post_robustness_job(
                 {"error": "patch-effect check failed; fix the levels or pass allow_inert=true", "patch_check": check}
             ),
         )
-    jid = create_fit_curve_job(
+    return _queue_fit_job(
+        execute_robustness_job,
         run_id=run_id,
         fitting_step_num=step_num,
         content=ROBUSTNESS_CONTENT,
         format="zip",
         params_json=json.dumps(opts),
     )
-    Thread(target=execute_robustness_job, args=(jid,), daemon=True).start()
-    return JSONResponse(status_code=202, content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump())
 
 
 def _robustness_job(job_id: str, user_id: Any) -> Any:
@@ -1007,18 +1005,15 @@ def post_report_job(
 ) -> FitCurveJobCreateResponse | JSONResponse:
     """R1 publication fit report (HTML + Markdown + JSON); poll/download through the fit-curve job endpoints."""
     user_id = current_user_id(request)
-    rec = _require_run(run_id, user_id)
-    if rec.status != "completed":
-        raise HTTPException(status_code=400, detail="Run is not completed yet")
-    jid = create_fit_curve_job(
+    _require_completed_run(run_id, user_id)
+    return _queue_fit_job(
+        execute_report_job,
         run_id=run_id,
         fitting_step_num=int((payload.fitting_step_nums or [0])[0]),
         content=REPORT_CONTENT,
         format="zip",
         params_json=json.dumps(payload.model_dump()),
     )
-    Thread(target=execute_report_job, args=(jid,), daemon=True).start()
-    return JSONResponse(status_code=202, content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump())
 
 
 @router.get("/report-jobs/{job_id}/json", response_model=None)
@@ -1058,22 +1053,16 @@ def post_fit_curve_job(
     run_id: str, payload: FitCurveJobCreateRequest, request: Request
 ) -> FitCurveJobCreateResponse | JSONResponse:
     user_id = current_user_id(request)
-    rec = _require_run(run_id, user_id)
-    if rec.status != "completed":
-        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    rec = _require_completed_run(run_id, user_id)
     step_num = _resolve_fitting_step_num(
         rec, num=payload.fitting_step_num, index=payload.fitting_step_index
     )
-    jid = create_fit_curve_job(
+    return _queue_fit_job(
+        execute_fit_curve_job,
         run_id=run_id,
         fitting_step_num=step_num,
         content=str(payload.content),
         format=str(payload.format),
-    )
-    Thread(target=execute_fit_curve_job, args=(jid,), daemon=True).start()
-    return JSONResponse(
-        status_code=202,
-        content=FitCurveJobCreateResponse(job_id=jid, status="queued").model_dump(),
     )
 
 
@@ -1151,9 +1140,7 @@ def download_analysis_export_bundle(run_id: str, request: Request) -> Response:
     For very large runs, use separate `/export/manifest` and streaming `/export` instead.
     """
     user_id = current_user_id(request)
-    rec = _require_run(run_id, user_id)
-    if rec.status != "completed":
-        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    rec = _require_completed_run(run_id, user_id)
     keys = _feature_keys(rec)
     manifest = build_analysis_manifest(
         run_id=rec.run_id,
@@ -1221,9 +1208,7 @@ def export_observation_table(
     Use `format=parquet` with `layout=wide` for columnar export (install `pyarrow`).
     """
     user_id = current_user_id(request)
-    rec = _require_run(run_id, user_id)
-    if rec.status != "completed":
-        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    rec = _require_completed_run(run_id, user_id)
 
     ds = get_dataset_for_user(rec.dataset_id, user_id)
     if ds is None:
@@ -1313,9 +1298,7 @@ def export_analysis_run(
     For manifest + reproducibility use `GET .../export/manifest` or `GET .../export/bundle`.
     """
     user_id = current_user_id(request)
-    rec = _require_run(run_id, user_id)
-    if rec.status != "completed":
-        raise HTTPException(status_code=400, detail="Run is not completed yet")
+    rec = _require_completed_run(run_id, user_id)
 
     keys = _feature_keys(rec)
     if layout == "wide":

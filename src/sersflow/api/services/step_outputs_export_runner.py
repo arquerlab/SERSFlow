@@ -16,11 +16,11 @@ from sersflow.api.services.analysis_runner import _effective_pipeline_for_analys
 from sersflow.api.services.fit_curve_export_runner import _max_spectra, _safe_name
 from sersflow.api.services.fitting_preview import _resolved_refs_for_run, cohort_inputs
 from sersflow.api.services.pipeline_qc import pipeline_without_qc_steps
-from sersflow.core.pipeline.engine import RAW_COLLECT_TOKEN, EngineConfig, run_pipeline_parallel_no_cache
+from sersflow.core.pipeline.engine import RAW_COLLECT_TOKEN, EngineConfig, run_pipeline_parallel_no_cache, spectrum_ref_dict
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 from sersflow.core.spectrum import XY
 from sersflow.infra.analysis_store import get_fit_curve_job, get_run, update_fit_curve_job
-from sersflow.infra.explore_store import artifacts_root
+from sersflow.api.services.fit_job_common import fit_job_dir
 
 logger = logging.getLogger(__name__)
 
@@ -151,15 +151,7 @@ def execute_step_outputs_job(job_id: str) -> None:
         collect = {RAW_COLLECT_TOKEN} | {tok for _i, tok, _l in selected}
 
         inputs = [
-            {
-                "spectrum_id": r.spectrum_id,
-                "relative_path": r.relative_path,
-                "record_index": r.record_index,
-                "blob_id": r.blob_id,
-                "blob_relative_path": r.blob_relative_path,
-                "original_relative_path": r.original_relative_path,
-                "spectrum_labels": getattr(r, "spectrum_labels", None),
-            }
+            spectrum_ref_dict(r)
             for r in refs
         ]
         total = len(inputs)
@@ -179,7 +171,7 @@ def execute_step_outputs_job(job_id: str) -> None:
             raise RuntimeError("expected (final, per_step_outputs)")
         _final, per_out = packed
 
-        out_dir = os.path.join(artifacts_root(), "fit_curve_jobs", job_id)
+        out_dir = fit_job_dir(job_id)
         os.makedirs(out_dir, exist_ok=True)
         zip_path = os.path.join(out_dir, "export.zip")
         written = 0

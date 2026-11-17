@@ -186,12 +186,6 @@ def experimental_only(block: Mapping[str, Any] | None) -> dict[str, Any]:
     return {k: v for k, v in block.items() if k in EXPERIMENTAL_BLOCK_KEYS and v is not None}
 
 
-def structural_only(block: Mapping[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(block, Mapping):
-        return {}
-    return {k: v for k, v in block.items() if k in STRUCTURAL_BLOCK_KEYS}
-
-
 def merge_block_structural_preserving_experimental(
     *,
     previous: Mapping[str, Any] | None,
@@ -206,12 +200,6 @@ def merge_block_structural_preserving_experimental(
         if v is not None or k in STRUCTURAL_BLOCK_KEYS:
             struct[k] = v
     return {**prev_exp, **struct}
-
-
-def path_labels_without_internal(labels: Mapping[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(labels, Mapping):
-        return {}
-    return {k: v for k, v in labels.items() if k not in INTERNAL_LABEL_KEYS}
 
 
 def _join_search_parts(*parts: Any) -> str:
@@ -352,24 +340,3 @@ def lift_nxs_skip_summary_to_labels(
         out["nxs_skipped_regions"] = list(regions)
     return out
 
-
-def attach_block_spectra_to_labels(
-    labels: dict[str, Any] | None,
-    path: Path,
-    *,
-    parent_levels: int = 3,
-    previous_labels: Mapping[str, Any] | None = None,
-) -> tuple[dict[str, Any], dict[str, dict[str, Any]] | None]:
-    """
-    Build block map for ``path``, merge into labels, and lift NXS skip summary.
-
-    Returns ``(labels, block_map)``. ``block_map`` is ``None`` when the file is not multi-spectrum.
-    """
-    prev = previous_labels if previous_labels is not None else labels
-    block_map = build_block_spectra_for_path(path, parent_levels=parent_levels, previous_labels=prev)
-    out = dict(labels or {})
-    if not block_map:
-        return out, None
-    set_block_spectra(out, block_map)
-    out = lift_nxs_skip_summary_to_labels(out, block_map)
-    return out, block_map

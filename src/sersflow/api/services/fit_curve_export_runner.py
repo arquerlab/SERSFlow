@@ -41,6 +41,11 @@ from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, wi
 logger = logging.getLogger(__name__)
 
 
+def fit_job_dir(job_id: str) -> str:
+    """Artifact folder of a fit-curve-style job (same as ``fit_job_common.fit_job_dir``)."""
+    return os.path.join(artifacts_root(), "fit_curve_jobs", job_id)
+
+
 def _max_spectra() -> int:
     raw = os.environ.get("SERSFLOW_FIT_CURVE_MAX_SPECTRA", "100000")
     try:
@@ -203,7 +208,7 @@ def execute_fit_curve_job(job_id: str) -> None:
 
         include_components = rec.content == "data_fit_components_resid"
         fmt = rec.format
-        out_dir = os.path.join(artifacts_root(), "fit_curve_jobs", job_id)
+        out_dir = fit_job_dir(job_id)
         os.makedirs(out_dir, exist_ok=True)
         zip_path = os.path.join(out_dir, "export.zip")
 

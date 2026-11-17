@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Iterable
 from uuid import uuid4
 
 from sersflow.infra.artifact_cleanup import remove_artifact_dirs
 from sersflow.infra.sqlite_db import connect, schema_once
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from sersflow.core.jsonutil import utc_now_iso as _utc_now_iso
 
 
 def _compact_json(obj: Any) -> str:

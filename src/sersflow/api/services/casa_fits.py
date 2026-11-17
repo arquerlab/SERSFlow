@@ -8,7 +8,7 @@ from typing import Any
 
 from sersflow.infra.datasets_store import DatasetRecord
 from sersflow.api.services.spectrum_context import labels_for_spectrum
-from sersflow.core.io.casa_fit import parse_casa_comments
+from sersflow.core.io.casa_fit import parse_casa_calibration, parse_casa_comments
 from sersflow.core.io.read_vms import derive_xps_region, read_vms_blocks
 from sersflow.core.pipeline.engine import _resolve_ref_path
 from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, with_connection
@@ -18,8 +18,17 @@ logger = logging.getLogger(__name__)
 BE_CONVENTION = (
     "be_eV = photon energy - kinetic energy (CasaXPS convention; analyser work function NOT subtracted). "
     "The loader's binding-energy axis subtracts the work function, so offsets of a few eV are expected "
-    "until the pipeline's x-axis calibration is applied."
+    "until the pipeline's x-axis calibration is applied. Use x_axis_calibration method 'casa_calibration' "
+    "(shift = work function - Calib M of each block, also given as casa_frame_shift_eV) to put the loader axis "
+    "into the CasaXPS frame."
 )
+
+
+def _frame_shift(work_function_eV: float | None, cal: dict[str, Any] | None) -> float | None:
+    """Add this to the loader's binding energy to get the CasaXPS frame: ``work_function - M``."""
+    if cal is None or work_function_eV is None:
+        return None
+    return float(work_function_eV) - float(cal["M_eV"])
 
 
 def casa_fits_payload(dataset: DatasetRecord, *, region: str | None = None) -> dict[str, Any]:
@@ -70,6 +79,9 @@ def casa_fits_payload(dataset: DatasetRecord, *, region: str | None = None) -> d
                 "experiment_id": block.experiment_id,
                 "current_density_A_cm2": flat.get("current_density_A_cm2"),
                 "excitation_energy_eV": block.excitation_energy_eV,
+                "casa_calibration": parse_casa_calibration(comments),
+                "analyser_work_function_eV": block.analyser_work_function_eV,
+                "casa_frame_shift_eV": _frame_shift(block.analyser_work_function_eV, parse_casa_calibration(comments)),
                 "casa_region": fit["region"],
                 "components": fit["components"],
             }

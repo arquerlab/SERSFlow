@@ -21,7 +21,6 @@ from sersflow.api.schemas.plot import (
     SeriesPointsPlotRequest,
     SpectrumPlotRequest,
 )
-from sersflow.core.io.load_file import load_dataset
 from sersflow.core.pipeline.engine import load_dataset_cached
 from sersflow.core.io.formats import get_format_for_path, list_formats
 from sersflow.core.io.formats.packs import EXPERIMENTAL_FIELD_LABELS

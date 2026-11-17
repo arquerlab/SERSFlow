@@ -450,3 +450,17 @@ def test_fixed_offset_via_pipeline() -> None:
     assert np.allclose(final.x, [13.5, 23.5])
     assert math.isfinite(float(final.y[0]))
 
+
+
+def test_casa_calibration_shift_is_work_function_minus_m() -> None:
+    from sersflow.core.preprocess.x_axis_calibration import calibration_delta
+
+    labels = {"casa_calibration_M_eV": 3.412, "analyser_work_function_eV": 3.97}
+    assert calibration_delta({"method": "casa_calibration", "_spectrum_labels": labels}) == pytest.approx(0.558)
+
+
+def test_casa_calibration_requires_calib_line() -> None:
+    from sersflow.core.preprocess.x_axis_calibration import calibration_delta
+
+    with pytest.raises(ValueError, match="Calib M"):
+        calibration_delta({"method": "casa_calibration", "_spectrum_labels": {"analyser_work_function_eV": 3.97}})

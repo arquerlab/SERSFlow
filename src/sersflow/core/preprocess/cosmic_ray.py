@@ -1,6 +1,5 @@
 import numpy as np
 from scipy.signal import medfilt
-from scipy.ndimage import median_filter
 
 
 def detect_cosmic_rays_zscore(int, threshold=5.0, window=5):
@@ -264,58 +263,3 @@ def remove_cosmic_rays(int, method='zscore', threshold=5.0, window=5,
     
     return corrected, combined_mask, total_spikes
 
-
-def remove_cosmic_rays_batch(spectra_list, method='zscore', threshold=5.0, window=5,
-                              interpolation='median', max_width=10, min_intensity_ratio=2.0, 
-                              n_iterations=3, verbose=True):
-    """
-    Remove cosmic rays from multiple spectra.
-    
-    Args:
-        spectra_list: List of 1D intensity arrays
-        method: Detection method ('zscore' or 'derivative')
-        threshold: Detection threshold
-        window: Window size for detection
-        interpolation: Method to replace spikes
-        max_width: Maximum spike width to remove
-        min_intensity_ratio: Minimum intensity ratio for spike detection
-        n_iterations: Number of iterations to apply (default: 3)
-        verbose: Print statistics
-        
-    Returns:
-        corrected_list: List of corrected intensity arrays
-        stats: Dictionary with statistics
-    """
-    corrected_list = []
-    total_spikes = 0
-    spectra_with_spikes = 0
-    
-    for i, int in enumerate(spectra_list):
-        corrected, mask, n_spikes = remove_cosmic_rays(
-            intensity, method=method, threshold=threshold, window=window,
-            interpolation=interpolation, max_width=max_width, min_intensity_ratio=min_intensity_ratio,
-            n_iterations=n_iterations
-        )
-        
-        corrected_list.append(corrected)
-        total_spikes += n_spikes
-        
-        if n_spikes > 0:
-            spectra_with_spikes += 1
-    
-    stats = {
-        'total_spectra': len(spectra_list),
-        'spectra_with_spikes': spectra_with_spikes,
-        'total_spikes': total_spikes,
-        'avg_spikes_per_spectrum': total_spikes / len(spectra_list) if spectra_list else 0
-    }
-    
-    if verbose:
-        print(f"\nCosmic Ray Removal Statistics:")
-        print(f"  Method: {method}, Threshold: {threshold}, Window: {window}")
-        print(f"  Total spectra processed: {stats['total_spectra']}")
-        print(f"  Spectra with cosmic rays: {stats['spectra_with_spikes']}")
-        print(f"  Total cosmic ray events removed: {stats['total_spikes']}")
-        print(f"  Average spikes per spectrum: {stats['avg_spikes_per_spectrum']:.2f}")
-    
-    return corrected_list, stats

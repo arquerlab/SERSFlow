@@ -38,6 +38,8 @@ from sersflow.core.pipeline.engine import (
     EngineConfig,
     run_pipeline,
     run_pipeline_parallel_no_cache,
+    spectrum_ref_dict,
+    pipeline_step_dict,
 )
 from sersflow.core.pipeline.step_nums import assign_pipeline_step_nums
 from sersflow.api.services.observation_export import _labels_for_spectrum
@@ -51,7 +53,6 @@ from sersflow.infra.analysis_store import (
 )
 from sersflow.infra.analysis_store import get_run as store_get_run
 from sersflow.infra.datasets_store import get_dataset_internal
-from sersflow.infra.sessions_store import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -341,27 +342,11 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
         # otherwise repeated-step pipelines (e.g. crop from initial, multiple fittings) diverge
         # from Prepare preview and later metric-step features become empty.
         steps = [
-            {
-                "name": s.name,
-                "params": s.params,
-                "enabled": s.enabled,
-                "impl_version": s.impl_version,
-                "step_id": s.step_id,
-                "input_from": s.input_from,
-                "after_step_id": s.after_step_id,
-            }
+            pipeline_step_dict(s)
             for s in effective_pipeline.steps
         ]
         inputs = [
-            {
-                "spectrum_id": r.spectrum_id,
-                "relative_path": r.relative_path,
-                "record_index": r.record_index,
-                "blob_id": r.blob_id,
-                "blob_relative_path": r.blob_relative_path,
-                "original_relative_path": r.original_relative_path,
-                "spectrum_labels": getattr(r, "spectrum_labels", None),
-            }
+            spectrum_ref_dict(r)
             for r in refs
         ]
 
@@ -482,13 +467,3 @@ def _execute_analysis_run_impl(*, run_id: str, job_id: str | None) -> None:
                 error=str(e),
             )
 
-
-def build_stored_pipeline_json(*, pipeline: Pipeline, subset: SubsetStrategy, session_id: str | None) -> str | None:
-    """Persist pipeline JSON for runs without session (inline mode)."""
-    if session_id:
-        return None
-    return pipeline.model_dump_json()
-
-
-def build_stored_params_json(*, subset: SubsetStrategy) -> dict[str, Any]:
-    return {"subset": subset.model_dump()}

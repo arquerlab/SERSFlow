@@ -5,25 +5,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-class Shapes(BaseModel):
-    xdata: list[int] | None = None
-    spectra: list[int] | None = None
-    axis3: list[int] | None = None
-    axis4: list[int] | None = None
-
-
 class Preview(BaseModel):
     xdata: Any | None = None
     spectra: Any | None = None
     axis3: Any | None = None
     axis4: Any | None = None
-
-
-class IoLoadResponse(BaseModel):
-    filename: str | None = None
-    kind: Literal["unknown", "spectrum", "series", "map", "multi"] = "unknown"
-    shapes: Shapes
-    preview: Preview
 
 
 class UploadRegistryItem(BaseModel):

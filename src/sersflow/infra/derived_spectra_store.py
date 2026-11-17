@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from sersflow.infra.sqlite_db import connect, schema_once
+from sersflow.core.jsonutil import utc_now_iso as _utc_now_iso
 
 
 @dataclass(frozen=True)
@@ -27,10 +27,6 @@ class DerivedSpectrumRecord:
 def derived_relative_path(spectrum_id: str) -> str:
     """Path-level label key for a derived spectrum (not a file on disk; data lives in the blob)."""
     return f"derived/{spectrum_id}"
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 @schema_once

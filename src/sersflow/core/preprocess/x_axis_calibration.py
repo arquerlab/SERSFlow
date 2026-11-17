@@ -1,4 +1,4 @@
-"""X-axis calibration: fixed offset, single reference band, or grouped reference band."""
+"""X-axis calibration: fixed offset, CasaXPS calibration, single reference band, or grouped reference band."""
 
 from __future__ import annotations
 
@@ -262,6 +262,22 @@ def calibration_delta(params: dict[str, Any]) -> float:
             raise ValueError("offset must be finite for x_axis_calibration method='fixed_offset'")
         return offset
 
+    if method == "casa_calibration":
+        # CasaXPS ``Calib M`` of the block: BE_casa = hv - KE - M, loader BE = hv - KE - WF  =>  shift = WF - M.
+        labels = params.get("_spectrum_labels") if isinstance(params.get("_spectrum_labels"), Mapping) else {}
+        shift_m = labels.get("casa_calibration_M_eV")
+        work_function = labels.get("analyser_work_function_eV")
+        try:
+            delta = float(work_function) - float(shift_m)
+        except (TypeError, ValueError):
+            delta = float("nan")
+        if not math.isfinite(delta):
+            raise ValueError(
+                "x_axis_calibration method='casa_calibration' needs the block's CasaXPS 'Calib M' line and the "
+                "analyser work function (re-import a VAMAS file saved by CasaXPS)"
+            )
+        return delta
+
     if method in COHORT_CALIBRATION_METHODS:
         if "_delta" in params:
             delta = float(params["_delta"])
@@ -287,7 +303,7 @@ def calibration_delta(params: dict[str, Any]) -> float:
 
     raise ValueError(
         f"Unknown x_axis_calibration method {method!r} "
-        "(expected 'fixed_offset', 'single_reference_band', or 'grouped_reference_band')"
+        "(expected 'fixed_offset', 'casa_calibration', 'single_reference_band', or 'grouped_reference_band')"
     )
 
 

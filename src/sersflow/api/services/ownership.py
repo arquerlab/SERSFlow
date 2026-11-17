@@ -11,7 +11,6 @@ from sersflow.api.schemas.datasets import SpectrumRef
 from sersflow.core.io.upload_registry import (
     read_unloaded_registry,
     read_upload_registry,
-    unloaded_registry_path,
     upload_root,
 )
 from sersflow.infra.analysis_store import get_run

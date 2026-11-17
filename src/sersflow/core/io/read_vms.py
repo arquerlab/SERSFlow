@@ -295,6 +295,11 @@ def block_meta_dict(block: VamasBlock) -> dict[str, Any]:
     dwell = _positive_float(ef.get("dwell_time"))
     if dwell is not None:
         out["dwell_time_s"] = dwell
+    from sersflow.core.io.casa_fit import parse_casa_calibration
+
+    casa_cal = parse_casa_calibration(ef.get("block_comments"))
+    if casa_cal is not None:
+        out["casa_calibration_M_eV"] = casa_cal["M_eV"]
     scans = _positive_float(ef.get("n_scans"))
     if scans is not None:
         out["n_scans"] = int(scans) if float(scans).is_integer() else scans
