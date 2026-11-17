@@ -3,5 +3,17 @@
     "allow": [
       "Bash(python -)"
     ]
+  },
+  "enabledPlugins": {
+    "token-economy@local-token-mods": true,
+    "model-router@local-token-mods": true
+  },
+  "extraKnownMarketplaces": {
+    "local-token-mods": {
+      "source": {
+        "source": "directory",
+        "path": "C:\\Users\\apinilla\\claude-mods"
+      }
+    }
   }
 }

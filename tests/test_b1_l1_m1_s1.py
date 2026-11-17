@@ -124,6 +124,34 @@ def test_shirley_of_peak_component_recovers_k() -> None:
     assert r.p_opt[0] == pytest.approx(100, abs=3)
 
 
+def test_shirley_of_all_peaks_is_the_casaxps_active_shirley() -> None:
+    """`of: "*"`: Shirley of the SUM of the fitted peaks (k, constant free) = CasaXPS' active Shirley, inside the fit."""
+    x = np.linspace(770, 795, 700)
+    model = gl(x, 780, 1000, 2, 30) + gl(x, 785, 400, 3, 30)
+    y = model + shirley_profile(x, model, 0.04) + 300 + np.random.default_rng(3).normal(0, 3, x.size)
+    comps = [
+        {"component_id": "off", "component_type": "polynomial_background", "degree": 0},
+        {"component_id": "a", "component_type": "gl"},
+        {"component_id": "b", "component_type": "gl"},
+        {"component_id": "sb", "component_type": "shirley_of_bg", "of": "*"},
+    ]
+    p0 = [250, 779.8, 900, 2.2, 30, 785.2, 350, 3.2, 30, 0.02, 0]
+    lo = [None, 775, 0, 0.5, 0, 780, 0, 0.5, 0, 0, -5]
+    hi = [None, 783, None, 6, 100, 790, None, 8, 100, None, 5]
+    vary = [True, True, True, True, False, True, True, True, False, True, False]
+    r = fit_curve(fit_problem_from_step_params(XY(x=x, y=y), _p(comps, p0, lo, hi, vary)))
+    assert r.p_opt[0] == pytest.approx(300, abs=10)
+    assert r.p_opt[9] == pytest.approx(0.04, rel=0.08)
+    assert float(np.sqrt(np.mean((y - r.y_hat) ** 2))) < 5
+    # a single id keeps the legacy hidden-parameter names, a list works too
+    for of in ("a", "a,b"):
+        c2 = [dict(c, of=of) if c["component_id"] == "sb" else c for c in comps]
+        fit_curve(fit_problem_from_step_params(XY(x=x, y=y), _p(c2, p0, lo, hi, vary)))
+    bad = [dict(c, of="nope") if c["component_id"] == "sb" else c for c in comps]
+    with pytest.raises(ValueError):
+        fit_curve(fit_problem_from_step_params(XY(x=x, y=y), _p(bad, p0, lo, hi, vary)))
+
+
 # ------------------------------------------------------------------------------------------------ L1
 
 

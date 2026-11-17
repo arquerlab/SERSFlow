@@ -157,40 +157,82 @@ def _xps_bg_model(component_type: str, prefix: str, y0: float):
     raise ValueError(f"Unknown XPS background component: {component_type}")
 
 
-def _sb_source_keys(problem: FitProblem, of: str) -> list[str]:
+def _shape_keys_with_amp(src: FitComponent) -> list[str]:
     from sersflow.core.preprocess.fitting_specs import component_param_specs
 
-    src = next((c for c in problem.components if c.component_id == of), None)
-    if src is None:
-        raise ValueError(f"shirley_of_bg: unknown source peak {of!r} (set the component option 'of')")
-    return [s.key for s in component_param_specs(src.component_type, degree=src.degree)]
+    return [p.key for p in component_param_specs(src.component_type, degree=src.degree)]
+
+
+_SB_ALL_PEAKS = frozenset({"*", "all", "all_peaks"})
+
+
+def _sb_sources(problem: FitProblem, comp: FitComponent) -> list[tuple[FitComponent, str]]:
+    """
+    Source peak(s) of a ``shirley_of_bg`` component with the stem of their hidden parameter names.
+
+    Option ``of``: one peak id (CasaXPS SB(0)X; hidden parameters ``ref_<key>``), a comma-separated list of peak ids,
+    or ``*`` (every peak component of the fit = the Shirley of the whole fitted model, i.e. CasaXPS' active Shirley whose
+    shape follows the peaks and whose end levels are free). Several sources use ``ref<i>_<key>``.
+    """
+    from sersflow.core.preprocess.fitting_specs import PEAK_COMPONENT_TYPES
+
+    of = str((comp.options or {}).get("of") or "").strip()
+    allowed = PEAK_COMPONENT_TYPES | {"reference_spectrum"}
+    if of.lower() in _SB_ALL_PEAKS:
+        srcs = [c for c in problem.components if c.component_type.strip().lower() in PEAK_COMPONENT_TYPES]
+        if not srcs:
+            raise ValueError(f"shirley_of_bg {comp.component_id!r}: option 'of' = '*' but the fit has no peak components")
+        return [(c, f"ref{i}_") for i, c in enumerate(srcs)]
+    ids = [t.strip() for t in of.split(",") if t.strip()]
+    out: list[tuple[FitComponent, str]] = []
+    for i, cid in enumerate(ids):
+        src = next((c for c in problem.components if c.component_id == cid), None)
+        if src is None or src.component_type.strip().lower() not in allowed:
+            raise ValueError(
+                f"shirley_of_bg {comp.component_id!r}: option 'of' must name peak component(s) or '*' (got {of!r})"
+            )
+        out.append((src, "ref_" if len(ids) == 1 else f"ref{i}_"))
+    if not out:
+        raise ValueError(f"shirley_of_bg {comp.component_id!r}: set the component option 'of' (a peak id, a list, or '*')")
+    return out
 
 
 def _shirley_of_model(problem: FitProblem, comp: FitComponent, prefix: str):
     """
     CasaXPS SB(0)X: k x cumulative integral of peak X (shifted by ``shift``) toward higher x (BE).
 
-    The source peak's parameters enter as hidden ``ref_<key>`` parameters tied to the peak by expressions, so the
-    Shirley profile follows the peak during the fit.
+    ``of`` may name several peaks or ``*`` for all of them: the profile is then k x the cumulative integral of their
+    SUM (the fitted model), the active Shirley of CasaXPS. Add a constant ``polynomial_background`` (degree 0) for the
+    low-BE end level; together they equal lo + (hi - lo) x cum(model) / total (k = (hi - lo) / total).
+
+    The source peaks' parameters enter as hidden ``ref*_<key>`` parameters tied to the peaks by expressions, so the
+    Shirley profile follows the peaks during the fit.
     """
     from sersflow.core.preprocess.fitting_specs import PEAK_COMPONENT_TYPES, build_component_function_for
     from sersflow.core.preprocess.xps_extra_components import shirley_profile
 
-    of = str((comp.options or {}).get("of") or "")
-    src = next((c for c in problem.components if c.component_id == of), None)
-    if src is None or src.component_type.strip().lower() not in (PEAK_COMPONENT_TYPES | {"reference_spectrum"}):
-        raise ValueError(f"shirley_of_bg {comp.component_id!r}: option 'of' must name a peak component (got {of!r})")
-    f_src, specs = build_component_function_for(src.component_type, degree=src.degree, options=src.options)
-    if src.component_type.strip().lower() in PEAK_COMPONENT_TYPES:
-        from sersflow.core.preprocess.gaussian_broadening import with_gaussian_broadening
+    srcs = _sb_sources(problem, comp)
+    fns: list[Callable[..., np.ndarray]] = []
+    n_keys: list[int] = []
+    hidden: list[str] = []
+    for src, stem in srcs:
+        f_src, specs = build_component_function_for(src.component_type, degree=src.degree, options=src.options)
+        if src.component_type.strip().lower() in PEAK_COMPONENT_TYPES:
+            from sersflow.core.preprocess.gaussian_broadening import with_gaussian_broadening
 
-        f_src = with_gaussian_broadening(f_src, float(getattr(problem, "gaussian_fwhm_eV", 0.0) or 0.0))
-    src_keys = [s.key for s in specs]
-    hidden = [f"ref_{k}" for k in src_keys]
+            f_src = with_gaussian_broadening(f_src, float(getattr(problem, "gaussian_fwhm_eV", 0.0) or 0.0))
+        fns.append(f_src)
+        n_keys.append(len(specs))
+        hidden.extend(f"{stem}{s.key}" for s in specs)
 
     def _sb_impl(x, k, shift, *src_vals):
-        xf = np.asarray(x, dtype=float)
-        return shirley_profile(xf, f_src(xf - float(shift), *src_vals), k)
+        xf = np.asarray(x, dtype=float) - float(shift)
+        total = np.zeros_like(xf)
+        i = 0
+        for f_src, n in zip(fns, n_keys):
+            total = total + np.asarray(f_src(xf, *src_vals[i : i + n]), dtype=float)
+            i += n
+        return shirley_profile(np.asarray(x, dtype=float), total, k)
 
     from lmfit import Model
 
@@ -611,11 +653,13 @@ def _apply_param_links(
     for comp in problem.components:
         if comp.component_type.strip().lower() != "shirley_of_bg":
             continue
-        of = str((comp.options or {}).get("of") or "")
-        for key in _sb_source_keys(problem, of):
-            hidden = f"{_prefix_for(comp.component_id)}ref_{key}"
-            if hidden in params and (of, key) in name_by_comp_key:
-                params[hidden].set(expr=name_by_comp_key[(of, key)], vary=False, min=-np.inf, max=np.inf)
+        for src, stem in _sb_sources(problem, comp):
+            for key in _shape_keys_with_amp(src):
+                hidden = f"{_prefix_for(comp.component_id)}{stem}{key}"
+                if hidden in params and (src.component_id, key) in name_by_comp_key:
+                    params[hidden].set(
+                        expr=name_by_comp_key[(src.component_id, key)], vary=False, min=-np.inf, max=np.inf
+                    )
     if problem.param_links:
         errors = validate_param_links(
             [
