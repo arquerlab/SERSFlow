@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { PlotlyWrapper, type PlotlyFigure } from "../legacy-wrappers/PlotlyWrapper";
 import {
   postSpectrum2dcos,
@@ -24,17 +25,18 @@ import {
   compactPreprocess,
 } from "./multivariatePlots";
 
-type Method = "correlation" | "pca" | "nmf" | "mcr" | "cos2d";
+export type MvMethod = "correlation" | "pca" | "nmf" | "mcr" | "cos2d" | "classic";
 
-const METHOD_LABEL: Record<Method, string> = {
+const METHOD_LABEL: Record<MvMethod, string> = {
   correlation: "Correlation matrix",
   pca: "PCA (+ varimax)",
   nmf: "NMF",
   mcr: "MCR-ALS",
   cos2d: "2D-COS",
+  classic: "Classic: PCA / sPCA, k-means, FDA",
 };
 
-const METHOD_HINT: Record<Method, string> = {
+const METHOD_HINT: Record<MvMethod, string> = {
   correlation:
     "Pearson or Spearman correlation between channels (which bands move together) or between spectra (which samples look alike). Clustered order puts similar variables next to each other so blocks appear on the diagonal.",
   pca: "Orthogonal components of the mean-centred matrix. Varimax rotates the retained components towards fewer, more peak-like loadings without changing the fitted subspace.",
@@ -42,9 +44,8 @@ const METHOD_HINT: Record<Method, string> = {
   mcr: "NMF-initialised alternating least squares with chemical constraints. Fix measured spectra of the matrix as known components. Rotational ambiguity remains.",
   cos2d:
     "Synchronous / asynchronous 2D correlation of the dynamic spectra. The perturbation is the sample order or a numeric column of an analysis run (potential, time, ...). Uneven perturbation values are resampled onto an even grid.",
+  classic: "The original spectrum PCA / sparse PCA, k-means on PC scores and functional PCA, shown below.",
 };
-
-const NONNEG_METHODS: Method[] = ["nmf", "mcr"];
 
 type Props = {
   matrixJobId: string | null;
@@ -54,6 +55,10 @@ type Props = {
   /** Analysis run used as the perturbation source for 2D-COS. */
   analysisRunId: string;
   onError: (msg: string | null) => void;
+  method: MvMethod;
+  onMethodChange: (m: MvMethod) => void;
+  /** Right-hand pane element; results are rendered there when given. */
+  resultsSlot: HTMLElement | null;
 };
 
 function num(v: string): number | null {
@@ -80,7 +85,7 @@ function PlotBox({ figure }: { figure: PlotlyFigure | null }) {
 function PrepSummary({ meta }: { meta?: MatrixPreprocessingMeta }) {
   if (!meta) return null;
   return (
-    <div className="hint" style={{ marginTop: "8px" }}>
+    <div className="hint" style={{ marginTop: "6px" }}>
       <b>Matrix preprocessing:</b> {meta.steps?.length ? meta.steps.join(" → ") : "none"}
       {meta.n_channels_in != null ? ` (${meta.n_channels_in} → ${meta.n_channels_out} channels)` : ""}
       {(meta.warnings ?? []).map((w, i) => (
@@ -92,8 +97,35 @@ function PrepSummary({ meta }: { meta?: MatrixPreprocessingMeta }) {
   );
 }
 
-export function MultivariatePanel({ matrixJobId, matrixReady, completedMatrices, onPickMatrix, analysisRunId, onError }: Props) {
-  const [method, setMethod] = useState<Method>("correlation");
+function Field({ label, title, children, wide }: { label: string; title?: string; children: ReactNode; wide?: boolean }) {
+  return (
+    <label className={`mv-field${wide ? " mv-wide" : ""}`} title={title}>
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Check({ checked, onChange, label, title }: { checked: boolean; onChange: (v: boolean) => void; label: string; title?: string }) {
+  return (
+    <label className="mv-check" title={title}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      {label}
+    </label>
+  );
+}
+
+export function MultivariatePanel({
+  matrixJobId,
+  matrixReady,
+  completedMatrices,
+  onPickMatrix,
+  analysisRunId,
+  onError,
+  method,
+  onMethodChange,
+  resultsSlot,
+}: Props) {
   const [busy, setBusy] = useState(false);
 
   // preprocessing
@@ -132,9 +164,6 @@ export function MultivariatePanel({ matrixJobId, matrixReady, completedMatrices,
   const [mcrRes, setMcrRes] = useState<FactorResult | null>(null);
   const [cosRes, setCosRes] = useState<Cos2dResult | null>(null);
 
-  const nonnegOnly = NONNEG_METHODS.includes(method);
-  const noCentre = nonnegOnly || method === "cos2d" || method === "pca" || method === "correlation";
-
   const request = useMemo<MatrixPreprocess | null>(() => {
     const p: MatrixPreprocess = { ...pre };
     const lo = num(cropLo);
@@ -153,7 +182,7 @@ export function MultivariatePanel({ matrixJobId, matrixReady, completedMatrices,
   const setP = <K extends keyof MatrixPreprocess>(key: K, value: MatrixPreprocess[K]) => setPre((o) => ({ ...o, [key]: value }));
 
   const run = async () => {
-    if (!matrixJobId) return;
+    if (!matrixJobId || method === "classic") return;
     setBusy(true);
     onError(null);
     try {
@@ -203,7 +232,8 @@ export function MultivariatePanel({ matrixJobId, matrixReady, completedMatrices,
     if (!res) return null;
     return (
       <>
-        <div className="hint" style={{ marginTop: "10px" }}>
+        <div className="mv-results-head">{METHOD_LABEL[method]} result</div>
+        <div className="hint">
           k = {res.n_components}
           {res.r2 != null ? ` · R² = ${res.r2.toFixed(4)}` : ""}
           {res.lack_of_fit_pct != null ? ` · lack of fit ${res.lack_of_fit_pct.toFixed(2)} %` : ""}
@@ -222,74 +252,122 @@ export function MultivariatePanel({ matrixJobId, matrixReady, completedMatrices,
     );
   };
 
+  const results: ReactNode = (
+    <div>
+      {method === "correlation" && corrRes ? (
+        <>
+          <div className="mv-results-head">Correlation matrix result</div>
+          <PrepSummary meta={corrRes.matrix_preprocessing} />
+          {corrRes.n_constant_variables ? <div className="hint">{corrRes.n_constant_variables} constant variable(s) have no correlation (shown blank).</div> : null}
+          <PlotBox figure={buildCorrelationHeatmap(corrRes)} />
+        </>
+      ) : null}
+      {method === "pca" ? factorBlock(pcaRes, "PC") : null}
+      {method === "nmf" ? factorBlock(nmfRes, "NMF") : null}
+      {method === "mcr" ? factorBlock(mcrRes, "MCR") : null}
+      {method === "cos2d" && cosRes ? (
+        <>
+          <div className="mv-results-head">2D-COS result</div>
+          <div className="hint">
+            {cosRes.n_spectra} spectra · perturbation: {cosRes.perturbation_label}
+            {cosRes.resampled ? " · resampled onto an even grid" : ""}
+            {cosRes.n_spectra_without_perturbation ? ` · ${cosRes.n_spectra_without_perturbation} spectra had no perturbation value and were dropped` : ""}
+          </div>
+          {cosRes.note ? <div className="hint">{cosRes.note}</div> : null}
+          <PrepSummary meta={cosRes.matrix_preprocessing} />
+          <PlotBox figure={buildCosMap(cosRes, "synchronous")} />
+          <PlotBox figure={buildCosMap(cosRes, "asynchronous")} />
+          <PlotBox figure={buildCosAutopower(cosRes)} />
+        </>
+      ) : null}
+    </div>
+  );
+
+  const hasResult =
+    (method === "correlation" && !!corrRes) ||
+    (method === "pca" && !!pcaRes) ||
+    (method === "nmf" && !!nmfRes) ||
+    (method === "mcr" && !!mcrRes) ||
+    (method === "cos2d" && !!cosRes);
+
   return (
     <div style={{ marginTop: "14px" }}>
       <div className="section-title">Multivariate analysis</div>
-      <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-        <label className="inline">
-          Matrix
-          <select value={matrixJobId ?? ""} onChange={(e) => onPickMatrix(e.target.value)}>
-            <option value="">— select a completed matrix —</option>
-            {completedMatrices.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="inline">
-          Method
-          <select value={method} onChange={(e) => setMethod(e.target.value as Method)}>
-            {(Object.keys(METHOD_LABEL) as Method[]).map((m) => (
-              <option key={m} value={m}>
-                {METHOD_LABEL[m]}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <p className="hint">{METHOD_HINT[method]}</p>
 
-      {!matrixReady ? (
-        <div className="hint">Select a completed matrix job (build one in the Spectrum matrix section).</div>
-      ) : (
+      <div className="mv-box">
+        <div className="mv-title">1 · Data and method</div>
+        <div className="mv-grid" style={{ gridTemplateColumns: "1fr" }}>
+          <Field label="Matrix job">
+            <select value={matrixJobId ?? ""} onChange={(e) => onPickMatrix(e.target.value)}>
+              <option value="">— select a completed matrix —</option>
+              {completedMatrices.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Method">
+            <select value={method} onChange={(e) => onMethodChange(e.target.value as MvMethod)}>
+              {(Object.keys(METHOD_LABEL) as MvMethod[]).map((m) => (
+                <option key={m} value={m}>
+                  {METHOD_LABEL[m]}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <p className="hint" style={{ margin: "8px 0 0" }}>
+          {METHOD_HINT[method]}
+        </p>
+        {!matrixReady ? (
+          <div className="hint" style={{ marginTop: "6px", color: "#b35c00" }}>
+            Select a completed matrix job (build one in the Spectrum matrix section).
+          </div>
+        ) : null}
+      </div>
+
+      {matrixReady && method !== "classic" ? (
         <>
-          <details style={{ marginTop: "6px" }}>
-            <summary>Matrix preprocessing{request ? " (modified)" : ""}</summary>
-            <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "flex-end", marginTop: "6px" }}>
-              <label className="inline" title="Keep only this x window">
-                Crop x
-                <input type="number" style={{ width: "80px" }} value={cropLo} onChange={(e) => setCropLo(e.target.value)} placeholder="from" />
-                <input type="number" style={{ width: "80px" }} value={cropHi} onChange={(e) => setCropHi(e.target.value)} placeholder="to" />
-              </label>
-              <label className="inline" title="Windows to remove, e.g. 500,520; 1000,1040">
-                Exclude
-                <input type="text" style={{ width: "150px" }} value={exclText} onChange={(e) => setExclText(e.target.value)} placeholder="lo,hi; lo,hi" />
-              </label>
-              <label className="inline" title="Average this many neighbouring channels">
-                Bin
-                <input type="number" min={1} max={64} style={{ width: "60px" }} value={pre.bin ?? 1} onChange={(e) => setP("bin", Math.max(1, Number(e.target.value) || 1))} />
-              </label>
+          <details className="mv-box">
+            <summary style={{ cursor: "pointer", fontWeight: 800, fontSize: 13 }}>2 · Matrix preprocessing {request ? "· modified" : "· defaults"}</summary>
+
+            <div className="mv-sub">Window</div>
+            <div className="mv-grid">
+              <Field label="Crop x (from / to)" title="Keep only this x window">
+                <div className="mv-pair">
+                  <input type="number" value={cropLo} onChange={(e) => setCropLo(e.target.value)} placeholder="from" />
+                  <input type="number" value={cropHi} onChange={(e) => setCropHi(e.target.value)} placeholder="to" />
+                </div>
+              </Field>
+              <Field label="Exclude windows" title="Windows to remove, e.g. 500,520; 1000,1040">
+                <input type="text" value={exclText} onChange={(e) => setExclText(e.target.value)} placeholder="lo,hi; lo,hi" />
+              </Field>
+              <Field label="Bin (channels)" title="Average this many neighbouring channels">
+                <input type="number" min={1} max={64} value={pre.bin ?? 1} onChange={(e) => setP("bin", Math.max(1, Number(e.target.value) || 1))} />
+              </Field>
             </div>
-            <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "flex-end", marginTop: "6px" }}>
-              <label className="inline" title="Savitzky–Golay window (odd, 0 = off)">
-                Smooth window
-                <input type="number" min={0} style={{ width: "70px" }} value={pre.smooth_window ?? 0} onChange={(e) => setP("smooth_window", Math.max(0, Number(e.target.value) || 0))} />
-              </label>
-              <label className="inline">
-                Polynomial
-                <input type="number" min={1} max={7} style={{ width: "60px" }} value={pre.smooth_poly ?? 3} onChange={(e) => setP("smooth_poly", Math.max(1, Number(e.target.value) || 3))} />
-              </label>
-              <label className="inline" title="Derivative removes baselines but amplifies noise">
-                Derivative
+
+            <div className="mv-sub">Smoothing / derivative</div>
+            <div className="mv-grid">
+              <Field label="Window (odd, 0 = off)" title="Savitzky–Golay window">
+                <input type="number" min={0} value={pre.smooth_window ?? 0} onChange={(e) => setP("smooth_window", Math.max(0, Number(e.target.value) || 0))} />
+              </Field>
+              <Field label="Polynomial order">
+                <input type="number" min={1} max={7} value={pre.smooth_poly ?? 3} onChange={(e) => setP("smooth_poly", Math.max(1, Number(e.target.value) || 3))} />
+              </Field>
+              <Field label="Derivative" title="Removes baselines but amplifies noise">
                 <select value={pre.derivative ?? 0} onChange={(e) => setP("derivative", Number(e.target.value) as 0 | 1 | 2)}>
                   <option value={0}>none</option>
                   <option value={1}>1st</option>
                   <option value={2}>2nd</option>
                 </select>
-              </label>
-              <label className="inline">
-                Row normalisation
+              </Field>
+            </div>
+
+            <div className="mv-sub">Each spectrum (rows)</div>
+            <div className="mv-grid">
+              <Field label="Normalisation">
                 <select value={pre.row_norm ?? "none"} onChange={(e) => setP("row_norm", e.target.value as MatrixPreprocess["row_norm"])}>
                   <option value="none">none</option>
                   <option value="area">area</option>
@@ -298,208 +376,182 @@ export function MultivariatePanel({ matrixJobId, matrixReady, completedMatrices,
                   <option value="snv">SNV</option>
                   <option value="ref_band">reference band</option>
                 </select>
-              </label>
+              </Field>
               {pre.row_norm === "ref_band" ? (
-                <label className="inline">
-                  Ref band
-                  <input type="number" style={{ width: "80px" }} value={refLo} onChange={(e) => setRefLo(e.target.value)} placeholder="from" />
-                  <input type="number" style={{ width: "80px" }} value={refHi} onChange={(e) => setRefHi(e.target.value)} placeholder="to" />
-                </label>
+                <Field label="Reference band (from / to)">
+                  <div className="mv-pair">
+                    <input type="number" value={refLo} onChange={(e) => setRefLo(e.target.value)} placeholder="from" />
+                    <input type="number" value={refHi} onChange={(e) => setRefHi(e.target.value)} placeholder="to" />
+                  </div>
+                </Field>
               ) : null}
-            </div>
-            <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "flex-end", marginTop: "6px" }}>
-              <label className="inline">
-                Transform
+              <Field label="Transform">
                 <select value={pre.transform ?? "none"} onChange={(e) => setP("transform", e.target.value as MatrixPreprocess["transform"])}>
                   <option value="none">none</option>
                   <option value="sqrt">sqrt</option>
-                  <option value="log">log(1+y)</option>
+                  <option value="log">log(1 + y)</option>
                 </select>
-              </label>
-              <label className="inline" title="NMF / MCR need non-negative data; a negative minimum is shifted automatically">
-                Non-negativity
+              </Field>
+            </div>
+
+            <div className="mv-sub">Each channel (columns)</div>
+            <div className="hint" style={{ margin: "0 0 6px" }}>
+              Centring is handled by the method: PCA mean-centres, the others must not be centred.
+            </div>
+            <div className="mv-grid">
+              <Field label="Non-negativity" title="NMF / MCR need non-negative data; a negative minimum is shifted automatically">
                 <select value={pre.nonneg ?? "none"} onChange={(e) => setP("nonneg", e.target.value as MatrixPreprocess["nonneg"])}>
                   <option value="none">none</option>
                   <option value="clip">clip negatives to 0</option>
                   <option value="shift">shift minimum to 0</option>
                 </select>
-              </label>
-              <label className="inline" title={noCentre ? "This method centres itself or must not be centred" : "Column centring"}>
-                Centring
-                <select disabled={noCentre} value={noCentre ? "none" : pre.center ?? "mean"} onChange={(e) => setP("center", e.target.value as MatrixPreprocess["center"])}>
-                  <option value="mean">mean</option>
-                  <option value="median">median</option>
-                  <option value="none">none</option>
-                </select>
-              </label>
-              <label className="inline" title="Pareto (1/√σ) is the usual compromise; Poisson scaling suits counting data and needs non-negative values">
-                Scaling
+              </Field>
+              <Field label="Scaling" title="Pareto (1/√σ) is the usual compromise; Poisson scaling suits counting data and needs non-negative values">
                 <select value={pre.scale ?? "none"} onChange={(e) => setP("scale", e.target.value as MatrixPreprocess["scale"])}>
                   <option value="none">none</option>
-                  <option value="autoscale">autoscale (unit variance)</option>
+                  <option value="autoscale">autoscale</option>
                   <option value="pareto">Pareto</option>
                   <option value="range">range</option>
-                  <option value="poisson">Poisson (counting data)</option>
+                  <option value="poisson">Poisson (counts)</option>
                 </select>
-              </label>
+              </Field>
             </div>
           </details>
 
-          <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "flex-end", marginTop: "10px" }}>
-            {method === "correlation" ? (
-              <>
-                <label className="inline">
-                  Between
-                  <select value={corrAxis} onChange={(e) => setCorrAxis(e.target.value as "channels" | "samples")}>
-                    <option value="channels">channels (bands)</option>
-                    <option value="samples">samples (spectra)</option>
-                  </select>
-                </label>
-                <label className="inline">
-                  Coefficient
-                  <select value={corrMethod} onChange={(e) => setCorrMethod(e.target.value as "pearson" | "spearman")}>
-                    <option value="pearson">Pearson</option>
-                    <option value="spearman">Spearman</option>
-                  </select>
-                </label>
-                <label className="inline">
-                  <input type="checkbox" checked={reorder} onChange={(e) => setReorder(e.target.checked)} /> Clustered order
-                </label>
-                {reorder ? (
-                  <label className="inline">
-                    Linkage
-                    <select value={linkage} onChange={(e) => setLinkage(e.target.value as typeof linkage)}>
-                      <option value="average">average</option>
-                      <option value="complete">complete</option>
-                      <option value="single">single</option>
-                      <option value="ward">ward</option>
+          <div className="mv-box">
+            <div className="mv-title">3 · {METHOD_LABEL[method]} options</div>
+            <div className="mv-grid">
+              {method === "correlation" ? (
+                <>
+                  <Field label="Correlate">
+                    <select value={corrAxis} onChange={(e) => setCorrAxis(e.target.value as "channels" | "samples")}>
+                      <option value="channels">channels (bands)</option>
+                      <option value="samples">samples (spectra)</option>
                     </select>
-                  </label>
-                ) : null}
-              </>
-            ) : null}
+                  </Field>
+                  <Field label="Coefficient">
+                    <select value={corrMethod} onChange={(e) => setCorrMethod(e.target.value as "pearson" | "spearman")}>
+                      <option value="pearson">Pearson</option>
+                      <option value="spearman">Spearman</option>
+                    </select>
+                  </Field>
+                  <Check checked={reorder} onChange={setReorder} label="Clustered order" title="Reorder rows and columns by hierarchical clustering" />
+                  {reorder ? (
+                    <Field label="Linkage">
+                      <select value={linkage} onChange={(e) => setLinkage(e.target.value as typeof linkage)}>
+                        <option value="average">average</option>
+                        <option value="complete">complete</option>
+                        <option value="single">single</option>
+                        <option value="ward">ward</option>
+                      </select>
+                    </Field>
+                  ) : null}
+                </>
+              ) : null}
+
+              {method === "pca" || method === "nmf" || method === "mcr" ? (
+                <Field label="Components (k)">
+                  <input type="number" min={1} max={50} value={k} onChange={(e) => setK(Math.max(1, Number(e.target.value) || 1))} />
+                </Field>
+              ) : null}
+
+              {method === "pca" ? (
+                <>
+                  <Field label="Scaling after preprocessing">
+                    <select value={pcaScaler} onChange={(e) => setPcaScaler(e.target.value as "none" | "standard")}>
+                      <option value="none">mean-centre only</option>
+                      <option value="standard">unit variance</option>
+                    </select>
+                  </Field>
+                  <Check checked={varimax} onChange={setVarimax} label="Varimax rotation" />
+                </>
+              ) : null}
+
+              {method === "nmf" ? (
+                <>
+                  <Field label="Random starts" title="The best start is kept">
+                    <input type="number" min={1} max={50} value={nStarts} onChange={(e) => setNStarts(Math.max(1, Number(e.target.value) || 1))} />
+                  </Field>
+                  <Field label="Scan k = 1 … N (0 = off)" title="Also fit every k up to N and plot the error">
+                    <input type="number" min={0} max={20} value={scanMax} onChange={(e) => setScanMax(Math.max(0, Number(e.target.value) || 0))} />
+                  </Field>
+                </>
+              ) : null}
+
+              {method === "mcr" ? (
+                <>
+                  <Check checked={nonnegConc} onChange={setNonnegConc} label="Contributions ≥ 0" />
+                  <Check checked={nonnegSpec} onChange={setNonnegSpec} label="Spectra ≥ 0" />
+                  <Check checked={closure} onChange={setClosure} label="Closure (sum = 1)" title="Contributions of each spectrum sum to 1" />
+                  <Check checked={unimodal} onChange={setUnimodal} label="Unimodal spectra" title="Each component spectrum has a single maximum" />
+                  <Field wide label="Fixed spectra (comma-separated ids)" title="Spectrum ids of this matrix held fixed as the first components">
+                    <input type="text" value={fixedIds} onChange={(e) => setFixedIds(e.target.value)} placeholder="optional" />
+                  </Field>
+                </>
+              ) : null}
+
+              {method === "cos2d" ? (
+                <>
+                  <Field label="Perturbation">
+                    <select value={pert} onChange={(e) => setPert(e.target.value as typeof pert)}>
+                      <option value="sample_order">sample order</option>
+                      <option value="observation_column">observation column</option>
+                    </select>
+                  </Field>
+                  {pert === "observation_column" ? (
+                    <Field label="Column" title={analysisRunId ? `Column of analysis run ${analysisRunId}` : "Select an analysis run in the header first"}>
+                      <input type="text" value={pertCol} onChange={(e) => setPertCol(e.target.value)} placeholder="e.g. potential_V" />
+                    </Field>
+                  ) : null}
+                  <Field label="Reference spectrum">
+                    <select value={cosRef} onChange={(e) => setCosRef(e.target.value as typeof cosRef)}>
+                      <option value="mean">mean</option>
+                      <option value="first">first</option>
+                      <option value="last">last</option>
+                    </select>
+                  </Field>
+                </>
+              ) : null}
+            </div>
+
             {method === "pca" || method === "nmf" || method === "mcr" ? (
-              <label className="inline">
-                Components k
-                <input type="number" min={1} max={50} style={{ width: "70px" }} value={k} onChange={(e) => setK(Math.max(1, Number(e.target.value) || 1))} />
-              </label>
-            ) : null}
-            {method === "pca" ? (
               <>
-                <label className="inline">
-                  Scaling after preprocessing
-                  <select value={pcaScaler} onChange={(e) => setPcaScaler(e.target.value as "none" | "standard")}>
-                    <option value="none">mean-centre only</option>
-                    <option value="standard">unit variance</option>
-                  </select>
-                </label>
-                <label className="inline">
-                  <input type="checkbox" checked={varimax} onChange={(e) => setVarimax(e.target.checked)} /> Varimax rotation
-                </label>
+                <div className="mv-sub">Scores scatter</div>
+                <div className="mv-grid">
+                  <Field label="X component">
+                    <input type="number" min={1} value={scoreX} onChange={(e) => setScoreX(Math.max(1, Number(e.target.value) || 1))} />
+                  </Field>
+                  <Field label="Y component">
+                    <input type="number" min={1} value={scoreY} onChange={(e) => setScoreY(Math.max(1, Number(e.target.value) || 2))} />
+                  </Field>
+                </div>
               </>
             ) : null}
-            {method === "nmf" ? (
-              <>
-                <label className="inline" title="Random restarts; the best one is kept">
-                  Starts
-                  <input type="number" min={1} max={50} style={{ width: "60px" }} value={nStarts} onChange={(e) => setNStarts(Math.max(1, Number(e.target.value) || 1))} />
-                </label>
-                <label className="inline" title="Also fit k = 1..N and plot the error (0 = off)">
-                  Scan k up to
-                  <input type="number" min={0} max={20} style={{ width: "60px" }} value={scanMax} onChange={(e) => setScanMax(Math.max(0, Number(e.target.value) || 0))} />
-                </label>
-              </>
+
+            {method === "cos2d" && pert === "observation_column" && !analysisRunId ? (
+              <div className="hint" style={{ color: "#b35c00", marginTop: "8px" }}>
+                Observation-column perturbation needs an analysis run selected in the header.
+              </div>
             ) : null}
-            {method === "mcr" ? (
-              <>
-                <label className="inline">
-                  <input type="checkbox" checked={nonnegConc} onChange={(e) => setNonnegConc(e.target.checked)} /> C ≥ 0
-                </label>
-                <label className="inline">
-                  <input type="checkbox" checked={nonnegSpec} onChange={(e) => setNonnegSpec(e.target.checked)} /> S ≥ 0
-                </label>
-                <label className="inline" title="Contributions of each spectrum sum to 1">
-                  <input type="checkbox" checked={closure} onChange={(e) => setClosure(e.target.checked)} /> Closure
-                </label>
-                <label className="inline" title="Each component spectrum has a single maximum">
-                  <input type="checkbox" checked={unimodal} onChange={(e) => setUnimodal(e.target.checked)} /> Unimodal
-                </label>
-                <label className="inline" title="Comma-separated spectrum ids of this matrix held fixed as the first components">
-                  Fixed spectra (ids)
-                  <input type="text" style={{ width: "180px" }} value={fixedIds} onChange={(e) => setFixedIds(e.target.value)} />
-                </label>
-              </>
-            ) : null}
-            {method === "cos2d" ? (
-              <>
-                <label className="inline">
-                  Perturbation
-                  <select value={pert} onChange={(e) => setPert(e.target.value as typeof pert)}>
-                    <option value="sample_order">sample order</option>
-                    <option value="observation_column">observation column</option>
-                  </select>
-                </label>
-                {pert === "observation_column" ? (
-                  <label className="inline" title={analysisRunId ? `Column of analysis run ${analysisRunId}` : "Select an analysis run in the header first"}>
-                    Column
-                    <input type="text" style={{ width: "160px" }} value={pertCol} onChange={(e) => setPertCol(e.target.value)} placeholder="e.g. potential_V" />
-                  </label>
-                ) : null}
-                <label className="inline">
-                  Reference
-                  <select value={cosRef} onChange={(e) => setCosRef(e.target.value as typeof cosRef)}>
-                    <option value="mean">mean spectrum</option>
-                    <option value="first">first spectrum</option>
-                    <option value="last">last spectrum</option>
-                  </select>
-                </label>
-              </>
-            ) : null}
-            <button type="button" disabled={busy || !matrixJobId} onClick={() => void run()}>
+
+            <button type="button" className="mv-run" disabled={busy || !matrixJobId} onClick={() => void run()}>
               {busy ? "Running…" : `Run ${METHOD_LABEL[method]}`}
             </button>
           </div>
-          {method === "cos2d" && pert === "observation_column" && !analysisRunId ? (
-            <div className="hint" style={{ color: "#b35c00" }}>
-              Observation-column perturbation needs an analysis run selected in the header.
-            </div>
-          ) : null}
 
-          {method === "pca" || method === "nmf" || method === "mcr" ? (
-            <div className="row" style={{ gap: "8px", alignItems: "center", marginTop: "6px" }}>
-              <span className="hint">Scores scatter:</span>
-              <input type="number" min={1} style={{ width: "55px" }} value={scoreX} onChange={(e) => setScoreX(Math.max(1, Number(e.target.value) || 1))} />
-              <span className="hint">vs</span>
-              <input type="number" min={1} style={{ width: "55px" }} value={scoreY} onChange={(e) => setScoreY(Math.max(1, Number(e.target.value) || 2))} />
+          {hasResult ? (
+            resultsSlot ? (
+              createPortal(results, resultsSlot)
+            ) : (
+              <div className="mv-box">{results}</div>
+            )
+          ) : (
+            <div className="hint" style={{ marginTop: "8px" }}>
+              Results appear in the right-hand pane.
             </div>
-          ) : null}
-
-          {method === "correlation" && corrRes ? (
-            <>
-              <PrepSummary meta={corrRes.matrix_preprocessing} />
-              {corrRes.n_constant_variables ? <div className="hint">{corrRes.n_constant_variables} constant variable(s) have no correlation (shown blank).</div> : null}
-              <PlotBox figure={buildCorrelationHeatmap(corrRes)} />
-            </>
-          ) : null}
-          {method === "pca" ? factorBlock(pcaRes, "PC") : null}
-          {method === "nmf" ? factorBlock(nmfRes, "NMF") : null}
-          {method === "mcr" ? factorBlock(mcrRes, "MCR") : null}
-          {method === "cos2d" && cosRes ? (
-            <>
-              <div className="hint" style={{ marginTop: "10px" }}>
-                {cosRes.n_spectra} spectra · perturbation: {cosRes.perturbation_label}
-                {cosRes.resampled ? " · resampled onto an even grid" : ""}
-                {cosRes.n_spectra_without_perturbation ? ` · ${cosRes.n_spectra_without_perturbation} spectra had no perturbation value and were dropped` : ""}
-              </div>
-              {cosRes.note ? <div className="hint">{cosRes.note}</div> : null}
-              <PrepSummary meta={cosRes.matrix_preprocessing} />
-              <PlotBox figure={buildCosMap(cosRes, "synchronous")} />
-              <PlotBox figure={buildCosMap(cosRes, "asynchronous")} />
-              <PlotBox figure={buildCosAutopower(cosRes)} />
-            </>
-          ) : null}
+          )}
         </>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -19,7 +19,7 @@
     "name": "rolldown-runtime"
   },
   "index.html": {
-    "file": "assets/index-BzQjLn8H.js",
+    "file": "assets/index-DpaVFduv.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -32,11 +32,11 @@
       "src/AnalyzeWorkspace.tsx"
     ],
     "css": [
-      "assets/index-DGGV8kQm.css"
+      "assets/index-DFPzy27X.css"
     ]
   },
   "src/AnalyzeWorkspace.tsx": {
-    "file": "assets/AnalyzeWorkspace-PGN9GML2.js",
+    "file": "assets/AnalyzeWorkspace-DbXJc_ao.js",
     "name": "AnalyzeWorkspace",
     "src": "src/AnalyzeWorkspace.tsx",
     "isDynamicEntry": true,

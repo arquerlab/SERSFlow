@@ -32,6 +32,12 @@ export function compactPreprocess(p: MatrixPreprocess): MatrixPreprocess | null 
   return Object.keys(out).length ? out : null;
 }
 
+/** Category axis that thins its labels (about 20 visible) instead of hiding all of them. */
+function categoryTicks(n: number) {
+  const step = Math.max(1, Math.ceil(n / 20));
+  return { type: "category", tickmode: "linear", tick0: 0, dtick: step, showticklabels: true } as const;
+}
+
 export function buildCorrelationHeatmap(r: CorrelationMatrixResult): PlotlyFigure {
   const title = `${r.axis === "channels" ? "Channel" : "Sample"} ${r.method} correlation${r.reordered ? ` (clustered, ${r.linkage ?? "average"} linkage)` : ""}`;
   return {
@@ -52,9 +58,9 @@ export function buildCorrelationHeatmap(r: CorrelationMatrixResult): PlotlyFigur
     ],
     layout: {
       title: { text: title },
-      xaxis: { ...AXIS, type: "category", showticklabels: r.labels.length <= 60 },
-      yaxis: { ...AXIS, type: "category", autorange: "reversed", showticklabels: r.labels.length <= 60 },
-      margin: { l: 70, r: 20, t: 50, b: 70 },
+      xaxis: { ...AXIS, ...categoryTicks(r.labels.length), tickangle: -60, title: { text: r.axis === "channels" ? "x (channel)" : "sample" } },
+      yaxis: { ...AXIS, ...categoryTicks(r.labels.length), autorange: "reversed", title: { text: r.axis === "channels" ? "x (channel)" : "sample" } },
+      margin: { l: 80, r: 20, t: 50, b: 80 },
     },
   };
 }

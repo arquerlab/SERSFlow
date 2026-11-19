@@ -22,8 +22,11 @@ import {
   sliceYZ,
   stackFigure,
   meanXZ,
+  RAMP_COLORS,
+  rampScale,
   volumeCsvRows,
   volumeFigure,
+  volumeQuantile,
   wholeMapProfile,
   zIndicesInRange,
   type PlotlyFig,
@@ -42,6 +45,8 @@ const XY_MODE_LABEL: Record<XyMode, string> = {
   sum: "Sum over depth range",
   argmax: "Depth of maximum (z map)",
 };
+
+const xyPlane0 = (v: { values: (number | null)[][][] }, zi: number) => v.values[zi];
 
 function toNum(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
@@ -143,9 +148,10 @@ export function VolumePanel({ runId, featureColumns }: { runId: string; featureC
   const [stackLayers, setStackLayers] = useState(10);
   const [stackOpacity, setStackOpacity] = useState(0.85);
   const [reverseZ, setReverseZ] = useState(false);
-  const [vol3dMode, setVol3dMode] = useState<"voxels" | "volume">("voxels");
-  const [vol3dPct, setVol3dPct] = useState(40);
-  const [vol3dOpacity, setVol3dOpacity] = useState(0.7);
+  const [vol3dMode, setVol3dMode] = useState<"voxels" | "volume">("volume");
+  const [vol3dPct, setVol3dPct] = useState(50);
+  const [vol3dOpacity, setVol3dOpacity] = useState(0.15);
+  const [vol3dColor, setVol3dColor] = useState<string>("Blue");
   const [spectraFig, setSpectraFig] = useState<PlotlyFig | null>(null);
   const [spectraMsg, setSpectraMsg] = useState("");
   // Figures and view controls render into the wide results pane; data controls stay in the sidebar.
@@ -312,7 +318,21 @@ export function VolumePanel({ runId, featureColumns }: { runId: string; featureC
       label,
       title: `${label}: 3D volume${vol3dMode === "voxels" ? ` (voxels above the ${vol3dPct}th percentile)` : ""}`,
       reverseZ,
+      zAspect: 2,
+      colorscale: rampScale(RAMP_COLORS[vol3dColor] ?? RAMP_COLORS.Blue),
     });
+    const vol3dXy = planeFigure({
+      title: `XY plane at z = ${zv.toFixed(1)} µm`,
+      x: v.xs,
+      y: v.ys,
+      z: xyPlane0(v, zi),
+      xTitle: "x (µm)",
+      yTitle: "y (µm)",
+      colorbarTitle: label,
+      range: { zmin: 0, zmax: volumeQuantile(v, 0.995) ?? shared.zmax },
+      colorscale: rampScale(RAMP_COLORS[vol3dColor] ?? RAMP_COLORS.Blue),
+    });
+    vol3dXy.layout.yaxis = { ...vol3dXy.layout.yaxis, scaleanchor: "x", scaleratio: 1 };
     const xzMean = planeFigure({
       title: "XZ section (mean over Y)",
       x: v.xs,
@@ -324,8 +344,8 @@ export function VolumePanel({ runId, featureColumns }: { runId: string; featureC
       range: shared,
     });
     const profAll = profileFigure(wholeMapProfile(v), label, `${label}: XY-averaged profile vs depth (mean ± std over the map)`);
-    return { xy, xz, yz, prof, montage, stack, vol3d, xzMean, profAll };
-  }, [volume, cross, xyMode, slab, sharedScale, roiRadius, label, montageLayers, montageCols, stackLayers, stackOpacity, reverseZ, vol3dMode, vol3dPct, vol3dOpacity]);
+    return { xy, xz, yz, prof, montage, stack, vol3d, vol3dXy, xzMean, profAll };
+  }, [volume, cross, xyMode, slab, sharedScale, roiRadius, label, montageLayers, montageCols, stackLayers, stackOpacity, reverseZ, vol3dMode, vol3dPct, vol3dOpacity, vol3dColor]);
 
   function setPoint(patch: Partial<{ xi: number; yi: number; zi: number }>) {
     setCross((c) => ({ ...c, ...patch }));
@@ -650,14 +670,32 @@ export function VolumePanel({ runId, featureColumns }: { runId: string; featureC
                   <input type="number" min={0} max={99} style={{ width: "60px" }} value={vol3dPct} onChange={(e) => setVol3dPct(Math.min(99, Math.max(0, Number(e.target.value) || 0)))} />
                 </label>
                 <label className="inline">
+                  Colour
+                  <select value={vol3dColor} onChange={(e) => setVol3dColor(e.target.value)}>
+                    {Object.keys(RAMP_COLORS).map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="inline">
                   Opacity
-                  <input type="range" min={0.05} max={1} step={0.05} value={vol3dOpacity} onChange={(e) => setVol3dOpacity(Number(e.target.value))} />
+                  <input type="range" min={0.02} max={1} step={0.01} value={vol3dOpacity} onChange={(e) => setVol3dOpacity(Number(e.target.value))} />
+                </label>
+                <label className="inline">
+                  Z plane
+                  <input type="range" min={0} max={Math.max(0, nz - 1)} step={1} value={cross.zi} onChange={(e) => setPoint({ zi: Number(e.target.value) })} />
+                  <span>{volume.zs[clampIdx(cross.zi, nz)]?.toFixed(1)} µm</span>
                 </label>
                 <label className="inline">
                   <input type="checkbox" checked={reverseZ} onChange={(e) => setReverseZ(e.target.checked)} /> Reverse depth axis
                 </label>
               </div>
-              <FigureCard id="volume_3d" fig={figs.vol3d} height={560} />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: "10px" }}>
+                <FigureCard id="volume_3d" fig={figs.vol3d} height={560} />
+                <FigureCard id="volume_3d_xy_plane" fig={figs.vol3dXy} height={560} />
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: "10px", marginTop: "10px" }}>
                 <FigureCard id="volume_xz_mean_over_y" fig={figs.xzMean} />
                 <FigureCard id="volume_xy_averaged_profile" fig={figs.profAll} />

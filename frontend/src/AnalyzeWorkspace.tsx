@@ -15,7 +15,7 @@ import { PlotlyWrapper, type PlotlyFigure } from "./legacy-wrappers/PlotlyWrappe
 import { ResizableSplit } from "./components/ResizableSplit";
 import Plotly from "plotly.js-dist-min";
 import { DatasetPicker } from "./components/DatasetPicker";
-import { MultivariatePanel } from "./analyze/MultivariatePanel";
+import { MultivariatePanel, type MvMethod } from "./analyze/MultivariatePanel";
 import { listDatasets, listPipelines, type PipelineLibraryItem, type SubsetStrategy } from "./preprocess/api";
 import { FitUncertaintyPanel } from "./analyze/FitUncertaintyPanel";
 import { ReportDownload } from "./analyze/ReportDownload";
@@ -545,6 +545,8 @@ export default function AnalyzeWorkspace() {
 
   const [matrixUpTo, setMatrixUpTo] = useState(() => analyzeUiLoaded.matrixUpTo ?? "");
   const [matrixJobId, setMatrixJobId] = useState<string | null>(null);
+  const [mvMethod, setMvMethod] = useState<MvMethod>("correlation");
+  const [mvSlot, setMvSlot] = useState<HTMLElement | null>(null);
   const [selectedMatrixJobId, setSelectedMatrixJobId] = useState<string>(
     () => String((analyzeUiLoaded as any).selectedMatrixJobId ?? "")
   );
@@ -1733,7 +1735,7 @@ export default function AnalyzeWorkspace() {
     const wantC = new Set(selectedClusterPlots);
 
     const includeFeaturePca = section === "pca_cluster";
-    const includeSpectrumPca = section === "spectrum_matrix" || section === "multivariate";
+    const includeSpectrumPca = section === "multivariate" && mvMethod === "classic";
 
     function metaValuesFor(result: PcaLikeResult | null, col: string): (number | null)[] | null {
       if (!result) return null;
@@ -3726,7 +3728,13 @@ export default function AnalyzeWorkspace() {
               onPickMatrix={(id) => setSelectedMatrixJobId(id)}
               analysisRunId={runId}
               onError={(m) => setLastError(m)}
+              method={mvMethod}
+              onMethodChange={setMvMethod}
+              resultsSlot={mvSlot}
             />
+
+            {mvMethod === "classic" ? (
+            <>
 
             <div className="section-title" style={{ marginTop: "18px" }}>
               Classic spectrum PCA / k-means / FDA
@@ -4080,6 +4088,8 @@ export default function AnalyzeWorkspace() {
             )}
             </>
             ) : null}
+            </>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -4183,6 +4193,7 @@ export default function AnalyzeWorkspace() {
             </div>
           )
         ) : null}
+        {section === "multivariate" ? <div ref={setMvSlot} style={{ minWidth: 0 }} /> : null}
         {section === "correlation" && (corrFigure || vifFigure) ? (
           <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "center", marginTop: "8px" }}>
             <div className="hint" style={{ margin: 0 }}>
@@ -4285,7 +4296,7 @@ export default function AnalyzeWorkspace() {
             </table>
           </div>
         ) : null}
-        {(section === "spectrum_matrix" || section === "multivariate") && spectrumClusterResult?.labels ? (
+        {section === "multivariate" && mvMethod === "classic" && spectrumClusterResult?.labels ? (
           <div style={{ marginTop: "10px", maxHeight: 280, overflow: "auto", fontSize: "11px" }}>
             <div className="hint">Spectrum matrix k-means (sample)</div>
             <table className="mini-table" style={{ width: "100%" }}>
@@ -4308,12 +4319,12 @@ export default function AnalyzeWorkspace() {
             </table>
           </div>
         ) : null}
-        {(section === "spectrum_matrix" || section === "multivariate") && (fpcaDiscResult || fpcaFdaResult) ? (
+        {section === "multivariate" && mvMethod === "classic" && (fpcaDiscResult || fpcaFdaResult) ? (
           <div className="hint" style={{ marginTop: "8px" }}>
             Backend JSON includes optional <code>plots</code> paths; open API artifact_dir on the server for full outputs.
           </div>
         ) : null}
-        {(section === "pca_cluster" || section === "spectrum_matrix" || section === "multivariate") && plotCards.length ? (
+        {(section === "pca_cluster" || (section === "multivariate" && mvMethod === "classic")) && plotCards.length ? (
           <div style={{ marginTop: "10px" }}>
             <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "8px" }}>
               <button type="button" disabled={!!exportBusy} onClick={exportAllPngZip}>

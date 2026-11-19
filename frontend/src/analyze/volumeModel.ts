@@ -284,7 +284,7 @@ export function planeFigure(args: {
   colorbarTitle: string;
   range: ColorRange;
   crosshair?: { x: number; y: number } | null;
-  colorscale?: string;
+  colorscale?: string | any[];
 }): PlotlyFig {
   const { crosshair } = args;
   const shapes: any[] = [];
@@ -460,6 +460,18 @@ export function stackFigure(
 }
 
 /** Quantile (0..1) of the finite voxel values; null when the volume has none. */
+/** Reference-style colour ramp: near-white -> accent colour -> near-black. */
+export function rampScale(accent: string): any[] {
+  return [[0, "#fcfcfb"], [0.6, accent], [1, "#1a1a19"]];
+}
+
+export const RAMP_COLORS: Record<string, string> = {
+  Blue: "#2a78d6",
+  Orange: "#eb6834",
+  Green: "#1baf7a",
+  Amber: "#eda100",
+};
+
 export function volumeQuantile(v: Volume, q: number): number | null {
   const vals: number[] = [];
   for (const pl of v.values) for (const row of pl) for (const val of row) if (val !== null && Number.isFinite(val)) vals.push(val);
@@ -499,7 +511,7 @@ export function wholeMapProfile(v: Volume): DepthProfile {
  */
 export function volumeFigure(
   v: Volume,
-  opts: { mode: "voxels" | "volume"; percentile: number; opacity: number; label: string; title: string; reverseZ?: boolean; zSpread?: number; colorscale?: string }
+  opts: { mode: "voxels" | "volume"; percentile: number; opacity: number; label: string; title: string; reverseZ?: boolean; zSpread?: number; zAspect?: number; colorscale?: string | any[] }
 ): PlotlyFig {
   const range = colorRange(v, true);
   const thr = volumeQuantile(v, opts.percentile / 100);
@@ -528,11 +540,11 @@ export function volumeFigure(
       z: Z,
       value: V,
       isomin: thr ?? range.zmin,
-      isomax: range.zmax,
+      isomax: volumeQuantile(v, 0.995) ?? range.zmax,
       opacity: Math.min(1, Math.max(0.02, opts.opacity)),
       surface_count: 15,
       colorscale,
-      colorbar: { title: { text: opts.label }, len: 0.7 },
+      showscale: false,
     };
   } else {
     const keep = V.map((val) => thr === null || val >= thr);
@@ -558,7 +570,7 @@ export function volumeFigure(
   }
   const span = Math.max(1e-9, Math.max(...v.xs) - Math.min(...v.xs), Math.max(...v.ys) - Math.min(...v.ys));
   const zRange = Math.max(1e-9, Math.max(...v.zs) - Math.min(...v.zs));
-  const zAspect = Math.min(1.6, Math.max(0.4, ((opts.zSpread ?? 1) * zRange) / span));
+  const zAspect = opts.zAspect ?? Math.min(1.6, Math.max(0.4, ((opts.zSpread ?? 1) * zRange) / span));
   return {
     data: [trace],
     layout: {

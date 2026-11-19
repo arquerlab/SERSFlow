@@ -283,3 +283,77 @@ button.pipeline-step-title-btn.is-selected {
   }
 }
 
+
+/* Multivariate analysis panel: stacked boxes with aligned field grids */
+.mv-box {
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 10px;
+  box-sizing: border-box;
+}
+.mv-box > .mv-title {
+  font-size: 13px;
+  font-weight: 800;
+  margin: 0 0 8px;
+}
+.mv-sub {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  opacity: 0.65;
+  margin: 12px 0 6px;
+}
+.mv-sub:first-of-type {
+  margin-top: 4px;
+}
+.mv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px 12px;
+  align-items: end;
+}
+.mv-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  font-size: 12px;
+}
+.mv-field > span {
+  opacity: 0.8;
+}
+.mv-field select,
+.mv-field input[type="text"],
+.mv-field input[type="number"] {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+}
+.mv-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.mv-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  min-height: 28px;
+}
+.mv-wide {
+  grid-column: 1 / -1;
+}
+.mv-run {
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 12px;
+  font-weight: 700;
+}
+.mv-results-head {
+  font-size: 13px;
+  font-weight: 800;
+  margin: 0 0 4px;
+}
