@@ -48,7 +48,8 @@ def test_correlation_route(matrix_env):
         matrix_env.req,
     )
     r = out.results
-    assert r["reordered"] and len(r["labels"]) == 45 and np.asarray(r["R"]).shape == (45, 45)
+    assert not r["reordered"] and len(r["labels"]) == 45 and np.asarray(r["R"]).shape == (45, 45)
+    assert np.all(np.diff(r["x"]) > 0)
     assert any("bin" in s for s in r["matrix_preprocessing"]["steps"])
 
 

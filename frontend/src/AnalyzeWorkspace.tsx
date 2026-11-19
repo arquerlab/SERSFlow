@@ -16,6 +16,7 @@ import { ResizableSplit } from "./components/ResizableSplit";
 import Plotly from "plotly.js-dist-min";
 import { DatasetPicker } from "./components/DatasetPicker";
 import { MultivariatePanel, type MvMethod } from "./analyze/MultivariatePanel";
+import type { FactorResult } from "./analyze/multivariateApi";
 import { listDatasets, listPipelines, type PipelineLibraryItem, type SubsetStrategy } from "./preprocess/api";
 import { FitUncertaintyPanel } from "./analyze/FitUncertaintyPanel";
 import { ReportDownload } from "./analyze/ReportDownload";
@@ -547,6 +548,8 @@ export default function AnalyzeWorkspace() {
   const [matrixJobId, setMatrixJobId] = useState<string | null>(null);
   const [mvMethod, setMvMethod] = useState<MvMethod>("correlation");
   const [mvSlot, setMvSlot] = useState<HTMLElement | null>(null);
+  const [mvFactors, setMvFactors] = useState<Partial<Record<"pca" | "nmf" | "mcr", { label: string; result: FactorResult }>>>({});
+  const mvIsFactor = mvMethod === "pca" || mvMethod === "nmf" || mvMethod === "mcr";
   const [selectedMatrixJobId, setSelectedMatrixJobId] = useState<string>(
     () => String((analyzeUiLoaded as any).selectedMatrixJobId ?? "")
   );
@@ -1729,16 +1732,18 @@ export default function AnalyzeWorkspace() {
     }
 
     const pca = (pcaResult ?? null) as PcaLikeResult | null;
-    const fpcaD = (fpcaDiscResult ?? null) as PcaLikeResult | null;
-    const fpcaF = (fpcaFdaResult ?? null) as PcaLikeResult | null;
+    const mvFactor = mvIsFactor ? mvFactors[mvMethod as "pca" | "nmf" | "mcr"] ?? null : null;
+    const fpcaDLabel = mvFactor ? mvFactor.label : "FPCA discrete";
+    const fpcaD = (mvIsFactor ? (mvFactor?.result ?? null) : (fpcaDiscResult ?? null)) as PcaLikeResult | null;
+    const fpcaF = (mvIsFactor ? null : (fpcaFdaResult ?? null)) as PcaLikeResult | null;
     const cl = (clusterResult ?? null) as ClusterResult | null;
-    const specCl = (spectrumClusterResult ?? null) as ClusterResult | null;
+    const specCl = (mvIsFactor ? null : (spectrumClusterResult ?? null)) as ClusterResult | null;
 
     const wantP = new Set(selectedPcaPlots);
     const wantC = new Set(selectedClusterPlots);
 
     const includeFeaturePca = section === "pca_cluster";
-    const includeSpectrumPca = section === "multivariate" && mvMethod === "classic";
+    const includeSpectrumPca = section === "multivariate" && (mvMethod === "classic" || mvIsFactor);
 
     function metaValuesFor(result: PcaLikeResult | null, col: string): (number | null)[] | null {
       if (!result) return null;
@@ -1825,7 +1830,7 @@ export default function AnalyzeWorkspace() {
           "fpca_discrete",
           "fpca_discrete",
           buildScoresScatter(fpcaD, { xPc: scoresXpc, yPc: scoresYpc, colorBy }),
-          "FPCA discrete",
+          fpcaDLabel,
           { enrichMeta: true }
         );
       if (wantP.has("scores_pc_vs_meta") && pcVsMetaX && pcVsMetaPcs.length) {
@@ -1841,7 +1846,7 @@ export default function AnalyzeWorkspace() {
               : undefined,
             maxPcs: 12,
           }),
-          "FPCA discrete",
+          fpcaDLabel,
           { enrichMeta: true }
         );
       }
@@ -1850,21 +1855,21 @@ export default function AnalyzeWorkspace() {
           "fpca_discrete",
           "fpca_discrete",
           buildScoresPairplot(fpcaD, { pcs: pairplotPcs, maxPcs: 8, colorBy }),
-          "FPCA discrete",
+          fpcaDLabel,
           { enrichMeta: true }
         );
-      if (wantP.has("scree")) pushBuilt("fpca_discrete", "fpca_discrete", buildScree(fpcaD), "FPCA discrete");
-      if (wantP.has("cumulative_evr")) pushBuilt("fpca_discrete", "fpca_discrete", buildCumulativeEvr(fpcaD), "FPCA discrete");
+      if (wantP.has("scree")) pushBuilt("fpca_discrete", "fpca_discrete", buildScree(fpcaD), fpcaDLabel);
+      if (wantP.has("cumulative_evr")) pushBuilt("fpca_discrete", "fpca_discrete", buildCumulativeEvr(fpcaD), fpcaDLabel);
       if (wantP.has("loadings_topn")) {
         // For spectrum PCA/FPCA, prefer spectrum-style loadings curves (PC loadings vs Raman shift).
         const built = buildLoadingsSpectrum(fpcaD, { pcs: pairplotPcs, maxPcs: 6 });
-        if (built) pushBuilt("fpca_discrete", "fpca_discrete", built, "FPCA discrete");
+        if (built) pushBuilt("fpca_discrete", "fpca_discrete", built, fpcaDLabel);
         else {
           const pcs = Array.from(new Set(pairplotPcs.map((p) => Math.max(1, Math.floor(p))))).slice(0, 8);
-          for (const pc of pcs) pushBuilt("fpca_discrete", "fpca_discrete", buildLoadingsTopN(fpcaD, { pc, topN: loadingsTopN }), "FPCA discrete");
+          for (const pc of pcs) pushBuilt("fpca_discrete", "fpca_discrete", buildLoadingsTopN(fpcaD, { pc, topN: loadingsTopN }), fpcaDLabel);
         }
       }
-      if (wantP.has("loadings_heatmap")) pushBuilt("fpca_discrete", "fpca_discrete", buildLoadingsHeatmap(fpcaD, { pcs: pairplotPcs }), "FPCA discrete");
+      if (wantP.has("loadings_heatmap")) pushBuilt("fpca_discrete", "fpca_discrete", buildLoadingsHeatmap(fpcaD, { pcs: pairplotPcs }), fpcaDLabel);
     }
 
     if (includeSpectrumPca && fpcaF) {
@@ -1941,7 +1946,7 @@ export default function AnalyzeWorkspace() {
     }
 
     return cards;
-  }, [
+  }, [mvMethod, mvFactors, 
     section,
     pcaResult,
     fpcaDiscResult,
@@ -3734,18 +3739,26 @@ export default function AnalyzeWorkspace() {
               method={mvMethod}
               onMethodChange={setMvMethod}
               resultsSlot={mvSlot}
+              onFactorResult={(m, label, result) => setMvFactors((o) => ({ ...o, [m]: { label, result } }))}
             />
 
-            {mvMethod === "classic" ? (
+            {mvMethod === "classic" || mvIsFactor ? (
             <>
-
-            <div className="section-title" style={{ marginTop: "18px" }}>
-              Classic spectrum PCA / k-means / FDA
-            </div>
+            {mvMethod === "classic" ? (
+              <div className="section-title" style={{ marginTop: "18px" }}>
+                Classic spectrum PCA / k-means / FDA
+              </div>
+            ) : (
+              <div className="section-title" style={{ marginTop: "18px" }}>
+                Plot settings
+              </div>
+            )}
             {!selectedMatrixIsCompleted ? (
               <div className="hint">Select a completed matrix job above first.</div>
             ) : (
               <>
+                {mvMethod === "classic" ? (
+                <>
                 <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
                   <label className="inline">
                     Discrete method
@@ -3959,6 +3972,9 @@ export default function AnalyzeWorkspace() {
                   </div>
                 ) : null}
 
+                </>
+                ) : null}
+
                 <div className="hint" style={{ marginTop: "12px" }}>
                   Plot settings (applies to spectrum PCA/FPCA plots)
                 </div>
@@ -4072,6 +4088,8 @@ export default function AnalyzeWorkspace() {
               </>
             )}
 
+            {mvMethod === "classic" ? (
+            <>
             <div className="section-title" style={{ marginTop: "14px" }}>
               Spectrum axes (dataset)
             </div>
@@ -4089,6 +4107,8 @@ export default function AnalyzeWorkspace() {
                 {!axesQ.data?.items?.length ? <div className="hint">No axis rows.</div> : null}
               </div>
             )}
+            </>
+            ) : null}
             </>
             ) : null}
             </>
@@ -4327,7 +4347,7 @@ export default function AnalyzeWorkspace() {
             Backend JSON includes optional <code>plots</code> paths; open API artifact_dir on the server for full outputs.
           </div>
         ) : null}
-        {(section === "pca_cluster" || (section === "multivariate" && mvMethod === "classic")) && plotCards.length ? (
+        {(section === "pca_cluster" || (section === "multivariate" && (mvMethod === "classic" || mvIsFactor))) && plotCards.length ? (
           <div style={{ marginTop: "10px" }}>
             <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "8px" }}>
               <button type="button" disabled={!!exportBusy} onClick={exportAllPngZip}>

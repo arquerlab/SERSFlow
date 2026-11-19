@@ -20,8 +20,6 @@ import {
   buildCosAutopower,
   buildCosMap,
   buildNmfScan,
-  buildScoresScatter,
-  buildVarianceBars,
   compactPreprocess,
 } from "./multivariatePlots";
 
@@ -59,6 +57,8 @@ type Props = {
   onMethodChange: (m: MvMethod) => void;
   /** Right-hand pane element; results are rendered there when given. */
   resultsSlot: HTMLElement | null;
+  /** PCA / NMF / MCR results are also handed to the Analyze plot machinery (scatter, pairplot, scree, loadings, metadata colouring). */
+  onFactorResult: (method: "pca" | "nmf" | "mcr", label: string, result: FactorResult) => void;
 };
 
 function num(v: string): number | null {
@@ -125,6 +125,7 @@ export function MultivariatePanel({
   method,
   onMethodChange,
   resultsSlot,
+  onFactorResult,
 }: Props) {
   const [busy, setBusy] = useState(false);
 
@@ -154,8 +155,7 @@ export function MultivariatePanel({
   const [pert, setPert] = useState<"sample_order" | "observation_column">("sample_order");
   const [pertCol, setPertCol] = useState("");
   const [cosRef, setCosRef] = useState<"mean" | "first" | "last">("mean");
-  const [scoreX, setScoreX] = useState(1);
-  const [scoreY, setScoreY] = useState(2);
+  const [maxDisplay, setMaxDisplay] = useState(600);
 
   // results (one per method)
   const [corrRes, setCorrRes] = useState<CorrelationMatrixResult | null>(null);
@@ -187,15 +187,17 @@ export function MultivariatePanel({
     onError(null);
     try {
       if (method === "correlation") {
-        const r = await postSpectrumCorrelation({ matrix_job_id: matrixJobId, axis: corrAxis, method: corrMethod, reorder, linkage, preprocess: request });
+        const r = await postSpectrumCorrelation({ matrix_job_id: matrixJobId, axis: corrAxis, method: corrMethod, reorder: reorder && corrAxis === "samples", linkage, max_display: maxDisplay, preprocess: request });
         setCorrRes(r.results);
       } else if (method === "pca") {
         const r = await postSpectrumPca({ matrix_job_id: matrixJobId, n_components: k, scaler: pcaScaler, rotation: varimax ? "varimax" : "none", preprocess: request });
         setPcaRes(r.results);
+        onFactorResult("pca", METHOD_LABEL.pca, r.results);
       } else if (method === "nmf") {
         const scan = scanMax >= 2 ? Array.from({ length: scanMax }, (_, i) => i + 1) : null;
         const r = await postSpectrumNmf({ matrix_job_id: matrixJobId, n_components: k, n_starts: nStarts, scan_k: scan, preprocess: request });
         setNmfRes(r.results);
+        onFactorResult("nmf", METHOD_LABEL.nmf, r.results);
       } else if (method === "mcr") {
         const ids = fixedIds.split(",").map((s) => s.trim()).filter(Boolean);
         const r = await postSpectrumMcr({
@@ -210,6 +212,7 @@ export function MultivariatePanel({
           preprocess: request,
         });
         setMcrRes(r.results);
+        onFactorResult("mcr", METHOD_LABEL.mcr, r.results);
       } else {
         const r = await postSpectrum2dcos({
           matrix_job_id: matrixJobId,
@@ -217,6 +220,7 @@ export function MultivariatePanel({
           analysis_run_id: pert === "observation_column" ? analysisRunId || null : null,
           perturbation_column: pert === "observation_column" ? pertCol.trim() || null : null,
           reference: cosRef,
+          max_display: maxDisplay,
           preprocess: request,
         });
         setCosRes(r.results);
@@ -245,9 +249,8 @@ export function MultivariatePanel({
         <PrepSummary meta={res.matrix_preprocessing} />
         <PlotBox figure={buildComponentSpectra(res, label)} />
         <PlotBox figure={buildContributions(res, label)} />
-        <PlotBox figure={buildVarianceBars(res, label)} />
-        <PlotBox figure={buildScoresScatter(res, label, scoreX - 1, scoreY - 1)} />
         <PlotBox figure={buildNmfScan(res)} />
+        <div className="hint">More plots (scores scatter, pairplot, scree, loadings, colour by metadata) are listed under Plot settings in the left pane.</div>
       </>
     );
   };
@@ -435,8 +438,13 @@ export function MultivariatePanel({
                       <option value="spearman">Spearman</option>
                     </select>
                   </Field>
-                  <Check checked={reorder} onChange={setReorder} label="Clustered order" title="Reorder rows and columns by hierarchical clustering" />
-                  {reorder ? (
+                  <Check
+                    checked={reorder && corrAxis === "samples"}
+                    onChange={setReorder}
+                    label="Clustered order"
+                    title={corrAxis === "samples" ? "Reorder samples by hierarchical clustering" : "Channels always stay in ascending wavenumber order"}
+                  />
+                  {reorder && corrAxis === "samples" ? (
                     <Field label="Linkage">
                       <select value={linkage} onChange={(e) => setLinkage(e.target.value as typeof linkage)}>
                         <option value="average">average</option>
@@ -514,18 +522,23 @@ export function MultivariatePanel({
               ) : null}
             </div>
 
-            {method === "pca" || method === "nmf" || method === "mcr" ? (
+            {method === "correlation" || method === "cos2d" ? (
               <>
-                <div className="mv-sub">Scores scatter</div>
+                <div className="mv-sub">Map resolution</div>
                 <div className="mv-grid">
-                  <Field label="X component">
-                    <input type="number" min={1} value={scoreX} onChange={(e) => setScoreX(Math.max(1, Number(e.target.value) || 1))} />
-                  </Field>
-                  <Field label="Y component">
-                    <input type="number" min={1} value={scoreY} onChange={(e) => setScoreY(Math.max(1, Number(e.target.value) || 2))} />
+                  <Field
+                    label="Max cells per axis"
+                    title="No channel limit: beyond this many channels the map is block-averaged for display (2D-COS: exact for the block mean; the autopower keeps full resolution)."
+                  >
+                    <input type="number" min={100} max={2000} step={50} value={maxDisplay} onChange={(e) => setMaxDisplay(Math.min(2000, Math.max(100, Number(e.target.value) || 600)))} />
                   </Field>
                 </div>
               </>
+            ) : null}
+            {method === "pca" || method === "nmf" || method === "mcr" ? (
+              <div className="hint" style={{ marginTop: "8px" }}>
+                After running, choose the plots (scores scatter, pairplot, PC vs metadata, scree, loadings, …) under Plot settings below.
+              </div>
             ) : null}
 
             {method === "cos2d" && pert === "observation_column" && !analysisRunId ? (

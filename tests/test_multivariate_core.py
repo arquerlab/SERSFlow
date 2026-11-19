@@ -53,11 +53,11 @@ def test_correlation_and_reorder():
     Y, x, _, _, sids = _synthetic()
     r = correlation_matrix(Y, x, sids, axis="channels", method="spearman", reorder=True)
     R = np.asarray(r["R"])
-    assert R.shape == (x.size, x.size) and r["reordered"]
-    assert sorted(r["order"]) == list(range(x.size))
+    assert R.shape == (x.size, x.size) and not r["reordered"]  # channels keep wavenumber order
     assert np.allclose(np.diag(R), 1.0)
-    rs = correlation_matrix(Y, x, sids, axis="samples")
-    assert np.asarray(rs["R"]).shape == (len(sids), len(sids))
+    rs = correlation_matrix(Y, x, sids, axis="samples", reorder=True)
+    assert np.asarray(rs["R"]).shape == (len(sids), len(sids)) and rs["reordered"]
+    assert sorted(rs["order"]) == list(range(len(sids)))
 
 
 def test_nmf_recovers_two_components():
@@ -114,3 +114,32 @@ def test_twod_cos_sync_symmetric_async_antisymmetric():
     assert twod_cos(Y, x, t)["resampled"]
     with pytest.raises(ValueError):
         twod_cos(Y, x, np.ones(30))
+
+
+def test_twod_cos_has_no_channel_limit_and_block_means_are_exact():
+    rng = np.random.default_rng(3)
+    m, p = 20, 1500
+    x = np.linspace(100, 2000, p)
+    Y = rng.standard_normal((m, p)).cumsum(axis=1) * 0.01
+    full = twod_cos(Y, x, np.arange(float(m)), max_display=2000)
+    small = twod_cos(Y, x, np.arange(float(m)), max_display=300)
+    assert len(full["synchronous"]) == p and full["block_size"] == 1
+    b = small["block_size"]
+    assert b == 5 and len(small["synchronous"]) == 300
+    # block-averaging the dynamic spectra equals block-averaging the full maps
+    S = np.asarray(full["synchronous"]).reshape(300, 5, 300, 5).mean(axis=(1, 3))
+    assert np.allclose(S, np.asarray(small["synchronous"]), atol=1e-7)
+    A = np.asarray(full["asynchronous"]).reshape(300, 5, 300, 5).mean(axis=(1, 3))
+    assert np.allclose(A, np.asarray(small["asynchronous"]), atol=1e-7)
+    assert len(small["autopower"]) == p  # autopower keeps full resolution
+
+
+def test_correlation_channels_keep_x_order_and_block_average():
+    Y, x, _, _, sids = _synthetic(n=30, p=300)
+    r = correlation_matrix(Y, x, sids, axis="channels", reorder=True, max_display=100)
+    assert r["block_size"] == 3 and len(r["labels"]) == 100
+    assert r["reordered"] is False and "reorder_ignored" in r
+    xs = np.asarray(r["x"])
+    assert np.all(np.diff(xs) > 0)
+    rs = correlation_matrix(Y, x, sids, axis="samples", reorder=True)
+    assert rs["reordered"] and sorted(rs["order"]) == list(range(30))

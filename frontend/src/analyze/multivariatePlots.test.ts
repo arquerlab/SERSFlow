@@ -51,3 +51,38 @@ describe("figure builders", () => {
     ).toBeNull();
   });
 });
+
+describe("axis order and resolution", () => {
+  it("uses numeric ascending axes for channel correlation", () => {
+    const fig = buildCorrelationHeatmap({
+      method: "pearson",
+      axis: "channels",
+      labels: ["100", "200", "300"],
+      x: [100, 200, 300],
+      R: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+      reordered: false,
+    });
+    expect(fig.data[0].x).toEqual([100, 200, 300]);
+    expect(fig.layout.xaxis.type).toBe("linear");
+  });
+  it("uses the block-averaged x axis for 2D-COS maps", () => {
+    const fig = buildCosMap(
+      {
+        x_cm1: [1, 2, 3, 4],
+        x_map: [1.5, 3.5],
+        block_size: 2,
+        synchronous: [[1, 0], [0, 1]],
+        asynchronous: [[0, 1], [-1, 0]],
+        autopower: [1, 1, 1, 1],
+        reference_spectrum: [0, 0, 0, 0],
+        perturbation: [0, 1, 2],
+        perturbation_label: "t",
+        n_spectra: 3,
+        resampled: false,
+      },
+      "synchronous"
+    );
+    expect(fig.data[0].x).toEqual([1.5, 3.5]);
+    expect(String(fig.layout.title.text)).toContain("2 channels per cell");
+  });
+});

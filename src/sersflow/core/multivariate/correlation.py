@@ -6,7 +6,8 @@ from typing import Any
 
 import numpy as np
 
-MAX_VARS = 1500
+MAX_VARS = 4000
+DEFAULT_MAX_DISPLAY = 800
 LINKAGES = ("average", "complete", "single", "ward")
 
 
@@ -60,6 +61,17 @@ def reorder_correlation_result(
     return out
 
 
+def block_mean_matrix(R: np.ndarray, b: int) -> np.ndarray:
+    """Mean of R over b x b blocks (NaN-aware); the last block may be smaller."""
+    p = R.shape[0]
+    idx = np.arange(0, p, b)
+    ok = np.isfinite(R)
+    S = np.add.reduceat(np.add.reduceat(np.where(ok, R, 0.0), idx, axis=0), idx, axis=1)
+    N = np.add.reduceat(np.add.reduceat(ok.astype(float), idx, axis=0), idx, axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(N > 0, S / N, np.nan)
+
+
 def correlation_matrix(
     Y: np.ndarray,
     x: np.ndarray,
@@ -69,8 +81,14 @@ def correlation_matrix(
     method: str = "pearson",
     reorder: bool = False,
     linkage: str = "average",
+    max_display: int = DEFAULT_MAX_DISPLAY,
 ) -> dict[str, Any]:
-    """Correlation of channels (columns of Y) or of samples (rows of Y)."""
+    """Correlation of channels (columns of Y) or of samples (rows of Y).
+
+    Channels are always kept in the order of ``x`` (ascending); clustered ``reorder`` applies to
+    samples only. When there are more than ``max_display`` variables the returned matrix is the
+    block mean of R (``block_size`` variables per cell) so the response stays small.
+    """
     if axis not in ("channels", "samples"):
         raise ValueError("axis must be 'channels' or 'samples'")
     if method not in ("pearson", "spearman"):
@@ -108,6 +126,26 @@ def correlation_matrix(
     }
     if axis == "channels":
         out["x"] = np.asarray(x, dtype=float).tolist()
-    if reorder:
+    if reorder and axis == "samples":
         out = reorder_correlation_result(out, linkage=linkage)
+    elif reorder:
+        out["reorder_ignored"] = "channels stay in wavenumber order"
+    out["n_variables"] = int(p)
+    out["block_size"] = 1
+    if p > max(50, int(max_display)):
+        b = int(np.ceil(p / max(50, int(max_display))))
+        Rm = np.asarray(out["R"], dtype=float)
+        idx = np.arange(0, p, b)
+        out["R"] = block_mean_matrix(Rm, b).tolist()
+        labs = out["labels"]
+        if axis == "channels":
+            xs = np.asarray(out["x"], dtype=float)
+            counts = np.diff(np.append(idx, p))
+            xb = np.add.reduceat(xs, idx) / counts
+            out["x"] = xb.tolist()
+            out["labels"] = [f"{v:.6g}" for v in xb]
+        else:
+            ends = np.append(idx[1:], p) - 1
+            out["labels"] = [f"{labs[i]}…{labs[j]}" if i != j else labs[i] for i, j in zip(idx, ends)]
+        out["block_size"] = b
     return out

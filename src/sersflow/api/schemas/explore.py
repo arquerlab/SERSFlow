@@ -107,6 +107,7 @@ class SpectrumCorrelationRequest(BaseModel):
     method: Literal["pearson", "spearman"] = "pearson"
     reorder: bool = False
     linkage: Literal["average", "complete", "single", "ward"] = "average"
+    max_display: int = Field(default=800, ge=100, le=2000)
     preprocess: MatrixPreprocess | None = None
 
 
@@ -142,6 +143,7 @@ class Spectrum2DCOSRequest(BaseModel):
     analysis_run_id: str | None = None
     perturbation_column: str | None = None
     reference: Literal["mean", "first", "last"] = "mean"
+    max_display: int = Field(default=600, ge=100, le=2000)
     preprocess: MatrixPreprocess | None = None
 
 

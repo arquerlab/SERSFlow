@@ -375,17 +375,19 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         method: Literal["pearson", "spearman"] = "pearson",
         reorder: bool = False,
         linkage: Literal["average", "complete", "single", "ward"] = "average",
+        max_display: int = 800,
         preprocess: dict | None = None,
     ) -> str:
-        """POST /explore/spectrum-correlation — channel or sample correlation matrix of a matrix job,
-        optionally reordered by hierarchical clustering (compact summary)."""
+        """POST /explore/spectrum-correlation — channel or sample correlation matrix of a matrix job.
+        Channels stay in wavenumber order; reorder (hierarchical clustering) applies to samples. Above
+        max_display variables the returned matrix is block-averaged (compact summary)."""
 
         def _run():
             from sersflow.api.schemas.explore import SpectrumCorrelationRequest
 
             req = SpectrumCorrelationRequest(
                 matrix_job_id=matrix_job_id, axis=axis, method=method,
-                reorder=reorder, linkage=linkage, preprocess=preprocess,
+                reorder=reorder, linkage=linkage, max_display=max_display, preprocess=preprocess,
             )
             return summarize.explore_result(ctx.get_client().explore.spectrum_correlation(req))
 
@@ -451,6 +453,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         analysis_run_id: str | None = None,
         perturbation_column: str | None = None,
         reference: Literal["mean", "first", "last"] = "mean",
+        max_display: int = 600,
         preprocess: dict | None = None,
     ) -> str:
         """POST /explore/spectrum-2dcos — synchronous/asynchronous 2D correlation spectra. The
@@ -462,7 +465,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
             req = Spectrum2DCOSRequest(
                 matrix_job_id=matrix_job_id, perturbation=perturbation,
                 analysis_run_id=analysis_run_id, perturbation_column=perturbation_column,
-                reference=reference, preprocess=preprocess,
+                reference=reference, max_display=max_display, preprocess=preprocess,
             )
             return summarize.explore_result(ctx.get_client().explore.spectrum_2dcos(req))
 

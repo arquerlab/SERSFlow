@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-MAX_CHANNELS = 800
+DEFAULT_MAX_DISPLAY = 600
 
 
 def twod_cos(
@@ -16,6 +16,7 @@ def twod_cos(
     *,
     reference: str = "mean",
     perturbation_label: str = "sample order",
+    max_display: int = DEFAULT_MAX_DISPLAY,
 ) -> dict[str, Any]:
     """Synchronous / asynchronous 2D correlation of the rows of ``Y``.
 
@@ -23,14 +24,18 @@ def twod_cos(
     by it. When the sorted perturbation is not evenly spaced (relative tolerance 1e-3), the
     dynamic spectra are linearly interpolated onto an even grid of the same size so the
     Hilbert-Noda matrix is valid; this is reported in ``resampled``.
+
+    There is no channel limit: with more than ``max_display`` channels the dynamic spectra are
+    block-averaged along x before the maps are formed. This is exact for the block mean of the
+    full map (the correlation integral is bilinear), so the maps are shown at ``block_size``
+    channels per cell while the autopower and reference spectra keep full resolution.
     """
     Y = np.asarray(Y, dtype=np.float64)
     t = np.asarray(perturbation, dtype=np.float64)
     if Y.shape[0] != t.shape[0]:
         raise ValueError("perturbation length must equal the number of spectra")
     p = Y.shape[1]
-    if p > MAX_CHANNELS:
-        raise ValueError(f"{p} channels exceed the 2D-COS limit of {MAX_CHANNELS}; bin or crop the matrix")
+    x = np.asarray(x, dtype=np.float64)
     ok = np.isfinite(t)
     Y, t = Y[ok], t[ok]
     m = Y.shape[0]
@@ -58,20 +63,34 @@ def twod_cos(
     else:
         raise ValueError("reference must be mean, first or last")
     A = Y - ref[None, :]
+    autopower = (A**2).sum(axis=0) / (m - 1)
 
-    sync = (A.T @ A) / (m - 1)
+    block = 1
+    x_map = x
+    Ab = A
+    if p > max(50, int(max_display)):
+        block = int(np.ceil(p / max(50, int(max_display))))
+        idx = np.arange(0, p, block)
+        counts = np.diff(np.append(idx, p)).astype(float)
+        Ab = np.add.reduceat(A, idx, axis=1) / counts[None, :]
+        x_map = np.add.reduceat(x, idx) / counts
+
+    sync = (Ab.T @ Ab) / (m - 1)
     j = np.arange(m)
     diff = j[None, :] - j[:, None]  # k - j
     N = np.zeros((m, m))
     nz = diff != 0
     N[nz] = 1.0 / (np.pi * diff[nz])
-    asyn = (A.T @ (N @ A)) / (m - 1)
+    asyn = (Ab.T @ (N @ Ab)) / (m - 1)
     return {
         "kind": "cos2d",
-        "x_cm1": np.asarray(x, dtype=float).tolist(),
+        "x_cm1": x.tolist(),
+        "x_map": np.asarray(x_map, dtype=float).tolist(),
+        "block_size": int(block),
+        "n_channels": int(p),
         "synchronous": np.round(sync, 8).tolist(),
         "asynchronous": np.round(asyn, 8).tolist(),
-        "autopower": np.diag(sync).tolist(),
+        "autopower": autopower.tolist(),
         "reference_spectrum": ref.tolist(),
         "reference": reference,
         "perturbation": t.tolist(),

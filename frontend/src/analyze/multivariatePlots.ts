@@ -39,14 +39,20 @@ function categoryTicks(n: number) {
 }
 
 export function buildCorrelationHeatmap(r: CorrelationMatrixResult): PlotlyFigure {
-  const title = `${r.axis === "channels" ? "Channel" : "Sample"} ${r.method} correlation${r.reordered ? ` (clustered, ${r.linkage ?? "average"} linkage)` : ""}`;
+  const isChannels = r.axis === "channels" && Array.isArray(r.x) && r.x.length === r.labels.length;
+  const blockNote = (r.block_size ?? 1) > 1 ? `, ${r.block_size} ${isChannels ? "channels" : "samples"} per cell` : "";
+  const title = `${isChannels ? "Channel" : "Sample"} ${r.method} correlation${r.reordered ? ` (clustered, ${r.linkage ?? "average"} linkage)` : ""}${blockNote}`;
+  const axisTitle = isChannels ? "x (ascending)" : "sample";
+  // Channels use true numeric axes (always ascending); samples use a thinned category axis.
+  const axisOf = (extra: Record<string, unknown>) =>
+    isChannels ? { ...AXIS, type: "linear", ...extra, title: { text: axisTitle } } : { ...AXIS, ...categoryTicks(r.labels.length), tickangle: -60, ...extra, title: { text: axisTitle } };
   return {
     data: [
       {
         type: "heatmap",
         z: r.R,
-        x: r.labels,
-        y: r.labels,
+        x: isChannels ? r.x : r.labels,
+        y: isChannels ? r.x : r.labels,
         zmin: -1,
         zmax: 1,
         zmid: 0,
@@ -58,8 +64,8 @@ export function buildCorrelationHeatmap(r: CorrelationMatrixResult): PlotlyFigur
     ],
     layout: {
       title: { text: title },
-      xaxis: { ...AXIS, ...categoryTicks(r.labels.length), tickangle: -60, title: { text: r.axis === "channels" ? "x (channel)" : "sample" } },
-      yaxis: { ...AXIS, ...categoryTicks(r.labels.length), autorange: "reversed", title: { text: r.axis === "channels" ? "x (channel)" : "sample" } },
+      xaxis: axisOf({}),
+      yaxis: axisOf({ autorange: "reversed" }),
       margin: { l: 80, r: 20, t: 50, b: 80 },
     },
   };
@@ -186,12 +192,14 @@ function symmetricRange(z: number[][]): number {
 export function buildCosMap(r: Cos2dResult, which: "synchronous" | "asynchronous"): PlotlyFigure {
   const z = which === "synchronous" ? r.synchronous : r.asynchronous;
   const m = symmetricRange(z);
+  const xs = r.x_map && r.x_map.length === z.length ? r.x_map : r.x_cm1;
+  const blockNote = (r.block_size ?? 1) > 1 ? `, ${r.block_size} channels per cell` : "";
   return {
     data: [
       {
         type: "heatmap",
-        x: r.x_cm1,
-        y: r.x_cm1,
+        x: xs,
+        y: xs,
         z,
         zmin: -m,
         zmax: m,
@@ -202,7 +210,7 @@ export function buildCosMap(r: Cos2dResult, which: "synchronous" | "asynchronous
       },
     ],
     layout: {
-      title: { text: `${which === "synchronous" ? "Synchronous Φ" : "Asynchronous Ψ"} (${r.perturbation_label})` },
+      title: { text: `${which === "synchronous" ? "Synchronous Φ" : "Asynchronous Ψ"} (${r.perturbation_label})${blockNote}` },
       xaxis: { ...AXIS, title: { text: "x₁" } },
       yaxis: { ...AXIS, title: { text: "x₂" }, scaleanchor: "x", scaleratio: 1 },
       margin: { l: 60, r: 20, t: 50, b: 50 },

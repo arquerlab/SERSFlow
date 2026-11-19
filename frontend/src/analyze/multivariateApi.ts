@@ -33,7 +33,11 @@ export type CorrelationMatrixResult = {
   axis: "channels" | "samples";
   labels: string[];
   R: number[][];
+  x?: number[];
   reordered: boolean;
+  reorder_ignored?: string;
+  block_size?: number;
+  n_variables?: number;
   order?: number[];
   linkage?: string;
   n_constant_variables?: number;
@@ -64,6 +68,9 @@ export type FactorResult = {
 
 export type Cos2dResult = {
   x_cm1: number[];
+  x_map?: number[];
+  block_size?: number;
+  n_channels?: number;
   synchronous: number[][];
   asynchronous: number[][];
   autopower: number[];
@@ -91,6 +98,7 @@ export function postSpectrumCorrelation(body: {
   method: "pearson" | "spearman";
   reorder: boolean;
   linkage: "average" | "complete" | "single" | "ward";
+  max_display?: number;
   preprocess?: MatrixPreprocess | null;
 }) {
   return post<CorrelationMatrixResult>("spectrum-correlation", body);
@@ -136,6 +144,7 @@ export function postSpectrum2dcos(body: {
   analysis_run_id?: string | null;
   perturbation_column?: string | null;
   reference: "mean" | "first" | "last";
+  max_display?: number;
   preprocess?: MatrixPreprocess | null;
 }) {
   return post<Cos2dResult>("spectrum-2dcos", body);

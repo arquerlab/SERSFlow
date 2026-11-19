@@ -683,6 +683,9 @@ def _load_matrix(matrix_job_id: str, user_id: str, min_rows: int = 2):
             detail=f"matrix job needs at least {min_rows} spectra and 2 channels (got {tuple(Y.shape)})",
         )
     sids = [str(s) for s in np.asarray(data["spectrum_ids"]).ravel().tolist()]
+    if x.size > 1 and not np.all(np.diff(x) > 0):
+        order = np.argsort(x, kind="stable")  # channels always ascending in x
+        Y, x = Y[:, order], x[order]
     return mj, Y, x, sids
 
 
@@ -719,7 +722,7 @@ def post_spectrum_correlation(payload: SpectrumCorrelationRequest, request: Requ
     try:
         result = correlation_matrix(
             Yp, xp, sids, axis=payload.axis, method=payload.method,
-            reorder=payload.reorder, linkage=payload.linkage,
+            reorder=payload.reorder, linkage=payload.linkage, max_display=payload.max_display,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -791,7 +794,9 @@ def post_spectrum_2dcos(payload: Spectrum2DCOSRequest, request: Request) -> Expl
         label = "sample order"
     Yp, xp, meta = _prep(Y, x, payload.preprocess, allow_center=False)
     try:
-        result = twod_cos(Yp, xp, t, reference=payload.reference, perturbation_label=label)
+        result = twod_cos(
+            Yp, xp, t, reference=payload.reference, perturbation_label=label, max_display=payload.max_display
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     result["n_spectra_without_perturbation"] = int((~np.isfinite(t)).sum())
