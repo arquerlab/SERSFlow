@@ -316,13 +316,29 @@ export function createMapUi({ selectorId, mapStateByFile, schedulePlotUpdate }) 
   gridEl.className = "map-grid";
   gridEl.setAttribute("aria-label", "Map grid");
 
+  // Depth-slice picker: only shown for volume (X x Y x Z) maps.
+  const zRow = document.createElement("div");
+  zRow.className = "row";
+  zRow.style.gap = "8px";
+  zRow.style.margin = "0 0 8px 0";
+  zRow.style.display = "none";
+  const zLabel = document.createElement("span");
+  zLabel.className = "hint";
+  zLabel.textContent = "Depth z (µm)";
+  const zSelect = document.createElement("select");
+  zSelect.setAttribute("aria-label", "Depth slice");
+  zRow.appendChild(zLabel);
+  zRow.appendChild(zSelect);
+
   wrap.appendChild(head);
   wrap.appendChild(hint);
+  wrap.appendChild(zRow);
   wrap.appendChild(gridEl);
 
   const state = {
     selectorId,
     relativePath: "",
+    zIndex: 0,
     indexGrid: [],
     selectedIndices: new Set(),
   };
@@ -356,7 +372,7 @@ export function createMapUi({ selectorId, mapStateByFile, schedulePlotUpdate }) 
           else state.selectedIndices.add(idx);
           cell.classList.toggle("on", state.selectedIndices.has(idx));
           if (state.relativePath) {
-            mapStateByFile.set(state.relativePath, { selectedIndices: Array.from(state.selectedIndices.values()) });
+            mapStateByFile.set(state.relativePath, { selectedIndices: Array.from(state.selectedIndices.values()), zIndex: state.zIndex });
           }
           schedulePlotUpdate();
         });
@@ -393,6 +409,19 @@ export function createMapUi({ selectorId, mapStateByFile, schedulePlotUpdate }) 
     }
   }
 
+  zSelect.addEventListener("change", () => {
+    if (!state.relativePath) return;
+    const zi = Number(zSelect.value);
+    const cells = [];
+    (state.indexGrid || []).forEach((row, r) => {
+      (row || []).forEach((idx, c) => {
+        if (Number.isInteger(idx) && state.selectedIndices.has(idx)) cells.push([r, c]);
+      });
+    });
+    mapStateByFile.set(state.relativePath, { selectedIndices: [], zIndex: zi });
+    setFile(state.relativePath, zi, cells);
+  });
+
   btnAll.addEventListener("click", () => {
     state.selectedIndices = new Set();
     for (const row of state.indexGrid || []) {
@@ -400,18 +429,18 @@ export function createMapUi({ selectorId, mapStateByFile, schedulePlotUpdate }) 
       for (const idx of row) if (Number.isInteger(idx)) state.selectedIndices.add(idx);
     }
     renderGrid();
-    if (state.relativePath) mapStateByFile.set(state.relativePath, { selectedIndices: Array.from(state.selectedIndices.values()) });
+    if (state.relativePath) mapStateByFile.set(state.relativePath, { selectedIndices: Array.from(state.selectedIndices.values()), zIndex: state.zIndex });
     schedulePlotUpdate();
   });
 
   btnNone.addEventListener("click", () => {
     state.selectedIndices = new Set();
     renderGrid();
-    if (state.relativePath) mapStateByFile.set(state.relativePath, { selectedIndices: [] });
+    if (state.relativePath) mapStateByFile.set(state.relativePath, { selectedIndices: [], zIndex: state.zIndex });
     schedulePlotUpdate();
   });
 
-  async function setFile(rel) {
+  async function setFile(rel, zIndexOverride, keepCells) {
     state.relativePath = rel;
     state.indexGrid = [];
     state.selectedIndices = new Set();
@@ -424,7 +453,8 @@ export function createMapUi({ selectorId, mapStateByFile, schedulePlotUpdate }) 
       return;
     }
 
-    const res = await fetch(`/plot/map-info?relative_path=${encodeURIComponent(rel)}&max_dim=80`, {
+    const zi = Number.isInteger(zIndexOverride) ? zIndexOverride : (mapStateByFile.get(rel)?.zIndex ?? 0);
+    const res = await fetch(`/plot/map-info?relative_path=${encodeURIComponent(rel)}&max_dim=80&z_index=${zi}`, {
       credentials: "include",
     });
     const text = await res.text();
@@ -439,8 +469,25 @@ export function createMapUi({ selectorId, mapStateByFile, schedulePlotUpdate }) 
     }
 
     state.indexGrid = Array.isArray(info.index_grid) ? info.index_grid : [];
-    const prev = mapStateByFile.get(rel);
-    if (prev && Array.isArray(prev.selectedIndices) && prev.selectedIndices.length) {
+    const zLevels = Array.isArray(info.z) ? info.z : [];
+    state.zIndex = Number.isInteger(info.z_index) ? info.z_index : 0;
+    zSelect.innerHTML = "";
+    zLevels.forEach((zv, i) => {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = Number(zv).toFixed(1);
+      zSelect.appendChild(opt);
+    });
+    zSelect.value = String(state.zIndex);
+    zRow.style.display = zLevels.length > 1 ? "flex" : "none";
+    const prev = Number.isInteger(zIndexOverride) ? null : mapStateByFile.get(rel);
+    if (Array.isArray(keepCells)) {
+      // Depth changed: keep the same X/Y positions selected on the new layer.
+      for (const [r, c] of keepCells) {
+        const idx = state.indexGrid[r]?.[c];
+        if (Number.isInteger(idx)) state.selectedIndices.add(idx);
+      }
+    } else if (prev && Array.isArray(prev.selectedIndices) && prev.selectedIndices.length) {
       for (const i of prev.selectedIndices) if (Number.isInteger(i)) state.selectedIndices.add(i);
     } else {
       for (const row of state.indexGrid) {

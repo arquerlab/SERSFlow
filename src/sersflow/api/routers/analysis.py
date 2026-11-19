@@ -611,6 +611,7 @@ def get_analysis_spectrum(run_id: str, spectrum_id: str, request: Request) -> di
         "relative_path": info.get("relative_path"),
         "file_kind": info.get("file_kind"),
         "axis_time_s": info.get("axis_time_s"),
+        "axis_z": info.get("axis_z"),
         "axis_map_x": info.get("axis_map_x"),
         "axis_map_y": info.get("axis_map_y"),
         "x": x,
@@ -1203,7 +1204,7 @@ def export_observation_table(
 ) -> Response | StreamingResponse:
     """
     Merged observation table: analysis features plus optional **labels** (`meta_*` columns) and **axes**
-    (`axis_time_s`, `axis_map_x`, `axis_map_y`, `grid_nx`, `grid_ny`, `file_kind`).
+    (`axis_time_s`, `axis_z`, `axis_map_x`, `axis_map_y`, `grid_nx`, `grid_ny`, `file_kind`).
 
     Use `format=parquet` with `layout=wide` for columnar export (install `pyarrow`).
     """

@@ -36,6 +36,7 @@ from sersflow.infra.upload_labels_store import fetch_upload_labels_for_paths, wi
 from sersflow.core.plot.service import (
     default_title_from_path,
     map_grid_info,
+    map_z_levels,
     plot_map_points as plot_map_points_figure,
     plot_multi_points as plot_multi_points_figure,
     plot_series_heatmap as plot_series_heatmap_figure,
@@ -129,7 +130,7 @@ def series_info(relative_path: str, request: Request, max_points: int = 500) -> 
         if not isinstance(ds, SeriesDataset):
             return {"is_series": False, "axis": [], "count": 0}
         axis, count = series_axis_preview(ds, max_points=max_points)
-        return {"is_series": True, "axis": axis, "count": count}
+        return {"is_series": True, "axis": axis, "count": count, "axis_name": ds.axis_name}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -170,7 +171,7 @@ def series_value(relative_path: str, index: int, request: Request) -> dict[str, 
 
 
 @router.get("/map-info", response_model=MapInfoResponse)
-def map_info(relative_path: str, request: Request, max_dim: int = 80) -> dict[str, Any]:
+def map_info(relative_path: str, request: Request, max_dim: int = 80, z_index: int = 0) -> dict[str, Any]:
     try:
         p = _upload_path(request, relative_path)
     except HTTPException:
@@ -180,8 +181,10 @@ def map_info(relative_path: str, request: Request, max_dim: int = 80) -> dict[st
         ds = load_dataset_cached(Path(p))
         if not isinstance(ds, MapDataset):
             return {"is_map": False, "x": [], "y": [], "index_grid": [], "count": 0}
-        xs, ys, grid, count = map_grid_info(ds, max_dim=max_dim)
-        return {"is_map": True, "x": xs, "y": ys, "index_grid": grid, "count": count}
+        xs, ys, grid, count = map_grid_info(ds, max_dim=max_dim, z_index=z_index)
+        z = map_z_levels(ds)
+        zi = min(max(int(z_index), 0), len(z) - 1) if z else 0
+        return {"is_map": True, "x": xs, "y": ys, "index_grid": grid, "count": count, "z": z, "z_index": zi}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

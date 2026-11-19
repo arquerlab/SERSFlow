@@ -67,6 +67,8 @@ class MapDataset:
     spectra: np.ndarray
     xpos: np.ndarray
     ypos: np.ndarray
+    # Optional depth coordinate per row: set for volume maps (X x Y x Z grid), None for flat maps.
+    zpos: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         x1 = _as_1d(self.x, name="x")
@@ -85,6 +87,11 @@ class MapDataset:
         object.__setattr__(self, "spectra", spectra2)
         object.__setattr__(self, "xpos", xpos1)
         object.__setattr__(self, "ypos", ypos1)
+        if self.zpos is not None:
+            z1 = _as_1d(self.zpos, name="zpos")
+            if z1.size != spectra2.shape[0]:
+                raise ValueError(f"zpos length must match spectra rows. spectra_rows={spectra2.shape[0]} zpos={z1.size}")
+            object.__setattr__(self, "zpos", z1)
 
 
 @dataclass(frozen=True)

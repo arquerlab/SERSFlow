@@ -49,7 +49,10 @@ def read_file_wdf(file_path: Path) -> SpectrumDataset | SeriesDataset | MapDatas
         if ypos.ndim > 1:
             ypos = ypos.reshape(-1)
 
-        if spectra.ndim == 2:
+        if spectra.ndim == 1 and xdata.size and spectra.size % xdata.size == 0:
+            # Volume (3D) maps come back flat: n_points * n_x values, point-major.
+            spectra_2d = spectra.reshape(-1, xdata.size)
+        elif spectra.ndim == 2:
             spectra_2d = spectra
         elif spectra.ndim == 3:
             if spectra.shape[-1] == xdata.size:
@@ -66,7 +69,11 @@ def read_file_wdf(file_path: Path) -> SpectrumDataset | SeriesDataset | MapDatas
             xpos = np.arange(n_points, dtype=float)
             ypos = np.zeros(n_points, dtype=float)
 
-        return MapDataset(kind="map", x=xdata, spectra=spectra_2d, xpos=xpos, ypos=ypos)
+        # Volume map: the depth coordinate varies per point (X fastest, then Y, then Z).
+        zpos = np.asarray(getattr(reader, "zpos", []), dtype="float64").reshape(-1)
+        if zpos.size != n_points or np.allclose(zpos, zpos[0]):
+            zpos = None
+        return MapDataset(kind="map", x=xdata, spectra=spectra_2d, xpos=xpos, ypos=ypos, zpos=zpos)
     raise ValueError(f"Unknown measurement type: {mt} (value={mt_value})")
 
 
@@ -76,9 +83,20 @@ def get_wdf_series_axis(reader: WDFReader) -> tuple[str, np.ndarray]:
 
     Returns:
         (axis_name, axis_values)
-        axis_name is one of: \"time_s\", \"z\", or \"index\"
+        axis_name is one of: \"time_s\", \"z\" (depth, um), or \"index\"
     """
     origin_rows = getattr(reader, "origin_list_header", []) or []
+
+    # WiRE flags the acquisition's PRIMARY series axis (row[0] is True). A depth profile also stores
+    # a (secondary) Time column, so the primary flag must win over "any Time column".
+    for row in origin_rows:
+        if len(row) >= 5 and bool(row[0]) and row[1] == DataType.Spatial_Z:
+            arr = np.asarray(row[4], dtype="float64")
+            if arr.size and not np.allclose(arr, arr[0]):
+                return "z", arr
+    for row in origin_rows:
+        if len(row) >= 5 and bool(row[0]) and row[1] == DataType.Time:
+            return "time_s", np.asarray(row[4], dtype="float64")
 
     for row in origin_rows:
         if len(row) >= 5 and row[1] == DataType.Time:

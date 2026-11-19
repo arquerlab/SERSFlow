@@ -28,6 +28,7 @@ class DatasetRecord:
 def _migrate_dataset_schema(con: sqlite3.Connection) -> None:
     for col, decl in (
         ("axis_time_s", "REAL"),
+        ("axis_z", "REAL"),
         ("axis_map_x", "REAL"),
         ("axis_map_y", "REAL"),
         ("blob_id", "TEXT"),
@@ -193,7 +194,7 @@ def _populate_axes_for_dataset(dataset_id: str, spectra: list[SpectrumRef]) -> N
                     con.execute(
                         """
                         UPDATE dataset_spectra
-                        SET axis_time_s=NULL, axis_map_x=NULL, axis_map_y=NULL
+                        SET axis_time_s=NULL, axis_z=NULL, axis_map_x=NULL, axis_map_y=NULL
                         WHERE dataset_id=? AND spectrum_id=?
                         """,
                         (dataset_id, ref.spectrum_id),
@@ -209,14 +210,15 @@ def _populate_axes_for_dataset(dataset_id: str, spectra: list[SpectrumRef]) -> N
                 )
                 for ref in refs:
                     idx = int(ref.record_index or 0)
-                    t = float(ds.axis[idx])
+                    v = float(ds.axis[idx])
+                    is_z = ds.axis_name == "z"
                     con.execute(
                         """
                         UPDATE dataset_spectra
-                        SET axis_time_s=?, axis_map_x=NULL, axis_map_y=NULL
+                        SET axis_time_s=?, axis_z=?, axis_map_x=NULL, axis_map_y=NULL
                         WHERE dataset_id=? AND spectrum_id=?
                         """,
-                        (t, dataset_id, ref.spectrum_id),
+                        (None if is_z else v, v if is_z else None, dataset_id, ref.spectrum_id),
                     )
             elif isinstance(ds, MapDataset):
                 ux = int(len(np.unique(np.asarray(ds.xpos))))
@@ -230,13 +232,14 @@ def _populate_axes_for_dataset(dataset_id: str, spectra: list[SpectrumRef]) -> N
                 )
                 for ref in refs:
                     idx = int(ref.record_index or 0)
+                    z = float(ds.zpos[idx]) if ds.zpos is not None else None
                     con.execute(
                         """
                         UPDATE dataset_spectra
-                        SET axis_time_s=NULL, axis_map_x=?, axis_map_y=?
+                        SET axis_time_s=NULL, axis_z=?, axis_map_x=?, axis_map_y=?
                         WHERE dataset_id=? AND spectrum_id=?
                         """,
-                        (float(ds.xpos[idx]), float(ds.ypos[idx]), dataset_id, ref.spectrum_id),
+                        (z, float(ds.xpos[idx]), float(ds.ypos[idx]), dataset_id, ref.spectrum_id),
                     )
             elif isinstance(ds, MultiSpectrumDataset):
                 n = len(ds.xs)
@@ -251,7 +254,7 @@ def _populate_axes_for_dataset(dataset_id: str, spectra: list[SpectrumRef]) -> N
                     con.execute(
                         """
                         UPDATE dataset_spectra
-                        SET axis_time_s=NULL, axis_map_x=NULL, axis_map_y=NULL
+                        SET axis_time_s=NULL, axis_z=NULL, axis_map_x=NULL, axis_map_y=NULL
                         WHERE dataset_id=? AND spectrum_id=?
                         """,
                         (dataset_id, ref.spectrum_id),
@@ -267,7 +270,7 @@ def spectrum_export_lookup(dataset_id: str) -> dict[str, dict[str, Any]]:
         rows = con.execute(
             """
             SELECT ds.spectrum_id, ds.relative_path, ds.record_index, ds.blob_id, ds.blob_relative_path, ds.original_relative_path,
-                   ds.axis_time_s, ds.axis_map_x, ds.axis_map_y,
+                   ds.axis_time_s, ds.axis_z, ds.axis_map_x, ds.axis_map_y,
                    fm.grid_nx, fm.grid_ny, fm.kind AS file_kind
             FROM dataset_spectra ds
             LEFT JOIN dataset_file_meta fm
@@ -285,6 +288,7 @@ def spectrum_export_lookup(dataset_id: str) -> dict[str, dict[str, Any]]:
             "blob_relative_path": r["blob_relative_path"],
             "original_relative_path": r["original_relative_path"],
             "axis_time_s": r["axis_time_s"],
+            "axis_z": r["axis_z"],
             "axis_map_x": r["axis_map_x"],
             "axis_map_y": r["axis_map_y"],
             "grid_nx": r["grid_nx"],
@@ -304,6 +308,7 @@ def spectrum_export_lookup(dataset_id: str) -> dict[str, dict[str, Any]]:
                 "blob_relative_path": d.blob_relative_path,
                 "original_relative_path": d.blob_relative_path,
                 "axis_time_s": None,
+                "axis_z": None,
                 "axis_map_x": None,
                 "axis_map_y": None,
                 "grid_nx": None,
@@ -333,7 +338,7 @@ def iter_spectrum_axes_page(
             """
             SELECT ds.spectrum_id, ds.relative_path, ds.record_index,
                    ds.blob_id, ds.blob_relative_path, ds.original_relative_path,
-                   ds.axis_time_s, ds.axis_map_x, ds.axis_map_y,
+                   ds.axis_time_s, ds.axis_z, ds.axis_map_x, ds.axis_map_y,
                    fm.grid_nx, fm.grid_ny, fm.kind AS file_kind
             FROM dataset_spectra ds
             LEFT JOIN dataset_file_meta fm

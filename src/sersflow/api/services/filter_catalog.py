@@ -65,7 +65,7 @@ def _collect_row_values(dataset: DatasetRecord) -> list[dict[str, Any]]:
     for ctx in load_spectrum_contexts(dataset.spectra, labels_by_path=labels_by_path):
         flat = dict(ctx.labels)
         axes = axes_by_sid.get(ctx.spectrum_id) or {}
-        for k in ("axis_map_x", "axis_map_y", "axis_time_s", "file_kind"):
+        for k in ("axis_map_x", "axis_map_y", "axis_time_s", "axis_z", "file_kind"):
             if k in axes and axes[k] is not None:
                 flat[k] = axes[k]
         rows.append(flat)

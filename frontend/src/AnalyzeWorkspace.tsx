@@ -36,6 +36,7 @@ import {
 } from "./analyze/pcaPlots";
 import { buildClusterOnScoresScatter, buildClusterSizesBar } from "./analyze/clusterPlots";
 import { ParamPlotEditor } from "./analyze/ParamPlotEditor";
+import { VolumePanel } from "./analyze/VolumePanel";
 import {
   buildParamPlot,
   cellToNumber,
@@ -129,6 +130,7 @@ type HeatmapRow = {
   relative_path: string;
   file_kind: string;
   axis_time_s: number | null;
+  axis_z: number | null;
   axis_map_x: number | null;
   axis_map_y: number | null;
   value: number | null;
@@ -137,6 +139,7 @@ type HeatmapCellCustomData = {
   spectrum_ids: string[];
   relative_path: string;
   axis_time_s: number | null;
+  axis_z: number | null;
   axis_map_x: number | null;
   axis_map_y: number | null;
   value: number | null;
@@ -185,6 +188,7 @@ function heatmapCellLabel(cell: HeatmapCellCustomData): string {
     return `${file} x=${cell.axis_map_x.toFixed(3)}, y=${cell.axis_map_y.toFixed(3)}`;
   }
   if (cell.axis_time_s !== null) return `${file} t=${cell.axis_time_s.toFixed(3)} s`;
+  if (cell.axis_z !== null) return `${file} z=${cell.axis_z.toFixed(1)} µm`;
   return file;
 }
 
@@ -194,19 +198,27 @@ function spectrumSelectionLabel(spectrum: AnalysisSpectrumResponse): string {
     return `${file} x=${spectrum.axis_map_x.toFixed(3)}, y=${spectrum.axis_map_y.toFixed(3)}`;
   }
   if (spectrum.axis_time_s !== null) return `${file} t=${spectrum.axis_time_s.toFixed(3)} s`;
+  if (spectrum.axis_z != null) return `${file} z=${spectrum.axis_z.toFixed(1)} µm`;
   return file || spectrum.spectrum_id;
 }
 
 const HEATMAP_AXIS_COLS = {
   time: "axis_time_s",
+  depth: "axis_z",
   mapX: "axis_map_x",
   mapY: "axis_map_y",
   fileKind: "file_kind",
   relativePath: "relative_path",
 } as const;
 
-function buildSingleHeatmapFigure(rows: HeatmapRow[], feature: string, relativePath: string): PlotlyFigure | null {
-  const valid = rows.filter((r) => r.value !== null);
+function buildSingleHeatmapFigure(
+  rows: HeatmapRow[],
+  feature: string,
+  relativePath: string,
+  zLevel: number | null = null
+): PlotlyFigure | null {
+  // Volume maps carry axis_z on every row; zLevel picks one depth slice (null = mean over depth).
+  const valid = rows.filter((r) => r.value !== null && (zLevel === null || r.axis_z === null || Math.abs(r.axis_z - zLevel) < 1e-6));
   if (!valid.length) return null;
   const fileLabel = safePlotName(relativePath);
   const hasMap = valid.some((r) => r.axis_map_x !== null && r.axis_map_y !== null);
@@ -236,6 +248,7 @@ function buildSingleHeatmapFigure(rows: HeatmapRow[], feature: string, relativeP
           spectrum_ids: cellRows.map((r) => r.spectrum_id),
           relative_path: relativePath,
           axis_time_s: null,
+          axis_z: zLevel,
           axis_map_x: x,
           axis_map_y: y,
           value: meanFinite(cellRows.map((r) => r.value ?? NaN)),
@@ -258,7 +271,7 @@ function buildSingleHeatmapFigure(rows: HeatmapRow[], feature: string, relativeP
         },
       ],
       layout: {
-        title: `${feature} map: ${fileLabel}`,
+        title: `${feature} map: ${fileLabel}${zLevel !== null ? ` (z=${zLevel} µm)` : rows.some((r) => r.axis_z !== null) ? " (mean over depth)" : ""}`,
         xaxis: { title: HEATMAP_AXIS_COLS.mapX, range: xRange },
         yaxis: { title: HEATMAP_AXIS_COLS.mapY, range: yRange },
         margin: { l: 70, r: 20, t: 50, b: 65 },
@@ -266,13 +279,16 @@ function buildSingleHeatmapFigure(rows: HeatmapRow[], feature: string, relativeP
     };
   }
 
-  const timeRows = valid.filter((r) => r.axis_time_s !== null && r.value !== null).sort((a, b) => (a.axis_time_s ?? 0) - (b.axis_time_s ?? 0));
+  const isDepth = !valid.some((r) => r.axis_time_s !== null) && valid.some((r) => r.axis_z !== null);
+  const axisOf = (r: HeatmapRow): number | null => (isDepth ? r.axis_z : r.axis_time_s);
+  const timeRows = valid.filter((r) => axisOf(r) !== null && r.value !== null).sort((a, b) => (axisOf(a) ?? 0) - (axisOf(b) ?? 0));
   if (!timeRows.length) return null;
   const timeCustomdata: HeatmapCellCustomData[][] = [
     timeRows.map((r) => ({
       spectrum_ids: [r.spectrum_id],
       relative_path: relativePath,
       axis_time_s: r.axis_time_s,
+      axis_z: r.axis_z,
       axis_map_x: null,
       axis_map_y: null,
       value: r.value,
@@ -282,18 +298,18 @@ function buildSingleHeatmapFigure(rows: HeatmapRow[], feature: string, relativeP
     data: [
       {
         type: "heatmap",
-        x: timeRows.map((r) => r.axis_time_s),
+        x: timeRows.map((r) => axisOf(r)),
         y: [feature],
         z: [timeRows.map((r) => r.value)],
         customdata: timeCustomdata,
         colorscale: "Viridis",
         colorbar: { title: { text: feature } },
-        hovertemplate: `${HEATMAP_AXIS_COLS.time}: %{x}<br>${feature}: %{z}<extra>click to overlay spectrum</extra>`,
+        hovertemplate: `${isDepth ? HEATMAP_AXIS_COLS.depth : HEATMAP_AXIS_COLS.time}: %{x}<br>${feature}: %{z}<extra>click to overlay spectrum</extra>`,
       },
     ],
     layout: {
-      title: `${feature} time trace: ${fileLabel}`,
-      xaxis: { title: HEATMAP_AXIS_COLS.time },
+      title: `${feature} ${isDepth ? "depth profile" : "time trace"}: ${fileLabel}`,
+      xaxis: { title: isDepth ? "Depth z (µm)" : HEATMAP_AXIS_COLS.time },
       yaxis: { title: "" },
       margin: { l: 90, r: 20, t: 50, b: 65 },
     },
@@ -585,6 +601,7 @@ export default function AnalyzeWorkspace() {
   const [heatmapSelectedFiles, setHeatmapSelectedFiles] = useState<string[]>([]);
   const [heatmapLayoutMode, setHeatmapLayoutMode] = useState<HeatmapLayoutMode>("individual");
   const [heatmapRows, setHeatmapRows] = useState<HeatmapRow[]>([]);
+  const [heatmapZ, setHeatmapZ] = useState<string>("mean");
   const [heatmapPlots, setHeatmapPlots] = useState<HeatmapPlotModel[]>([]);
   const [heatmapSelectedSpectra, setHeatmapSelectedSpectra] = useState<HeatmapSpectrumSelection[]>([]);
   const [heatmapSpectrumBusy, setHeatmapSpectrumBusy] = useState(false);
@@ -1276,6 +1293,13 @@ export default function AnalyzeWorkspace() {
     return out.sort((a, b) => safePlotName(a).localeCompare(safePlotName(b)));
   }, [heatmapRows]);
 
+  const heatmapZLevels = useMemo(() => {
+    const hasMapRows = (r: HeatmapRow) => r.axis_map_x !== null && r.axis_map_y !== null && r.axis_z !== null;
+    const levels = new Set<number>();
+    for (const r of heatmapRows) if (hasMapRows(r)) levels.add(r.axis_z as number);
+    return Array.from(levels).sort((a, b) => a - b);
+  }, [heatmapRows]);
+
   const activeHeatmapFiles = useMemo(() => {
     if (heatmapFileMode === "all") return heatmapAvailableFiles;
     if (heatmapFileMode === "single") return heatmapSingleFile ? [heatmapSingleFile] : [];
@@ -1446,6 +1470,7 @@ export default function AnalyzeWorkspace() {
         HEATMAP_AXIS_COLS.relativePath,
         HEATMAP_AXIS_COLS.fileKind,
         HEATMAP_AXIS_COLS.time,
+        HEATMAP_AXIS_COLS.depth,
         HEATMAP_AXIS_COLS.mapX,
         HEATMAP_AXIS_COLS.mapY,
       ];
@@ -1459,12 +1484,14 @@ export default function AnalyzeWorkspace() {
         const mapX = cellToNumber(r[HEATMAP_AXIS_COLS.mapX]);
         const mapY = cellToNumber(r[HEATMAP_AXIS_COLS.mapY]);
         const time = cellToNumber(r[HEATMAP_AXIS_COLS.time]);
-        if ((mapX === null || mapY === null) && time === null) continue;
+        const depth = cellToNumber(r[HEATMAP_AXIS_COLS.depth]);
+        if ((mapX === null || mapY === null) && time === null && depth === null) continue;
         parsed.push({
           spectrum_id: String(r.spectrum_id ?? ""),
           relative_path: rel,
           file_kind: String(r[HEATMAP_AXIS_COLS.fileKind] ?? ""),
           axis_time_s: time,
+          axis_z: depth,
           axis_map_x: mapX,
           axis_map_y: mapY,
           value,
@@ -1500,7 +1527,7 @@ export default function AnalyzeWorkspace() {
     const individual: { relativePath: string; figure: PlotlyFigure }[] = [];
     for (const rel of files) {
       const fileRows = heatmapRows.filter((row) => row.relative_path === rel);
-      const figure = buildSingleHeatmapFigure(fileRows, feature, rel);
+      const figure = buildSingleHeatmapFigure(fileRows, feature, rel, heatmapZ === "mean" ? null : Number(heatmapZ));
       if (figure) individual.push({ relativePath: rel, figure });
     }
     if (!individual.length) {
@@ -3131,6 +3158,19 @@ export default function AnalyzeWorkspace() {
                       <option value="subplots">Subplots</option>
                     </select>
                   </label>
+                  {heatmapZLevels.length > 1 ? (
+                    <label className="inline">
+                      Depth z (µm)
+                      <select value={heatmapZ} onChange={(e) => setHeatmapZ(e.target.value)}>
+                        <option value="mean">Mean over depth</option>
+                        {heatmapZLevels.map((z) => (
+                          <option key={z} value={String(z)}>
+                            {z}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
                   <button type="button" disabled={!heatmapRows.length || !!exploreBusy} onClick={buildHeatmapPlots}>
                     Plot heatmaps
                   </button>
@@ -3188,6 +3228,7 @@ export default function AnalyzeWorkspace() {
                   </div>
                 )}
 
+                <VolumePanel runId={runId} featureColumns={featureColumns} />
               </>
             )}
           </div>
@@ -4001,6 +4042,7 @@ export default function AnalyzeWorkspace() {
           right={
       <div className="preprocess-right card">
         <div className="section-title">Plots &amp; results</div>
+        {section === "heatmaps" ? <div id="volume-results" /> : null}
         {section === "heatmaps" && heatmapPlots.length ? (
           <div style={{ marginTop: "10px" }}>
             {heatmapPlots.map((plot) => (

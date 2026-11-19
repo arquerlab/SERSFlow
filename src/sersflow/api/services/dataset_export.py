@@ -33,7 +33,7 @@ def _dataset_rows(dataset_id: str) -> list[dict[str, Any]]:
             """
             SELECT spectrum_id, relative_path, record_index, position,
                    blob_id, blob_relative_path, original_relative_path,
-                   axis_time_s, axis_map_x, axis_map_y
+                   axis_time_s, axis_z, axis_map_x, axis_map_y
             FROM dataset_spectra
             WHERE dataset_id = ?
             ORDER BY position ASC

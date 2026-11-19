@@ -76,7 +76,7 @@ def plot_series_heatmap(
         if dataset.axis_name == "time_s":
             y_title = "Time (s)"
         elif dataset.axis_name == "z":
-            y_title = "Depth (z)"
+            y_title = "Depth z (µm)"
         else:
             y_title = dataset.axis_name
     return series_heatmap_figure_json(
@@ -129,12 +129,27 @@ def plot_series_points(
         seen.add(ii)
         dedup.append(ii)
     ys = [dataset.spectra[i, :] for i in dedup]
-    labels = [f"{float(dataset.axis[i]):.1f}" for i in dedup]
+    unit = {"time_s": " s", "z": " µm"}.get(dataset.axis_name, "")
+    labels = [f"{float(dataset.axis[i]):.1f}{unit}" for i in dedup]
     return overlay_figure_json(x=dataset.x, ys=ys, labels=labels, title=title, x_title=x_title, y_title=y_title)
 
 
-def map_grid_info(dataset: MapDataset, *, max_dim: int = 80) -> tuple[list[float], list[float], list[list[int | None]], int]:
+def map_z_levels(dataset: MapDataset) -> list[float]:
+    """Sorted unique depth levels of a volume map; empty for a flat map."""
+    if dataset.zpos is None:
+        return []
+    return np.unique(np.round(dataset.zpos.astype(float, copy=False), 6)).tolist()
+
+
+def map_grid_info(
+    dataset: MapDataset, *, max_dim: int = 80, z_index: int = 0
+) -> tuple[list[float], list[float], list[list[int | None]], int]:
     n = int(dataset.spectra.shape[0])
+    z_mask = None
+    levels = map_z_levels(dataset)
+    if levels:
+        zi = min(max(int(z_index), 0), len(levels) - 1)
+        z_mask = np.isclose(dataset.zpos.astype(float, copy=False), levels[zi], rtol=0.0, atol=1e-6)
     xs = np.unique(dataset.xpos.astype(float, copy=False))
     ys = np.unique(dataset.ypos.astype(float, copy=False))
     xs.sort()
@@ -157,6 +172,8 @@ def map_grid_info(dataset: MapDataset, *, max_dim: int = 80) -> tuple[list[float
 
     grid: list[list[int | None]] = [[None for _ in range(int(xs.size))] for __ in range(int(ys.size))]
     for idx_pt, (xv, yv) in enumerate(zip(dataset.xpos.astype(float), dataset.ypos.astype(float), strict=False)):
+        if z_mask is not None and not bool(z_mask[idx_pt]):
+            continue
         xi = x_to_i.get(float(xv))
         yi = y_to_i.get(float(yv))
         if xi is None or yi is None:
@@ -186,7 +203,8 @@ def plot_map_points(
         dedup.append(ii)
 
     ys = [dataset.spectra[i, :] for i in dedup]
-    labels = [f"x={float(dataset.xpos[i]):g}, y={float(dataset.ypos[i]):g}" for i in dedup]
+    z_part = (lambda i: f", z={float(dataset.zpos[i]):g} µm") if dataset.zpos is not None else (lambda i: "")
+    labels = [f"x={float(dataset.xpos[i]):g}, y={float(dataset.ypos[i]):g}{z_part(i)}" for i in dedup]
     return overlay_figure_json(x=dataset.x, ys=ys, labels=labels, title=title, x_title=x_title, y_title=y_title)
 
 

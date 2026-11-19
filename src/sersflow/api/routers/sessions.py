@@ -247,7 +247,7 @@ def session_qc_preview_endpoint(
         for ctx in load_spectrum_contexts(refs, labels_by_path=labels_by_path):
             row = dict(ctx.labels)
             axes = axes_by_sid.get(ctx.spectrum_id) or {}
-            for k in ("axis_map_x", "axis_map_y", "axis_time_s", "file_kind"):
+            for k in ("axis_map_x", "axis_map_y", "axis_time_s", "axis_z", "file_kind"):
                 if axes.get(k) is not None:
                     row[k] = axes[k]
             ok = evaluate_filters(row, filters)

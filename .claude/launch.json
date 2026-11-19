@@ -4,9 +4,40 @@
     {
       "name": "sersflow-api",
       "runtimeExecutable": "C:/Users/apinilla/.conda/envs/general_plotting/python.exe",
-      "runtimeArgs": ["-m", "uvicorn", "sersflow.api.main:app", "--host", "127.0.0.1", "--port", "8000"],
-      "env": { "SERSFLOW_AUTH_DISABLED": "1" },
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "sersflow.api.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "env": {
+        "SERSFLOW_AUTH_DISABLED": "1"
+      },
       "port": 8000
+    },
+    {
+      "name": "sersflow-api-scratch",
+      "runtimeExecutable": "C:/Users/apinilla/.conda/envs/general_plotting/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "sersflow.api.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8011"
+      ],
+      "env": {
+        "SERSFLOW_AUTH_DISABLED": "1",
+        "SERSFLOW_DB_PATH": "C:/Users/apinilla/AppData/Local/Temp/claude/8f3c6993d524d684/4842e787-bc32-4279-8426-d2e18d914ce2/scratchpad/volrun/db/s.db",
+        "SERSFLOW_DATA_DIR": "C:/Users/apinilla/AppData/Local/Temp/claude/8f3c6993d524d684/4842e787-bc32-4279-8426-d2e18d914ce2/scratchpad/volrun/data",
+        "SERSFLOW_UPLOAD_DIR": "C:/Users/apinilla/AppData/Local/Temp/claude/8f3c6993d524d684/4842e787-bc32-4279-8426-d2e18d914ce2/scratchpad/volrun/uploads",
+        "SERSFLOW_ARTIFACTS_DIR": "C:/Users/apinilla/AppData/Local/Temp/claude/8f3c6993d524d684/4842e787-bc32-4279-8426-d2e18d914ce2/scratchpad/volrun/artifacts"
+      },
+      "port": 8011
     }
   ]
 }

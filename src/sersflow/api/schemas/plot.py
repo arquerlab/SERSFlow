@@ -23,6 +23,7 @@ class SeriesInfoResponse(BaseModel):
     is_series: bool
     axis: list[float] = Field(default_factory=list)
     count: int = Field(ge=0)
+    axis_name: str | None = None
 
 
 class SeriesPointsPlotRequest(BaseModel):
@@ -37,6 +38,8 @@ class MapInfoResponse(BaseModel):
     y: list[float] = Field(default_factory=list)
     index_grid: list[list[int | None]] = Field(default_factory=list)
     count: int = Field(ge=0)
+    z: list[float] = Field(default_factory=list)
+    z_index: int = 0
 
 
 class MapPointsPlotRequest(BaseModel):

@@ -75,6 +75,30 @@ def test_populate_axes_series_time_axis(db_env: Path, monkeypatch: pytest.Monkey
     assert lu["s0"]["file_kind"] == "series"
 
 
+def test_populate_axes_series_depth_axis(db_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "sersflow.infra.datasets_store.resolve_uploaded_path",
+        lambda _root, _rel: db_env / "f.txt",
+    )
+
+    def fake_load(_p: Path) -> SeriesDataset:
+        x = np.linspace(100, 2000, 10)
+        spec = np.random.default_rng(0).random((2, 10))
+        return SeriesDataset(kind="series", x=x, spectra=spec, axis=np.array([-118.0, -113.0]), axis_name="z")
+
+    monkeypatch.setattr("sersflow.infra.datasets_store.load_dataset", fake_load)
+
+    spectra = [
+        SpectrumRef(spectrum_id="s0", relative_path="batch/depth.wdf", record_index=0),
+        SpectrumRef(spectrum_id="s1", relative_path="batch/depth.wdf", record_index=1),
+    ]
+    rec = create_dataset(owner_user_id="dev", metadata=DatasetMetadata(name="t"), spectra=spectra)
+    lu = spectrum_export_lookup(rec.dataset_id)
+    assert lu["s0"]["axis_z"] == pytest.approx(-118.0)
+    assert lu["s1"]["axis_z"] == pytest.approx(-113.0)
+    assert lu["s0"]["axis_time_s"] is None
+
+
 def test_populate_axes_map_positions(db_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "sersflow.infra.datasets_store.resolve_uploaded_path",

@@ -193,6 +193,7 @@ export type AnalysisSpectrumResponse = {
   relative_path: string | null;
   file_kind: string | null;
   axis_time_s: number | null;
+  axis_z?: number | null;
   axis_map_x: number | null;
   axis_map_y: number | null;
   x: Array<number | null>;

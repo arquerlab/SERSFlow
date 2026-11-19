@@ -114,7 +114,7 @@ def _prepare_observation_wide(
 ) -> tuple[list[str], list[str], dict[str, dict[str, Any]]]:
     """Returns (axis_col_names, meta_keys_sorted, meta_templates_by_path)."""
     axis_cols = (
-        ["axis_time_s", "axis_map_x", "axis_map_y", "grid_nx", "grid_ny", "file_kind"]
+        ["axis_time_s", "axis_z", "axis_map_x", "axis_map_y", "grid_nx", "grid_ny", "file_kind"]
         if join_axes
         else []
     )
@@ -178,6 +178,7 @@ def iter_observation_wide_dicts(
         rel = str(info.get("relative_path", ""))
         if join_axes:
             row["axis_time_s"] = info.get("axis_time_s")
+            row["axis_z"] = info.get("axis_z")
             row["axis_map_x"] = info.get("axis_map_x")
             row["axis_map_y"] = info.get("axis_map_y")
             row["grid_nx"] = info.get("grid_nx")
@@ -302,6 +303,7 @@ def iter_observation_wide_csv_bytes(
             row.extend(
                 [
                     csv_cell(info.get("axis_time_s")),
+                    csv_cell(info.get("axis_z")),
                     csv_cell(info.get("axis_map_x")),
                     csv_cell(info.get("axis_map_y")),
                     csv_cell(info.get("grid_nx")),
@@ -357,6 +359,7 @@ def iter_observation_long_csv_bytes(
         if join_axes:
             for ak, av in (
                 ("axis_time_s", info.get("axis_time_s")),
+                ("axis_z", info.get("axis_z")),
                 ("axis_map_x", info.get("axis_map_x")),
                 ("axis_map_y", info.get("axis_map_y")),
                 ("grid_nx", info.get("grid_nx")),

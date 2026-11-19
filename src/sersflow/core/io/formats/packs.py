@@ -24,6 +24,7 @@ _AXIS_FIELDS: tuple[FilterFieldDef, ...] = (
     FilterFieldDef("axis_map_x", "Map X", "numeric", "axis"),
     FilterFieldDef("axis_map_y", "Map Y", "numeric", "axis"),
     FilterFieldDef("axis_time_s", "Time (s)", "numeric", "axis"),
+    FilterFieldDef("axis_z", "Depth z (µm)", "numeric", "axis"),
 )
 
 _XPS_STRUCTURAL: tuple[FilterFieldDef, ...] = (
