@@ -135,7 +135,8 @@ const CONTEXT_LINKS = {
   "Map / time heatmaps": "r-analyze#heatmaps",
   Plots: "r-analyze#plots",
   "Parameter vs parameter": "r-analyze#plots",
-  "Matrix export job": "r-analyze#spectrum-matrix-pca",
+  "Matrix export job": "r-analyze#spectrum-matrix",
+  "Multivariate analysis": "r-analyze#multivariate-analysis",
   ...Object.fromEntries(STEPS.map((s) => [s.name, s.target])),
 };
 

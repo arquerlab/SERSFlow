@@ -15,6 +15,7 @@ import { PlotlyWrapper, type PlotlyFigure } from "./legacy-wrappers/PlotlyWrappe
 import { ResizableSplit } from "./components/ResizableSplit";
 import Plotly from "plotly.js-dist-min";
 import { DatasetPicker } from "./components/DatasetPicker";
+import { MultivariatePanel } from "./analyze/MultivariatePanel";
 import { listDatasets, listPipelines, type PipelineLibraryItem, type SubsetStrategy } from "./preprocess/api";
 import { FitUncertaintyPanel } from "./analyze/FitUncertaintyPanel";
 import { ReportDownload } from "./analyze/ReportDownload";
@@ -98,7 +99,8 @@ type AnalyzeSection =
   | "pca_cluster"
   | "heatmaps"
   | "meta_plot"
-  | "spectrum_matrix";
+  | "spectrum_matrix"
+  | "multivariate";
 
 const SECTIONS: { id: AnalyzeSection; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -107,7 +109,8 @@ const SECTIONS: { id: AnalyzeSection; label: string }[] = [
   { id: "pca_cluster", label: "PCA / Cluster" },
   { id: "heatmaps", label: "Heatmaps" },
   { id: "meta_plot", label: "Plots" },
-  { id: "spectrum_matrix", label: "Spectrum matrix & PCA" },
+  { id: "spectrum_matrix", label: "Spectrum matrix" },
+  { id: "multivariate", label: "Multivariate analysis" },
 ];
 
 function coercePcaScaler(value: unknown, fallback: PcaScaler = "none"): PcaScaler {
@@ -1241,7 +1244,7 @@ export default function AnalyzeWorkspace() {
 
   const matrixJobsQ = useQuery({
     queryKey: ["matrixJobs", datasetId],
-    enabled: !!datasetId && section === "spectrum_matrix",
+    enabled: !!datasetId && (section === "spectrum_matrix" || section === "multivariate"),
     queryFn: () => listMatrixJobs(String(datasetId), 200, 0),
   });
 
@@ -1730,7 +1733,7 @@ export default function AnalyzeWorkspace() {
     const wantC = new Set(selectedClusterPlots);
 
     const includeFeaturePca = section === "pca_cluster";
-    const includeSpectrumPca = section === "spectrum_matrix";
+    const includeSpectrumPca = section === "spectrum_matrix" || section === "multivariate";
 
     function metaValuesFor(result: PcaLikeResult | null, col: string): (number | null)[] | null {
       if (!result) return null;
@@ -2076,7 +2079,7 @@ export default function AnalyzeWorkspace() {
   const axesQ = useQuery({
     queryKey: ["spectrumAxes", datasetId],
     queryFn: () => getSpectrumAxesPage(datasetId, 50, 0),
-    enabled: !!datasetId && section === "spectrum_matrix",
+    enabled: !!datasetId && (section === "spectrum_matrix" || section === "multivariate"),
   });
 
   function toggleCol(list: string[], col: string, on: boolean) {
@@ -3461,8 +3464,10 @@ export default function AnalyzeWorkspace() {
           </div>
         ) : null}
 
-        {section === "spectrum_matrix" ? (
+        {section === "spectrum_matrix" || section === "multivariate" ? (
           <div style={{ marginTop: "14px" }}>
+            {section === "spectrum_matrix" ? (
+            <>
             <div className="section-title">Matrix export job</div>
             <p className="hint">
               Materializes a shared wavenumber grid for <b>all spectra</b> in the dataset (session subset does not apply).
@@ -3704,8 +3709,27 @@ export default function AnalyzeWorkspace() {
               </>
             )}
 
-            <div className="section-title" style={{ marginTop: "14px" }}>
-              Spectrum multivariate
+            </>
+            ) : null}
+
+            {section === "multivariate" ? (
+            <>
+            <MultivariatePanel
+              matrixJobId={effectiveMatrixId}
+              matrixReady={selectedMatrixIsCompleted}
+              completedMatrices={(matrixJobsQ.data?.items ?? [])
+                .filter((it) => it.status === "completed")
+                .map((it) => ({
+                  id: it.matrix_job_id,
+                  label: `${it.matrix_job_id.slice(0, 8)}… · ${it.up_to_step || "final"} · ${String(it.created_at).slice(0, 16)}`,
+                }))}
+              onPickMatrix={(id) => setSelectedMatrixJobId(id)}
+              analysisRunId={runId}
+              onError={(m) => setLastError(m)}
+            />
+
+            <div className="section-title" style={{ marginTop: "18px" }}>
+              Classic spectrum PCA / k-means / FDA
             </div>
             {!selectedMatrixIsCompleted ? (
               <div className="hint">Select a completed matrix job above first.</div>
@@ -4054,6 +4078,8 @@ export default function AnalyzeWorkspace() {
                 {!axesQ.data?.items?.length ? <div className="hint">No axis rows.</div> : null}
               </div>
             )}
+            </>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -4259,7 +4285,7 @@ export default function AnalyzeWorkspace() {
             </table>
           </div>
         ) : null}
-        {section === "spectrum_matrix" && spectrumClusterResult?.labels ? (
+        {(section === "spectrum_matrix" || section === "multivariate") && spectrumClusterResult?.labels ? (
           <div style={{ marginTop: "10px", maxHeight: 280, overflow: "auto", fontSize: "11px" }}>
             <div className="hint">Spectrum matrix k-means (sample)</div>
             <table className="mini-table" style={{ width: "100%" }}>
@@ -4282,12 +4308,12 @@ export default function AnalyzeWorkspace() {
             </table>
           </div>
         ) : null}
-        {section === "spectrum_matrix" && (fpcaDiscResult || fpcaFdaResult) ? (
+        {(section === "spectrum_matrix" || section === "multivariate") && (fpcaDiscResult || fpcaFdaResult) ? (
           <div className="hint" style={{ marginTop: "8px" }}>
             Backend JSON includes optional <code>plots</code> paths; open API artifact_dir on the server for full outputs.
           </div>
         ) : null}
-        {(section === "pca_cluster" || section === "spectrum_matrix") && plotCards.length ? (
+        {(section === "pca_cluster" || section === "spectrum_matrix" || section === "multivariate") && plotCards.length ? (
           <div style={{ marginTop: "10px" }}>
             <div className="row" style={{ gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "8px" }}>
               <button type="button" disabled={!!exportBusy} onClick={exportAllPngZip}>

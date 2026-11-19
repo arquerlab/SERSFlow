@@ -83,8 +83,11 @@ def load_explore_feature_matrix(
     return X, sids, column_names
 
 
-def pairwise_pearson_pvalues(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """X: (n_samples, n_features). Returns R (p,p) and P (p,p) for pairwise Pearson tests."""
+def pairwise_pearson_pvalues(
+    X: np.ndarray, method: str = "pearson"
+) -> tuple[np.ndarray, np.ndarray]:
+    """X: (n_samples, n_features). Returns R (p,p) and P (p,p) for pairwise Pearson (or Spearman) tests."""
+    test = stats.spearmanr if method == "spearman" else stats.pearsonr
     p = X.shape[1]
     R = np.ones((p, p), dtype=np.float64)
     P = np.ones((p, p), dtype=np.float64)
@@ -96,16 +99,16 @@ def pairwise_pearson_pvalues(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             if mask.sum() < 3:
                 r, pv = np.nan, np.nan
             else:
-                r, pv = stats.pearsonr(xi[mask], xj[mask])
+                r, pv = test(xi[mask], xj[mask])
             R[i, j] = R[j, i] = r
             P[i, j] = P[j, i] = pv
     return R, P
 
 
 def correlation_bundle(
-    X: np.ndarray, names: list[str], *, fdr_alpha: float = 0.05
+    X: np.ndarray, names: list[str], *, fdr_alpha: float = 0.05, method: str = "pearson"
 ) -> dict[str, Any]:
-    R, P = pairwise_pearson_pvalues(X)
+    R, P = pairwise_pearson_pvalues(X, method=method)
     triu = np.triu_indices_from(R, k=1)
     p_flat = P[triu]
     # FDR step does not accept NaN p-values (pairs with too few finite overlaps).
@@ -134,7 +137,7 @@ def correlation_bundle(
     Q[triu] = q_flat
     Q[(triu[1], triu[0])] = q_flat
     return {
-        "method": "pearson",
+        "method": method,
         "feature_names": names,
         "R": R.tolist(),
         "P": P.tolist(),

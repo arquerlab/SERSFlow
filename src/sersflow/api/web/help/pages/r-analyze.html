@@ -6,8 +6,8 @@
   <tr><th>Control</th><th>What it does</th></tr>
   <tr><td><span class="ui">Dataset</span></td><td>Choose the dataset. Changing it clears the Pipeline and Run selections. Pipelines are filtered to the dataset's technique; a mismatch gives “technique_family mismatch”.</td></tr>
   <tr><td><span class="ui">Run</span></td><td>The analysis run that drives Exports and the statistics. Entries show the run name and status.</td></tr>
-  <tr><td><span class="ui">Pipeline</span></td><td>Shown only in <i>Overview</i> and <i>Spectrum matrix &amp; PCA</i>. Pick a saved pipeline to run.</td></tr>
-  <tr><td><span class="ui">Section</span></td><td><i>Overview</i>, <i>Exports</i>, <i>Correlation / VIF</i>, <i>PCA / Cluster</i>, <i>Heatmaps</i>, <i>Plots</i>, <i>Spectrum matrix &amp; PCA</i>.</td></tr>
+  <tr><td><span class="ui">Pipeline</span></td><td>Shown only in <i>Overview</i> and <i>Spectrum matrix</i>. Pick a saved pipeline to run.</td></tr>
+  <tr><td><span class="ui">Section</span></td><td><i>Overview</i>, <i>Exports</i>, <i>Correlation / VIF</i>, <i>PCA / Cluster</i>, <i>Heatmaps</i>, <i>Plots</i>, <i>Spectrum matrix</i>, <i>Multivariate analysis</i>.</td></tr>
 </table>
 <p>Your choices are remembered in the page address and in the browser, so a reload returns you to the same place. Computed results (PCA, k-means, correlation, VIF) are kept only in the open page and are lost on reload.</p>
 
@@ -82,19 +82,35 @@
 <h3>Fit diagnostics</h3>
 <p>Pick a <span class="ui">Fitting step</span> and up to <b>10 spectra</b>. SpecFlow re-fits them on demand and draws data, fit, individual peaks and residuals, with <i>RMSE</i>, <i>R²</i> and <i>BIC</i> for each. Use this to check that automatic fits across the dataset are sensible. Below the spectrum list, <span class="ui">Parameter uncertainties</span> lists every fitted value as <i>value ± 1σ</i> (with area and %area), <span class="ui">Publication report</span> downloads the run's fit report for the selected (or all) spectra (see <a href="#" data-help="r-exports">Exports</a>), and <span class="ui">Monte Carlo</span> refits noisy copies of the fits to measure the uncertainty including background and peak overlap (see <a href="#" data-help="r-fitting">Peak fitting → Uncertainties</a>).</p>
 
-<h2>Spectrum matrix &amp; PCA</h2>
-<p>Statistics on whole spectra rather than on extracted peaks. Not gated by a completed run.</p>
+<h2>Spectrum matrix</h2>
+<p>Builds the table that the whole-spectrum statistics work on (see <a href="#" data-help="r-analyze#multivariate-analysis">Multivariate analysis</a>). Not gated by a completed run.</p>
 <ol class="steps">
   <li>Select the pipeline and, optionally, <span class="ui">up_to_step</span>: <i>Final (all steps)</i>, <i>Raw spectra</i> or a numbered step.</li>
   <li>Press <span class="ui">Start matrix job (async)</span>. This builds a table with one row per spectrum and one column per wavenumber for the full dataset.</li>
   <li>Select the finished job in the table (<span class="ui">Use</span>). Download it with <span class="ui">Download matrix CSV</span>, or load one back with <span class="ui">Import matrix CSV</span>.</li>
-  <li>Run <span class="ui">Run discrete PCA</span>, <span class="ui">k-means (PC embedding)</span> or the functional <b>FDA FPCA</b>.</li>
+  <li>Switch to <span class="ui">Multivariate analysis</span>, pick the matrix and run a method.</li>
 </ol>
 <div class="warn"><ul>
 <li><b>All spectra must share the same x grid.</b> Otherwise the job fails with “inconsistent Raman shift grid”. Add an <i>Alignment &amp; Resampling</i> step after cropping and set <span class="ui">up_to_step</span> to that step or later.</li>
 <li>If a <b>Run</b> is selected, the job uses <b>that run's stored pipeline</b>, not the Pipeline dropdown.</li>
 <li>FDA FPCA needs the optional <code>scikit-fda</code> package on the server (<code>pip install -e ".[explore-fda]"</code>).</li>
 </ul></div>
+<h2>Multivariate analysis</h2>
+<p>Pick a finished matrix job and a method. Every method can be preceded by <span class="ui">Matrix preprocessing</span>:</p>
+<ul>
+  <li><b>Window:</b> crop, exclude windows, bin neighbouring channels.</li>
+  <li><b>Shape:</b> Savitzky–Golay smoothing and 1st/2nd derivative (removes baselines, amplifies noise).</li>
+  <li><b>Rows:</b> area, max, vector, SNV or reference-band normalisation; sqrt / log transform.</li>
+  <li><b>Columns:</b> centring (mean/median), scaling (autoscale, Pareto, range, Poisson for counting data) and non-negativity (clip or shift). NMF and MCR never centre and shift negative values automatically.</li>
+</ul>
+<ul>
+  <li><b>Correlation matrix:</b> Pearson or Spearman between channels (bands that move together) or between samples. <i>Clustered order</i> reorders the rows and columns by hierarchical clustering (1 − r) so correlated variables form blocks on the diagonal; limited to 1500 variables, so bin or crop first.</li>
+  <li><b>PCA (+ varimax):</b> components of the mean-centred matrix. Varimax rotates the retained components to sparser, peak-like loadings; the subspace is unchanged, the variance is redistributed.</li>
+  <li><b>NMF:</b> non-negative components and contributions, best of several starts, with an optional error-vs-k scan. The result is not unique; a large <i>start spread</i> means it is unstable for that k.</li>
+  <li><b>MCR-ALS:</b> constrained alternating least squares (C ≥ 0, S ≥ 0, closure, unimodal spectra). Spectra of the matrix can be fixed as known components. Rotational ambiguity remains.</li>
+  <li><b>2D-COS:</b> synchronous and asynchronous maps plus the autopower spectrum. The perturbation is the sample order or a numeric column of the selected analysis run (potential, time, …). Uneven perturbation values are resampled onto an even grid. Limited to 800 channels, so bin or crop first.</li>
+</ul>
+<p>The older tools stay below as <i>Classic spectrum PCA / k-means / FDA</i>:</p>
 <ul>
   <li><b>Discrete method:</b> <i>PCA on Y</i> or <i>Sparse PCA on Y</i>, with the same Scaling choices. Unit-variance scaling can amplify noisy regions; use it deliberately. Loadings are spectra: the plot shows each PC's loading against wavenumber, which you read like a difference spectrum.</li>
   <li><b>Spectrum k-means:</b> k, seed and <i>n_pc_embedding</i> (how many PCs feed the clustering).</li>

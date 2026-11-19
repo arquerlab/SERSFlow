@@ -252,8 +252,15 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         scaler: Literal["none", "standard"] = "none",
         spca_alpha: float = 1.0,
         spca_ridge_alpha: float = 1e-5,
+        rotation: Literal["none", "varimax"] = "none",
+        preprocess: dict | None = None,
     ) -> str:
-        """POST /explore/fpca-discrete — spectrum-matrix PCA/sPCA (compact summary)."""
+        """POST /explore/fpca-discrete — spectrum-matrix PCA/sPCA (compact summary).
+
+        rotation="varimax" rotates ordinary PCA components. preprocess is an optional dict of
+        matrix preprocessing options (crop, exclude, bin, smooth_window, derivative, row_norm,
+        transform, nonneg, scale; see MatrixPreprocess).
+        """
 
         def _run():
             req = FPCADiscreteRequest(
@@ -263,6 +270,8 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 scaler=scaler,
                 spca_alpha=spca_alpha,
                 spca_ridge_alpha=spca_ridge_alpha,
+                rotation=rotation,
+                preprocess=preprocess,
             )
             return summarize.explore_result(ctx.get_client().explore.fpca_discrete(req))
 
@@ -356,6 +365,106 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 n_pc_embedding=n_pc_embedding,
             )
             return summarize.explore_result(ctx.get_client().explore.spectrum_cluster(req))
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_explore_spectrum_correlation")
+    async def post_explore_spectrum_correlation(
+        matrix_job_id: str,
+        axis: Literal["channels", "samples"] = "channels",
+        method: Literal["pearson", "spearman"] = "pearson",
+        reorder: bool = False,
+        linkage: Literal["average", "complete", "single", "ward"] = "average",
+        preprocess: dict | None = None,
+    ) -> str:
+        """POST /explore/spectrum-correlation — channel or sample correlation matrix of a matrix job,
+        optionally reordered by hierarchical clustering (compact summary)."""
+
+        def _run():
+            from sersflow.api.schemas.explore import SpectrumCorrelationRequest
+
+            req = SpectrumCorrelationRequest(
+                matrix_job_id=matrix_job_id, axis=axis, method=method,
+                reorder=reorder, linkage=linkage, preprocess=preprocess,
+            )
+            return summarize.explore_result(ctx.get_client().explore.spectrum_correlation(req))
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_explore_spectrum_nmf")
+    async def post_explore_spectrum_nmf(
+        matrix_job_id: str,
+        n_components: int = 3,
+        n_starts: int = 5,
+        scan_k: list[int] | None = None,
+        seed: int = 0,
+        preprocess: dict | None = None,
+    ) -> str:
+        """POST /explore/spectrum-nmf — multi-start NMF; scan_k adds an error-vs-k scan (compact summary)."""
+
+        def _run():
+            from sersflow.api.schemas.explore import SpectrumNMFRequest
+
+            req = SpectrumNMFRequest(
+                matrix_job_id=matrix_job_id, n_components=n_components, n_starts=n_starts,
+                scan_k=scan_k, seed=seed, preprocess=preprocess,
+            )
+            return summarize.explore_result(ctx.get_client().explore.spectrum_nmf(req))
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_explore_spectrum_mcr")
+    async def post_explore_spectrum_mcr(
+        matrix_job_id: str,
+        n_components: int = 3,
+        nonneg_conc: bool = True,
+        nonneg_spec: bool = True,
+        closure: bool = False,
+        unimodal_spec: bool = False,
+        normalise_spec: bool = True,
+        fixed_spectrum_ids: list[str] | None = None,
+        solver: Literal["nnls", "lstsq_clip"] = "nnls",
+        max_iter: int = 200,
+        seed: int = 0,
+        preprocess: dict | None = None,
+    ) -> str:
+        """POST /explore/spectrum-mcr — MCR-ALS with constraints; fixed_spectrum_ids hold measured
+        spectra of the matrix fixed as the first components (compact summary)."""
+
+        def _run():
+            from sersflow.api.schemas.explore import SpectrumMCRRequest
+
+            req = SpectrumMCRRequest(
+                matrix_job_id=matrix_job_id, n_components=n_components, nonneg_conc=nonneg_conc,
+                nonneg_spec=nonneg_spec, closure=closure, unimodal_spec=unimodal_spec,
+                normalise_spec=normalise_spec, fixed_spectrum_ids=fixed_spectrum_ids,
+                solver=solver, max_iter=max_iter, seed=seed, preprocess=preprocess,
+            )
+            return summarize.explore_result(ctx.get_client().explore.spectrum_mcr(req))
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_explore_spectrum_2dcos")
+    async def post_explore_spectrum_2dcos(
+        matrix_job_id: str,
+        perturbation: Literal["sample_order", "observation_column"] = "sample_order",
+        analysis_run_id: str | None = None,
+        perturbation_column: str | None = None,
+        reference: Literal["mean", "first", "last"] = "mean",
+        preprocess: dict | None = None,
+    ) -> str:
+        """POST /explore/spectrum-2dcos — synchronous/asynchronous 2D correlation spectra. The
+        perturbation is the sample order or an observation column of an analysis run (compact summary)."""
+
+        def _run():
+            from sersflow.api.schemas.explore import Spectrum2DCOSRequest
+
+            req = Spectrum2DCOSRequest(
+                matrix_job_id=matrix_job_id, perturbation=perturbation,
+                analysis_run_id=analysis_run_id, perturbation_column=perturbation_column,
+                reference=reference, preprocess=preprocess,
+            )
+            return summarize.explore_result(ctx.get_client().explore.spectrum_2dcos(req))
 
         return await tool_call(ctx, _run)
 

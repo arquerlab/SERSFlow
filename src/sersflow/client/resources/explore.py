@@ -12,7 +12,11 @@ from sersflow.api.schemas.explore import (
     MatrixExportRequest,
     MatrixExportResponse,
     PCARequest,
+    Spectrum2DCOSRequest,
     SpectrumClusterRequest,
+    SpectrumCorrelationRequest,
+    SpectrumMCRRequest,
+    SpectrumNMFRequest,
     VIFRequest,
 )
 from sersflow.client.http import raise_for_response, request_json, stream_response_to_file
@@ -143,6 +147,22 @@ class ExploreResource(_Base):
 
     def spectrum_cluster(self, payload: SpectrumClusterRequest) -> ExploreJobResponse:
         data = request_json(self._root.http, "POST", "/explore/spectrum-cluster", json_body=dump_json(payload))
+        return ExploreJobResponse.model_validate(data)
+
+    def spectrum_correlation(self, payload: SpectrumCorrelationRequest) -> ExploreJobResponse:
+        data = request_json(self._root.http, "POST", "/explore/spectrum-correlation", json_body=dump_json(payload))
+        return ExploreJobResponse.model_validate(data)
+
+    def spectrum_nmf(self, payload: SpectrumNMFRequest) -> ExploreJobResponse:
+        data = request_json(self._root.http, "POST", "/explore/spectrum-nmf", json_body=dump_json(payload))
+        return ExploreJobResponse.model_validate(data)
+
+    def spectrum_mcr(self, payload: SpectrumMCRRequest) -> ExploreJobResponse:
+        data = request_json(self._root.http, "POST", "/explore/spectrum-mcr", json_body=dump_json(payload))
+        return ExploreJobResponse.model_validate(data)
+
+    def spectrum_2dcos(self, payload: Spectrum2DCOSRequest) -> ExploreJobResponse:
+        data = request_json(self._root.http, "POST", "/explore/spectrum-2dcos", json_body=dump_json(payload))
         return ExploreJobResponse.model_validate(data)
 
     def fpca_fda(self, payload: FPCAFDARequest) -> ExploreJobResponse:

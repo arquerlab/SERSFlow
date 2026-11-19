@@ -18,8 +18,21 @@ from sersflow.api.schemas.explore import (
     MatrixExportRequest,
     MatrixExportResponse,
     PCARequest,
+    Spectrum2DCOSRequest,
     SpectrumClusterRequest,
+    SpectrumCorrelationRequest,
+    SpectrumMCRRequest,
+    SpectrumNMFRequest,
     VIFRequest,
+)
+from sersflow.core.multivariate import (
+    correlation_matrix,
+    preprocess_matrix,
+    reorder_correlation_result,
+    rotate_pca_result,
+    run_mcr_als,
+    run_nmf,
+    twod_cos,
 )
 from sersflow.api.services.explore_export import (
     iter_matrix_csv_bytes,
@@ -374,6 +387,8 @@ def _pca_artifact_path(explore_id: str, user_id: str) -> tuple[str, str]:
         "pca": "pca.json",
         "fpca_discrete": "fpca_discrete.json",
         "fpca_fda": "fpca_fda.json",
+        "nmf": "nmf.json",
+        "mcr_als": "mcr_als.json",
     }
     filename = names.get(rec.kind)
     if filename is None:
@@ -437,7 +452,12 @@ def post_correlation(payload: CorrelationRequest, request: Request) -> ExploreJo
         raise HTTPException(status_code=400, detail="no feature columns")
     X, sids, names = load_explore_feature_matrix(payload.analysis_run_id, keys)
     X, names = _drop_columns_or_400(X, names)
-    result = correlation_bundle(X, names)
+    result = correlation_bundle(X, names, method=payload.method)
+    if payload.reorder:
+        try:
+            result = reorder_correlation_result(result, linkage=payload.linkage)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
     subdir = f"explore/corr_{payload.analysis_run_id}"[:120]
     adir = _artifact_subdir(subdir)
     os.makedirs(adir, exist_ok=True)
@@ -559,6 +579,14 @@ def post_fpca_discrete(payload: FPCADiscreteRequest, request: Request) -> Explor
         )
     sids_obj = data["spectrum_ids"]
     spectrum_ids = [str(x) for x in np.asarray(sids_obj).ravel().tolist()]
+    prep_meta = None
+    if payload.preprocess is not None:
+        opts = payload.preprocess.model_dump()
+        opts["center"] = "none"  # PCA mean-centres itself
+        try:
+            Y, x, prep_meta = preprocess_matrix(Y, x, opts, allow_center=False)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
     result = run_fpca_discrete(
         Y,
         x,
@@ -569,6 +597,12 @@ def post_fpca_discrete(payload: FPCADiscreteRequest, request: Request) -> Explor
         spca_ridge_alpha=payload.spca_ridge_alpha,
         scaler=payload.scaler,
     )
+    if payload.rotation == "varimax":
+        if payload.method != "pca":
+            raise HTTPException(status_code=400, detail="varimax rotation applies to ordinary PCA only")
+        result = rotate_pca_result(result)
+    if prep_meta is not None:
+        result["matrix_preprocessing"] = prep_meta
     subdir = f"explore/fpca_{payload.matrix_job_id}"[:120]
     adir = _artifact_subdir(subdir)
     os.makedirs(adir, exist_ok=True)
@@ -587,6 +621,8 @@ def post_fpca_discrete(payload: FPCADiscreteRequest, request: Request) -> Explor
             "scaler": payload.scaler,
             "spca_alpha": payload.spca_alpha,
             "spca_ridge_alpha": payload.spca_ridge_alpha,
+            "rotation": payload.rotation,
+            "preprocess": payload.preprocess.model_dump() if payload.preprocess else None,
         },
     )
     finish_explore_run(explore_id=eid, status="completed", error=None)
@@ -632,6 +668,137 @@ def post_spectrum_cluster(payload: SpectrumClusterRequest, request: Request) -> 
     finish_explore_run(explore_id=eid, status="completed", error=None)
     prune_explore_runs(dataset_id=mj.dataset_id)
     return ExploreJobResponse(explore_id=eid, artifact_dir=adir, results=result)
+
+
+def _load_matrix(matrix_job_id: str, user_id: str, min_rows: int = 2):
+    mj = get_matrix_job_for_user(matrix_job_id, user_id)
+    if mj is None or mj.status != "completed" or not mj.npz_path:
+        raise HTTPException(status_code=400, detail="matrix job not completed or npz missing")
+    data = load_matrix_npz(mj.npz_path)
+    Y = np.asarray(data["Y"], dtype=np.float64)
+    x = np.asarray(data["x"], dtype=np.float64)
+    if Y.ndim != 2 or Y.shape[0] < min_rows or Y.shape[1] < 2:
+        raise HTTPException(
+            status_code=400,
+            detail=f"matrix job needs at least {min_rows} spectra and 2 channels (got {tuple(Y.shape)})",
+        )
+    sids = [str(s) for s in np.asarray(data["spectrum_ids"]).ravel().tolist()]
+    return mj, Y, x, sids
+
+
+def _prep(Y, x, pre, **kw):
+    try:
+        return preprocess_matrix(Y, x, pre.model_dump() if pre is not None else None, **kw)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+def _save_matrix_analysis(mj, matrix_job_id: str, kind: str, prefix: str, filename: str, result: dict, input_ref: dict):
+    subdir = f"explore/{prefix}_{matrix_job_id}"[:120]
+    adir = _artifact_subdir(subdir)
+    os.makedirs(adir, exist_ok=True)
+    save_json(os.path.join(adir, filename), result)
+    eid = create_explore_run(
+        dataset_id=mj.dataset_id,
+        kind=kind,
+        source_analysis_run_id=None,
+        matrix_job_id=matrix_job_id,
+        artifact_subdir=subdir,
+        input_ref=input_ref,
+    )
+    finish_explore_run(explore_id=eid, status="completed", error=None)
+    prune_explore_runs(dataset_id=mj.dataset_id)
+    return ExploreJobResponse(explore_id=eid, artifact_dir=adir, results=result)
+
+
+@router.post("/spectrum-correlation", response_model=ExploreJobResponse)
+def post_spectrum_correlation(payload: SpectrumCorrelationRequest, request: Request) -> ExploreJobResponse:
+    user_id = current_user_id(request)
+    mj, Y, x, sids = _load_matrix(payload.matrix_job_id, user_id, min_rows=3)
+    Yp, xp, meta = _prep(Y, x, payload.preprocess, allow_center=False)
+    try:
+        result = correlation_matrix(
+            Yp, xp, sids, axis=payload.axis, method=payload.method,
+            reorder=payload.reorder, linkage=payload.linkage,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    result["matrix_preprocessing"] = meta
+    return _save_matrix_analysis(
+        mj, payload.matrix_job_id, "spectrum_correlation", "spcorr", "spectrum_correlation.json",
+        result, payload.model_dump(),
+    )
+
+
+@router.post("/spectrum-nmf", response_model=ExploreJobResponse)
+def post_spectrum_nmf(payload: SpectrumNMFRequest, request: Request) -> ExploreJobResponse:
+    user_id = current_user_id(request)
+    mj, Y, x, sids = _load_matrix(payload.matrix_job_id, user_id)
+    Yp, xp, meta = _prep(Y, x, payload.preprocess, require_nonneg=True)
+    try:
+        result = run_nmf(
+            Yp, xp, sids, n_components=payload.n_components, n_starts=payload.n_starts,
+            scan_k=payload.scan_k, seed=payload.seed,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    result["matrix_preprocessing"] = meta
+    return _save_matrix_analysis(
+        mj, payload.matrix_job_id, "nmf", "nmf", "nmf.json", result, payload.model_dump(),
+    )
+
+
+@router.post("/spectrum-mcr", response_model=ExploreJobResponse)
+def post_spectrum_mcr(payload: SpectrumMCRRequest, request: Request) -> ExploreJobResponse:
+    user_id = current_user_id(request)
+    mj, Y, x, sids = _load_matrix(payload.matrix_job_id, user_id)
+    Yp, xp, meta = _prep(Y, x, payload.preprocess, require_nonneg=True)
+    try:
+        result = run_mcr_als(
+            Yp, xp, sids, n_components=payload.n_components, nonneg_conc=payload.nonneg_conc,
+            nonneg_spec=payload.nonneg_spec, closure=payload.closure,
+            unimodal_spec=payload.unimodal_spec, normalise_spec=payload.normalise_spec,
+            fixed_spectrum_ids=payload.fixed_spectrum_ids, solver=payload.solver,
+            max_iter=payload.max_iter, seed=payload.seed,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    result["matrix_preprocessing"] = meta
+    return _save_matrix_analysis(
+        mj, payload.matrix_job_id, "mcr_als", "mcr", "mcr_als.json", result, payload.model_dump(),
+    )
+
+
+@router.post("/spectrum-2dcos", response_model=ExploreJobResponse)
+def post_spectrum_2dcos(payload: Spectrum2DCOSRequest, request: Request) -> ExploreJobResponse:
+    user_id = current_user_id(request)
+    mj, Y, x, sids = _load_matrix(payload.matrix_job_id, user_id, min_rows=3)
+    if payload.perturbation == "observation_column":
+        if not payload.analysis_run_id or not payload.perturbation_column:
+            raise HTTPException(
+                status_code=400,
+                detail="analysis_run_id and perturbation_column are required for observation_column",
+            )
+        rec = get_run_for_user(payload.analysis_run_id, user_id)
+        if rec is None or rec.status != "completed":
+            raise HTTPException(status_code=400, detail="analysis run missing or not completed")
+        Xc, csids, _names = load_explore_feature_matrix(payload.analysis_run_id, [payload.perturbation_column])
+        by = {str(s): float(v) for s, v in zip(csids, Xc[:, 0])}
+        t = np.array([by.get(s, np.nan) for s in sids], dtype=float)
+        label = payload.perturbation_column
+    else:
+        t = np.arange(len(sids), dtype=float)
+        label = "sample order"
+    Yp, xp, meta = _prep(Y, x, payload.preprocess, allow_center=False)
+    try:
+        result = twod_cos(Yp, xp, t, reference=payload.reference, perturbation_label=label)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    result["n_spectra_without_perturbation"] = int((~np.isfinite(t)).sum())
+    result["matrix_preprocessing"] = meta
+    return _save_matrix_analysis(
+        mj, payload.matrix_job_id, "cos2d", "cos2d", "cos2d.json", result, payload.model_dump(),
+    )
 
 
 @router.post("/fpca-fda", response_model=ExploreJobResponse)

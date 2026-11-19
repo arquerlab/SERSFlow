@@ -30,6 +30,9 @@ class MatrixExportResponse(BaseModel):
 class CorrelationRequest(BaseModel):
     analysis_run_id: str
     feature_columns: list[str] | None = None
+    method: Literal["pearson", "spearman"] = "pearson"
+    reorder: bool = False
+    linkage: Literal["average", "complete", "single", "ward"] = "average"
 
 
 class VIFRequest(BaseModel):
@@ -54,6 +57,8 @@ class FPCADiscreteRequest(BaseModel):
     scaler: PcaScaler = "none"
     spca_alpha: float = Field(default=1.0, ge=1e-12, le=1e6)
     spca_ridge_alpha: float = Field(default=1e-5, ge=0.0, le=1e6)
+    rotation: Literal["none", "varimax"] = "none"
+    preprocess: MatrixPreprocess | None = None
 
 
 class SpectrumClusterRequest(BaseModel):
@@ -77,6 +82,67 @@ class ClusterRequest(BaseModel):
     n_clusters: int = Field(default=3, ge=2, le=200)
     feature_columns: list[str] | None = None
     seed: int = 0
+
+
+class MatrixPreprocess(BaseModel):
+    """Preprocessing applied to the spectrum matrix before the analysis (see core/multivariate/preprocess.py)."""
+
+    crop: list[float] | None = Field(default=None, min_length=2, max_length=2)
+    exclude: list[list[float]] | None = None
+    bin: int = Field(default=1, ge=1, le=64)
+    smooth_window: int = Field(default=0, ge=0, le=201)
+    smooth_poly: int = Field(default=3, ge=1, le=7)
+    derivative: int = Field(default=0, ge=0, le=2)
+    row_norm: Literal["none", "area", "max", "l2", "snv", "ref_band"] = "none"
+    ref_band: list[float] | None = Field(default=None, min_length=2, max_length=2)
+    transform: Literal["none", "sqrt", "log"] = "none"
+    nonneg: Literal["none", "clip", "shift"] = "none"
+    center: Literal["none", "mean", "median"] = "mean"
+    scale: Literal["none", "autoscale", "pareto", "range", "poisson"] = "none"
+
+
+class SpectrumCorrelationRequest(BaseModel):
+    matrix_job_id: str = Field(min_length=1)
+    axis: Literal["channels", "samples"] = "channels"
+    method: Literal["pearson", "spearman"] = "pearson"
+    reorder: bool = False
+    linkage: Literal["average", "complete", "single", "ward"] = "average"
+    preprocess: MatrixPreprocess | None = None
+
+
+class SpectrumNMFRequest(BaseModel):
+    matrix_job_id: str = Field(min_length=1)
+    n_components: int = Field(default=3, ge=1, le=50)
+    n_starts: int = Field(default=5, ge=1, le=50)
+    scan_k: list[int] | None = None
+    seed: int = 0
+    preprocess: MatrixPreprocess | None = None
+
+
+class SpectrumMCRRequest(BaseModel):
+    matrix_job_id: str = Field(min_length=1)
+    n_components: int = Field(default=3, ge=1, le=50)
+    nonneg_conc: bool = True
+    nonneg_spec: bool = True
+    closure: bool = False
+    unimodal_spec: bool = False
+    normalise_spec: bool = True
+    fixed_spectrum_ids: list[str] | None = None
+    solver: Literal["nnls", "lstsq_clip"] = "nnls"
+    max_iter: int = Field(default=200, ge=1, le=2000)
+    seed: int = 0
+    preprocess: MatrixPreprocess | None = None
+
+
+class Spectrum2DCOSRequest(BaseModel):
+    """2D-COS of a matrix job. Perturbation = sample order unless an observation column is given."""
+
+    matrix_job_id: str = Field(min_length=1)
+    perturbation: Literal["sample_order", "observation_column"] = "sample_order"
+    analysis_run_id: str | None = None
+    perturbation_column: str | None = None
+    reference: Literal["mean", "first", "last"] = "mean"
+    preprocess: MatrixPreprocess | None = None
 
 
 class ExploreJobResponse(BaseModel):
