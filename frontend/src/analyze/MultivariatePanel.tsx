@@ -29,7 +29,7 @@ export type MvMethod = "correlation" | "pca" | "nmf" | "mcr" | "cos2d" | "classi
 
 const METHOD_LABEL: Record<MvMethod, string> = {
   correlation: "Correlation matrix",
-  pca: "PCA (+ varimax)",
+  pca: "PCA / sparse PCA",
   nmf: "NMF",
   mcr: "MCR-ALS",
   cos2d: "2D-COS",
@@ -39,8 +39,8 @@ const METHOD_LABEL: Record<MvMethod, string> = {
 const METHOD_HINT: Record<MvMethod, string> = {
   correlation:
     "Pearson or Spearman correlation between channels (which bands move together) or between spectra (which samples look alike). Clustered order puts similar variables next to each other so blocks appear on the diagonal.",
-  pca: "Orthogonal components of the mean-centred matrix. Varimax rotates the retained components towards fewer, more peak-like loadings without changing the fitted subspace.",
-  nmf: "Non-negative components and contributions; no centring. Non-unique: check the start spread and the error-vs-k scan before interpreting.",
+  pca: "Orthogonal components of the mean-centred matrix. Varimax rotates the retained components towards fewer, more peak-like loadings. Sparse PCA instead forces many loadings to exactly zero, giving fewer, more local components (slower).",
+  nmf: "Non-negative components and contributions; no centring. Non-unique: check the start spread and the error-vs-k scan before interpreting. Optional L1 sparsity gives cleaner, more peak-like component spectra.",
   mcr: "NMF-initialised alternating least squares with chemical constraints. Fix measured spectra of the matrix as known components. Rotational ambiguity remains.",
   cos2d:
     "Synchronous / asynchronous 2D correlation of the dynamic spectra. The perturbation is the sample order or a numeric column of an analysis run (potential, time, ...). Uneven perturbation values are resampled onto an even grid.",
@@ -150,11 +150,21 @@ export function MultivariatePanel({
   const [corrMethod, setCorrMethod] = useState<"pearson" | "spearman">("pearson");
   const [reorder, setReorder] = useState(true);
   const [linkage, setLinkage] = useState<"average" | "complete" | "single" | "ward">("average");
-  const [k, setK] = useState(3);
+  // typical starting points: PCA 10 (read the scree), NMF 4, MCR 3
+  const [kPca, setKPca] = useState(10);
+  const [kNmf, setKNmf] = useState(4);
+  const [kMcr, setKMcr] = useState(3);
+  const k = method === "pca" ? kPca : method === "nmf" ? kNmf : kMcr;
+  const setK = (v: number) => (method === "pca" ? setKPca(v) : method === "nmf" ? setKNmf(v) : setKMcr(v));
+  const [pcaVariant, setPcaVariant] = useState<"pca" | "spca">("pca");
+  const [spcaAlpha, setSpcaAlpha] = useState(1);
+  const [spcaRidge, setSpcaRidge] = useState(0.00001);
+  const [nmfAlphaH, setNmfAlphaH] = useState(0);
+  const [nmfAlphaW, setNmfAlphaW] = useState(0);
   const [pcaScaler, setPcaScaler] = useState<"none" | "standard">("none");
   const [varimax, setVarimax] = useState(false);
   const [nStarts, setNStarts] = useState(5);
-  const [scanMax, setScanMax] = useState(6);
+  const [scanMax, setScanMax] = useState(8);
   const [nonnegConc, setNonnegConc] = useState(true);
   const [nonnegSpec, setNonnegSpec] = useState(true);
   const [closure, setClosure] = useState(false);
@@ -220,14 +230,26 @@ export function MultivariatePanel({
         const r = await postSpectrumCorrelation({ matrix_job_id: matrixJobId, axis: corrAxis, method: corrMethod, reorder: reorder && corrAxis === "samples", linkage, max_display: maxDisplay, preprocess: request }, setElapsed);
         setCorrRes(r.results);
       } else if (method === "pca") {
-        const r = await postSpectrumPca({ matrix_job_id: matrixJobId, n_components: k, scaler: pcaScaler, rotation: varimax ? "varimax" : "none", preprocess: request });
+        const r = await postSpectrumPca(
+          {
+            matrix_job_id: matrixJobId,
+            n_components: k,
+            method: pcaVariant,
+            scaler: pcaScaler,
+            rotation: varimax && pcaVariant === "pca" ? "varimax" : "none",
+            spca_alpha: spcaAlpha,
+            spca_ridge_alpha: spcaRidge,
+            preprocess: request,
+          },
+          setElapsed
+        );
         setPcaRes(r.results);
-        onFactorResult("pca", METHOD_LABEL.pca, r.results);
+        onFactorResult("pca", pcaVariant === "spca" ? "Sparse PCA" : "PCA", r.results);
       } else if (method === "nmf") {
         const scan = scanMax >= 2 ? Array.from({ length: scanMax }, (_, i) => i + 1) : null;
-        const r = await postSpectrumNmf({ matrix_job_id: matrixJobId, n_components: k, n_starts: nStarts, scan_k: scan, preprocess: request }, setElapsed);
+        const r = await postSpectrumNmf({ matrix_job_id: matrixJobId, n_components: k, n_starts: nStarts, scan_k: scan, alpha_h: nmfAlphaH, alpha_w: nmfAlphaW, preprocess: request }, setElapsed);
         setNmfRes(r.results);
-        onFactorResult("nmf", METHOD_LABEL.nmf, r.results);
+        onFactorResult("nmf", nmfAlphaH > 0 || nmfAlphaW > 0 ? "Sparse NMF" : "NMF", r.results);
       } else if (method === "mcr") {
         const ids = fixedIds;
         const r = await postSpectrumMcr({
@@ -274,6 +296,9 @@ export function MultivariatePanel({
           {res.start_error_spread_pct != null ? ` · start spread ${res.start_error_spread_pct.toFixed(2)} %` : ""}
           {res.iterations != null ? ` · ${res.iterations} iterations${res.converged ? "" : " (not converged)"}` : ""}
           {res.rotation?.applied ? " · varimax rotated" : ""}
+          {res.sparsity && (res.sparsity.alpha_h > 0 || res.sparsity.alpha_w > 0)
+            ? ` · non-zero: ${(res.sparsity.fraction_nonzero_spectra * 100).toFixed(0)} % of spectra entries, ${(res.sparsity.fraction_nonzero_contributions * 100).toFixed(0)} % of contributions`
+            : ""}
         </div>
         {res.note ? <div className="hint">{res.note}</div> : null}
         <PrepSummary meta={res.matrix_preprocessing} />
@@ -488,20 +513,36 @@ export function MultivariatePanel({
               ) : null}
 
               {method === "pca" || method === "nmf" || method === "mcr" ? (
-                <Field label="Components (k)">
+                <Field label="Components (k)" title={method === "pca" ? "Look at the scree plot and keep the components above the noise" : method === "nmf" ? "Number of distinct species / phases; use the scan to check" : "Number of distinct species / phases"}>
                   <input type="number" min={1} max={50} value={k} onChange={(e) => setK(Math.max(1, Number(e.target.value) || 1))} />
                 </Field>
               ) : null}
 
               {method === "pca" ? (
                 <>
+                  <Field label="Variant">
+                    <select value={pcaVariant} onChange={(e) => setPcaVariant(e.target.value as "pca" | "spca")}>
+                      <option value="pca">PCA</option>
+                      <option value="spca">Sparse PCA</option>
+                    </select>
+                  </Field>
+                  {pcaVariant === "spca" ? (
+                    <>
+                      <Field label="Sparsity (alpha)" title="Larger = more loadings exactly zero. Start at 1; slow on large matrices.">
+                        <input type="number" min={0} step={0.1} value={spcaAlpha} onChange={(e) => setSpcaAlpha(Math.max(0, Number(e.target.value) || 0))} />
+                      </Field>
+                      <Field label="Ridge alpha" title="Small stabilising ridge penalty">
+                        <input type="number" min={0} step={0.00001} value={spcaRidge} onChange={(e) => setSpcaRidge(Math.max(0, Number(e.target.value) || 0))} />
+                      </Field>
+                    </>
+                  ) : null}
                   <Field label="Scaling after preprocessing">
                     <select value={pcaScaler} onChange={(e) => setPcaScaler(e.target.value as "none" | "standard")}>
                       <option value="none">mean-centre only</option>
                       <option value="standard">unit variance</option>
                     </select>
                   </Field>
-                  <Check checked={varimax} onChange={setVarimax} label="Varimax rotation" />
+                  <Check checked={varimax && pcaVariant === "pca"} onChange={setVarimax} label="Varimax rotation" title={pcaVariant === "spca" ? "Not available for sparse PCA" : undefined} />
                 </>
               ) : null}
 
@@ -512,6 +553,12 @@ export function MultivariatePanel({
                   </Field>
                   <Field label="Scan k = 1 … N (0 = off)" title="Also fit every k up to N and plot the error">
                     <input type="number" min={0} max={20} value={scanMax} onChange={(e) => setScanMax(Math.max(0, Number(e.target.value) || 0))} />
+                  </Field>
+                  <Field label="Sparse spectra (L1)" title="0 = off. Relative strength, useful range about 0.001 – 0.05. Pushes component spectra towards isolated peaks.">
+                    <input type="number" min={0} max={1} step={0.005} value={nmfAlphaH} onChange={(e) => setNmfAlphaH(Math.max(0, Number(e.target.value) || 0))} />
+                  </Field>
+                  <Field label="Sparse contributions (L1)" title="0 = off. Pushes each spectrum to use few components.">
+                    <input type="number" min={0} max={1} step={0.005} value={nmfAlphaW} onChange={(e) => setNmfAlphaW(Math.max(0, Number(e.target.value) || 0))} />
                   </Field>
                 </>
               ) : null}

@@ -36,20 +36,33 @@ def run_nmf(
     max_iter: int = 500,
     scan_k: list[int] | None = None,
     seed: int = 0,
+    alpha_h: float = 0.0,
+    alpha_w: float = 0.0,
+    l1_ratio: float = 1.0,
 ) -> dict[str, Any]:
-    """Multi-start NMF (nndsvda first, then random starts); best reconstruction error wins."""
+    """Multi-start NMF (nndsvda first, then random starts); best reconstruction error wins.
+
+    ``alpha_h`` / ``alpha_w`` switch on sparse NMF: an L1 (``l1_ratio`` = 1) or elastic-net penalty
+    on the component spectra H and on the contributions W. They are relative strengths: the value
+    is multiplied by ``max(Y)`` before it reaches scikit-learn, so useful values are about
+    0.001 - 0.05 whatever the intensity units.
+    """
     from sklearn.decomposition import NMF
 
     Y64 = np.asarray(Y, dtype=np.float64)
     _check_nonneg(Y64)
     n, p = Y64.shape
     kmax = min(n, p)
+    ymax = max(float(Y64.max()), 1e-300)
+    reg: dict[str, Any] = {}
+    if alpha_h > 0 or alpha_w > 0:
+        reg = {"alpha_H": float(alpha_h) * ymax, "alpha_W": float(alpha_w) * ymax, "l1_ratio": float(l1_ratio)}
 
     def fit(k: int, starts: int | None = None) -> tuple[np.ndarray, np.ndarray, float, list[float]]:
         best = None
         errs: list[float] = []
         for i in range(max(1, n_starts if starts is None else starts)):
-            kw: dict[str, Any] = dict(n_components=k, max_iter=max_iter, tol=1e-4)
+            kw: dict[str, Any] = dict(n_components=k, max_iter=max_iter, tol=1e-4, **reg)
             if i == 0:
                 kw["init"] = "nndsvda"
             else:
@@ -88,6 +101,13 @@ def run_nmf(
         "reconstruction_error": err,
         "lack_of_fit_pct": lof,
         "r2": r2,
+        "sparsity": {
+            "alpha_h": float(alpha_h),
+            "alpha_w": float(alpha_w),
+            "l1_ratio": float(l1_ratio),
+            "fraction_nonzero_spectra": float((H > 1e-3 * max(float(H.max()), 1e-300)).mean()),
+            "fraction_nonzero_contributions": float((W > 1e-3 * max(float(W.max()), 1e-300)).mean()),
+        },
         "n_starts": int(max(1, n_starts)),
         "start_errors": errs,
         "start_error_spread_pct": float(100.0 * (max(errs) - min(errs)) / max(min(errs), 1e-300)),

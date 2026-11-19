@@ -59,6 +59,7 @@ class FPCADiscreteRequest(BaseModel):
     spca_ridge_alpha: float = Field(default=1e-5, ge=0.0, le=1e6)
     rotation: Literal["none", "varimax"] = "none"
     preprocess: MatrixPreprocess | None = None
+    run_async: bool = False  # start in the background; poll GET /explore/runs/{explore_id}
 
 
 class SpectrumClusterRequest(BaseModel):
@@ -118,6 +119,9 @@ class SpectrumNMFRequest(BaseModel):
     n_starts: int = Field(default=5, ge=1, le=50)
     scan_k: list[int] | None = None
     seed: int = 0
+    alpha_h: float = Field(default=0.0, ge=0.0, le=10.0)  # sparse NMF: L1 on component spectra (relative)
+    alpha_w: float = Field(default=0.0, ge=0.0, le=10.0)  # sparse NMF: L1 on contributions (relative)
+    l1_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
     run_async: bool = False  # start in the background; poll GET /explore/runs/{explore_id}
     preprocess: MatrixPreprocess | None = None
 

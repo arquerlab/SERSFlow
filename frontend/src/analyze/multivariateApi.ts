@@ -62,6 +62,7 @@ export type FactorResult = {
   iterations?: number;
   converged?: boolean;
   rotation?: { method: string; applied: boolean; reason?: string };
+  sparsity?: { alpha_h: number; alpha_w: number; fraction_nonzero_spectra: number; fraction_nonzero_contributions: number };
   note?: string;
   matrix_preprocessing?: MatrixPreprocessingMeta;
 };
@@ -143,11 +144,14 @@ export function postSpectrumCorrelation(body: {
 export function postSpectrumPca(body: {
   matrix_job_id: string;
   n_components: number | null;
+  method: "pca" | "spca";
   scaler: "none" | "standard";
   rotation: "none" | "varimax";
+  spca_alpha?: number;
+  spca_ridge_alpha?: number;
   preprocess?: MatrixPreprocess | null;
-}) {
-  return post<FactorResult>("fpca-discrete", { ...body, method: "pca" });
+}, onTick?: (seconds: number) => void) {
+  return runJob<FactorResult>("fpca-discrete", body, onTick);
 }
 
 export function postSpectrumNmf(body: {
@@ -155,6 +159,8 @@ export function postSpectrumNmf(body: {
   n_components: number;
   n_starts: number;
   scan_k?: number[] | null;
+  alpha_h?: number;
+  alpha_w?: number;
   preprocess?: MatrixPreprocess | null;
 }, onTick?: (seconds: number) => void) {
   return runJob<FactorResult>("spectrum-nmf", body, onTick);

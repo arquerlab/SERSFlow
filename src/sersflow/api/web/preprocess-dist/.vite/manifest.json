@@ -19,7 +19,7 @@
     "name": "rolldown-runtime"
   },
   "index.html": {
-    "file": "assets/index-BLNeQvvz.js",
+    "file": "assets/index-SNVUThqT.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -36,7 +36,7 @@
     ]
   },
   "src/AnalyzeWorkspace.tsx": {
-    "file": "assets/AnalyzeWorkspace-DD_-wsNP.js",
+    "file": "assets/AnalyzeWorkspace-DVkgEU7h.js",
     "name": "AnalyzeWorkspace",
     "src": "src/AnalyzeWorkspace.tsx",
     "isDynamicEntry": true,

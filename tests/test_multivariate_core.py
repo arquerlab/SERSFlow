@@ -163,3 +163,12 @@ def test_mcr_hals_matches_nnls_quality_and_is_not_slower():
     t_exact = time.perf_counter() - t0
     assert fast["r2"] > 0.99 and abs(fast["r2"] - exact["r2"]) < 5e-3
     assert t_fast < t_exact * 1.5 + 0.5
+
+
+def test_sparse_nmf_gives_sparser_spectra_with_similar_fit():
+    Y, x, _, _, sids = _synthetic()
+    Y = np.clip(Y, 0, None) + 0.01
+    dense = run_nmf(Y, x, sids, n_components=3, n_starts=2)
+    sparse = run_nmf(Y, x, sids, n_components=3, n_starts=2, alpha_h=0.01)
+    assert sparse["sparsity"]["fraction_nonzero_spectra"] < dense["sparsity"]["fraction_nonzero_spectra"]
+    assert sparse["lack_of_fit_pct"] < dense["lack_of_fit_pct"] + 10

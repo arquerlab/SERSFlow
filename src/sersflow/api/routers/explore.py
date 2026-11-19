@@ -588,20 +588,29 @@ def post_fpca_discrete(payload: FPCADiscreteRequest, request: Request) -> Explor
             Y, x, prep_meta = preprocess_matrix(Y, x, opts, allow_center=False)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-    result = run_fpca_discrete(
-        Y,
-        x,
-        spectrum_ids,
-        method=payload.method,
-        n_components=payload.n_components,
-        spca_alpha=payload.spca_alpha,
-        spca_ridge_alpha=payload.spca_ridge_alpha,
-        scaler=payload.scaler,
-    )
-    if payload.rotation == "varimax":
-        if payload.method != "pca":
-            raise HTTPException(status_code=400, detail="varimax rotation applies to ordinary PCA only")
-        result = rotate_pca_result(result)
+    if payload.rotation == "varimax" and payload.method != "pca":
+        raise HTTPException(status_code=400, detail="varimax rotation applies to ordinary PCA only")
+
+    def _compute() -> dict:
+        res = run_fpca_discrete(
+            Y,
+            x,
+            spectrum_ids,
+            method=payload.method,
+            n_components=payload.n_components,
+            spca_alpha=payload.spca_alpha,
+            spca_ridge_alpha=payload.spca_ridge_alpha,
+            scaler=payload.scaler,
+        )
+        if payload.rotation == "varimax":
+            res = rotate_pca_result(res)
+        return res
+
+    if payload.run_async:  # sparse PCA on big matrices can exceed a proxy timeout
+        return _dispatch_matrix_analysis(
+            mj, payload.matrix_job_id, "fpca_discrete", "fpca", _compute, prep_meta, payload.model_dump(), True
+        )
+    result = _compute()
     if prep_meta is not None:
         result["matrix_preprocessing"] = prep_meta
     subdir = f"explore/fpca_{payload.matrix_job_id}"[:120]
@@ -702,6 +711,7 @@ _MATRIX_RESULT_FILES = {
     "nmf": "nmf.json",
     "mcr_als": "mcr_als.json",
     "cos2d": "cos2d.json",
+    "fpca_discrete": "fpca_discrete.json",
 }
 
 
@@ -835,6 +845,7 @@ def post_spectrum_nmf(payload: SpectrumNMFRequest, request: Request) -> ExploreJ
         lambda: run_nmf(
             Yp, xp, sids, n_components=payload.n_components, n_starts=payload.n_starts,
             scan_k=payload.scan_k, seed=payload.seed,
+            alpha_h=payload.alpha_h, alpha_w=payload.alpha_w, l1_ratio=payload.l1_ratio,
         ),
         meta, payload.model_dump(), payload.run_async,
     )

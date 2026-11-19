@@ -160,3 +160,19 @@ def test_spectra_list_endpoint(matrix_env, monkeypatch):
     assert out["n"] == 24 and out["truncated"] and len(out["items"]) == 5
     assert out["items"][0]["label"] == "#0 · file.txt[3] · z=1.5"
     assert out["items"][1]["label"] == "#1"
+
+
+def test_sparse_pca_async_and_varimax_guard(matrix_env, monkeypatch):
+    import time
+
+    done = {}
+    monkeypatch.setattr(ex, "finish_explore_run", lambda **k: done.update(k))
+    out = ex.post_fpca_discrete(
+        FPCADiscreteRequest(matrix_job_id="m", method="spca", n_components=2, run_async=True), matrix_env.req
+    )
+    assert out.results == {"status": "running"}
+    for _ in range(200):
+        if done:
+            break
+        time.sleep(0.05)
+    assert done.get("status") == "completed"

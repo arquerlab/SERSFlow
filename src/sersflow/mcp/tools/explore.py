@@ -253,6 +253,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         spca_alpha: float = 1.0,
         spca_ridge_alpha: float = 1e-5,
         rotation: Literal["none", "varimax"] = "none",
+        run_async: bool = False,
         preprocess: dict | None = None,
     ) -> str:
         """POST /explore/fpca-discrete — spectrum-matrix PCA/sPCA (compact summary).
@@ -271,6 +272,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 spca_alpha=spca_alpha,
                 spca_ridge_alpha=spca_ridge_alpha,
                 rotation=rotation,
+                run_async=run_async,
                 preprocess=preprocess,
             )
             return summarize.explore_result(ctx.get_client().explore.fpca_discrete(req))
@@ -400,17 +402,22 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         n_starts: int = 5,
         scan_k: list[int] | None = None,
         seed: int = 0,
+        alpha_h: float = 0.0,
+        alpha_w: float = 0.0,
+        l1_ratio: float = 1.0,
         run_async: bool = False,
         preprocess: dict | None = None,
     ) -> str:
-        """POST /explore/spectrum-nmf — multi-start NMF; scan_k adds an error-vs-k scan (compact summary)."""
+        """POST /explore/spectrum-nmf — multi-start NMF; scan_k adds an error-vs-k scan. alpha_h / alpha_w
+        > 0 give sparse NMF (relative L1 strengths, useful range 0.001-0.05) (compact summary)."""
 
         def _run():
             from sersflow.api.schemas.explore import SpectrumNMFRequest
 
             req = SpectrumNMFRequest(
                 matrix_job_id=matrix_job_id, n_components=n_components, n_starts=n_starts,
-                scan_k=scan_k, seed=seed, run_async=run_async, preprocess=preprocess,
+                scan_k=scan_k, seed=seed, alpha_h=alpha_h, alpha_w=alpha_w, l1_ratio=l1_ratio,
+                run_async=run_async, preprocess=preprocess,
             )
             return summarize.explore_result(ctx.get_client().explore.spectrum_nmf(req))
 
