@@ -99,7 +99,10 @@ function FigureCard({ id, fig, onClick, height }: { id: string; fig: PlotlyFig |
           className="mini"
           onClick={async () => {
             if (!ref.current) return;
-            const bytes = await plotlyDivToPngBytes(ref.current, { width: 1200, scale: 2 });
+            const w = ref.current.offsetWidth || 900;
+            const h = ref.current.offsetHeight || height || 380;
+            // Autosized figures have no fixed pixel size: give toImage an explicit width and matching height.
+            const bytes = await plotlyDivToPngBytes(ref.current, { width: 1200, height: Math.round((1200 * h) / w), scale: 2 });
             downloadBlob(`${id}.png`, new Blob([bytes as unknown as BlobPart], { type: "image/png" }));
           }}
         >

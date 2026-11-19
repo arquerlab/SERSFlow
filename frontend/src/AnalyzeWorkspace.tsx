@@ -607,6 +607,8 @@ export default function AnalyzeWorkspace() {
   const [heatmapSpectrumBusy, setHeatmapSpectrumBusy] = useState(false);
   const heatmapDivByIdRef = useRef<Record<string, HTMLDivElement | null>>({});
   const heatmapLoadedKeyRef = useRef("");
+  /** Monotonic id: only the latest heatmap-row request may write state (stale responses are dropped). */
+  const heatmapReqRef = useRef(0);
   const [spectrumClusterResult, setSpectrumClusterResult] = useState<Record<string, unknown> | null>(null);
 
   // Shared PCA/FPCA plotting preferences (used by the plot-card selector UI).
@@ -1316,6 +1318,8 @@ export default function AnalyzeWorkspace() {
   // Heatmap rows/files belong to one run: drop them when the run changes.
   useEffect(() => {
     heatmapLoadedKeyRef.current = "";
+    heatmapReqRef.current += 1; // invalidate any in-flight load for the previous run
+    setExploreBusy((b) => (b === "heatmaps" ? null : b));
     setHeatmapRows([]);
     setHeatmapPlots([]);
     setHeatmapSingleFile("");
@@ -1471,6 +1475,7 @@ export default function AnalyzeWorkspace() {
   async function loadHeatmapRows(featureOverride?: string) {
     const feature = featureOverride || heatmapFeature || featureColumns[0] || "";
     if (!feature) throw new Error("Select a feature column first");
+    const req = ++heatmapReqRef.current;
     setExploreBusy("heatmaps");
     setLastError(null);
     setHeatmapPlots([]);
@@ -1486,6 +1491,7 @@ export default function AnalyzeWorkspace() {
         HEATMAP_AXIS_COLS.mapY,
       ];
       const { rows } = await fetchObservationColumns(runId, cols, 500_000);
+      if (req !== heatmapReqRef.current) return; // a newer request (other run/feature) superseded this one
       const parsed: HeatmapRow[] = [];
       for (const r of rows) {
         const value = cellToNumber(r[feature]);
@@ -1516,7 +1522,7 @@ export default function AnalyzeWorkspace() {
       if (!parsed.length) throw new Error("No map/time rows with numeric values were found for this feature.");
       heatmapLoadedKeyRef.current = `${runId}:${feature}`;
     } finally {
-      setExploreBusy(null);
+      if (req === heatmapReqRef.current) setExploreBusy(null);
     }
   }
 
@@ -1661,6 +1667,8 @@ export default function AnalyzeWorkspace() {
     if (!runId || selectedRun?.status !== "completed") return;
     const feature = heatmapFeature || featureColumns[0] || "";
     if (!feature) return;
+    // Wait until the feature belongs to this run (it is reset after a run switch); a stale name returns all-null rows.
+    if (featureColumns.length && !featureColumns.includes(feature)) return;
     const key = `${runId}:${feature}`;
     if (heatmapLoadedKeyRef.current === key) return;
     heatmapLoadedKeyRef.current = key;
