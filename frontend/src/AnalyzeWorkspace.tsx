@@ -1269,10 +1269,13 @@ export default function AnalyzeWorkspace() {
     !!matrixSelectedQ.data.npz_path
   );
 
-  const featureColumns = useMemo(
-    () => runDetailQ.data?.run.feature_columns ?? [],
-    [runDetailQ.data?.run.feature_columns]
-  );
+  // Fit runs can report no feature_columns; fall back to the run's observation schema so the feature
+  // pickers are never empty (an empty list also disables the stale-feature guards below).
+  const featureColumns = useMemo(() => {
+    const declared = runDetailQ.data?.run.feature_columns ?? [];
+    if (declared.length) return declared;
+    return schemaQ.data?.feature_keys ?? [];
+  }, [runDetailQ.data?.run.feature_columns, schemaQ.data?.feature_keys]);
 
   const selectableColumns = useMemo(() => {
     const s = schemaQ.data;
