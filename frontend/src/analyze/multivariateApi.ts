@@ -92,6 +92,42 @@ function post<R>(path: string, body: unknown) {
   });
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Start an analysis in the background and poll until it finishes, so slow runs never hit a proxy
+ * timeout (504). `onTick` receives the elapsed seconds.
+ */
+export async function runJob<R>(path: string, body: Record<string, unknown>, onTick?: (seconds: number) => void, maxMinutes = 45): Promise<MvJobResponse<R>> {
+  const first = await post<unknown>(path, { ...body, run_async: true });
+  const id = first.explore_id;
+  const t0 = Date.now();
+  let failures = 0;
+  for (;;) {
+    await sleep(1500);
+    onTick?.(Math.round((Date.now() - t0) / 1000));
+    let st: { status: string; error?: string | null; artifact_dir?: string; results?: R };
+    try {
+      st = await fetchJson(`/explore/runs/${encodeURIComponent(id)}`);
+      failures = 0;
+    } catch (e) {
+      if (++failures >= 5) throw e; // tolerate short network blips while polling
+      continue;
+    }
+    if (st.status === "completed" && st.results) return { explore_id: id, artifact_dir: st.artifact_dir ?? first.artifact_dir, results: st.results };
+    if (st.status === "failed") throw new Error(st.error || "analysis failed");
+    if (Date.now() - t0 > maxMinutes * 60_000) throw new Error(`analysis still running after ${maxMinutes} min (run ${id})`);
+  }
+}
+
+export type MatrixSpectrumItem = { id: string; index: number; label: string };
+
+export function fetchMatrixSpectra(matrixJobId: string, limit = 5000) {
+  return fetchJson<{ items: MatrixSpectrumItem[]; n: number; truncated: boolean }>(
+    `/explore/matrix-jobs/${encodeURIComponent(matrixJobId)}/spectra?limit=${limit}`
+  );
+}
+
 export function postSpectrumCorrelation(body: {
   matrix_job_id: string;
   axis: "channels" | "samples";
@@ -100,8 +136,8 @@ export function postSpectrumCorrelation(body: {
   linkage: "average" | "complete" | "single" | "ward";
   max_display?: number;
   preprocess?: MatrixPreprocess | null;
-}) {
-  return post<CorrelationMatrixResult>("spectrum-correlation", body);
+}, onTick?: (seconds: number) => void) {
+  return runJob<CorrelationMatrixResult>("spectrum-correlation", body, onTick);
 }
 
 export function postSpectrumPca(body: {
@@ -120,8 +156,8 @@ export function postSpectrumNmf(body: {
   n_starts: number;
   scan_k?: number[] | null;
   preprocess?: MatrixPreprocess | null;
-}) {
-  return post<FactorResult>("spectrum-nmf", body);
+}, onTick?: (seconds: number) => void) {
+  return runJob<FactorResult>("spectrum-nmf", body, onTick);
 }
 
 export function postSpectrumMcr(body: {
@@ -134,8 +170,8 @@ export function postSpectrumMcr(body: {
   normalise_spec: boolean;
   fixed_spectrum_ids?: string[] | null;
   preprocess?: MatrixPreprocess | null;
-}) {
-  return post<FactorResult>("spectrum-mcr", body);
+}, onTick?: (seconds: number) => void) {
+  return runJob<FactorResult>("spectrum-mcr", body, onTick);
 }
 
 export function postSpectrum2dcos(body: {
@@ -146,6 +182,6 @@ export function postSpectrum2dcos(body: {
   reference: "mean" | "first" | "last";
   max_display?: number;
   preprocess?: MatrixPreprocess | null;
-}) {
-  return post<Cos2dResult>("spectrum-2dcos", body);
+}, onTick?: (seconds: number) => void) {
+  return runJob<Cos2dResult>("spectrum-2dcos", body, onTick);
 }

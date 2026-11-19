@@ -633,9 +633,9 @@ def compute_all_calibration_deltas(
                 only_ids=only_ids,
             )
         except ValueError as e:
-            warnings.append(str(e))
-            by_step[sid_key] = {str(s): 0.0 for s in spectrum_ids}
-            continue
+            # A misconfigured step (e.g. empty group_by) used to become a silent all-zero shift, leaving the
+            # axis uncalibrated while the Fermi fit still ran. Fail loudly instead.
+            raise ValueError(f"x_axis_calibration step {sid_key!r} is misconfigured: {e}") from e
         by_step[sid_key] = one.deltas
         warnings.extend(one.warnings)
     return by_step, warnings

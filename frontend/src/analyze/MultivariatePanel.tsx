@@ -1,7 +1,9 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { PlotlyWrapper, type PlotlyFigure } from "../legacy-wrappers/PlotlyWrapper";
 import {
+  fetchMatrixSpectra,
+  type MatrixSpectrumItem,
   postSpectrum2dcos,
   postSpectrumCorrelation,
   postSpectrumMcr,
@@ -57,6 +59,8 @@ type Props = {
   onMethodChange: (m: MvMethod) => void;
   /** Right-hand pane element; results are rendered there when given. */
   resultsSlot: HTMLElement | null;
+  /** Numeric/observation columns of the selected analysis run (for the 2D-COS perturbation menu). */
+  observationColumns: string[];
   /** PCA / NMF / MCR results are also handed to the Analyze plot machinery (scatter, pairplot, scree, loadings, metadata colouring). */
   onFactorResult: (method: "pca" | "nmf" | "mcr", label: string, result: FactorResult) => void;
 };
@@ -126,8 +130,12 @@ export function MultivariatePanel({
   onMethodChange,
   resultsSlot,
   onFactorResult,
+  observationColumns,
 }: Props) {
   const [busy, setBusy] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [spectra, setSpectra] = useState<MatrixSpectrumItem[]>([]);
+  const [spectraNote, setSpectraNote] = useState("");
 
   // preprocessing
   const [pre, setPre] = useState<MatrixPreprocess>({ bin: 1, row_norm: "none", transform: "none", nonneg: "none", center: "mean", scale: "none", derivative: 0, smooth_window: 0, smooth_poly: 3 });
@@ -151,7 +159,7 @@ export function MultivariatePanel({
   const [nonnegSpec, setNonnegSpec] = useState(true);
   const [closure, setClosure] = useState(false);
   const [unimodal, setUnimodal] = useState(false);
-  const [fixedIds, setFixedIds] = useState("");
+  const [fixedIds, setFixedIds] = useState<string[]>([]);
   const [pert, setPert] = useState<"sample_order" | "observation_column">("sample_order");
   const [pertCol, setPertCol] = useState("");
   const [cosRef, setCosRef] = useState<"mean" | "first" | "last">("mean");
@@ -163,6 +171,27 @@ export function MultivariatePanel({
   const [nmfRes, setNmfRes] = useState<FactorResult | null>(null);
   const [mcrRes, setMcrRes] = useState<FactorResult | null>(null);
   const [cosRes, setCosRes] = useState<Cos2dResult | null>(null);
+
+  // spectrum menu for the fixed MCR components
+  useEffect(() => {
+    setFixedIds([]);
+    setSpectra([]);
+    setSpectraNote("");
+    if (!matrixJobId || !matrixReady || method !== "mcr") return;
+    let cancelled = false;
+    fetchMatrixSpectra(matrixJobId)
+      .then((r) => {
+        if (cancelled) return;
+        setSpectra(r.items);
+        setSpectraNote(r.truncated ? `Showing the first ${r.items.length} of ${r.n} spectra.` : "");
+      })
+      .catch(() => {
+        if (!cancelled) setSpectraNote("Could not load the spectrum list.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [matrixJobId, matrixReady, method === "mcr"]);
 
   const request = useMemo<MatrixPreprocess | null>(() => {
     const p: MatrixPreprocess = { ...pre };
@@ -184,10 +213,11 @@ export function MultivariatePanel({
   const run = async () => {
     if (!matrixJobId || method === "classic") return;
     setBusy(true);
+    setElapsed(0);
     onError(null);
     try {
       if (method === "correlation") {
-        const r = await postSpectrumCorrelation({ matrix_job_id: matrixJobId, axis: corrAxis, method: corrMethod, reorder: reorder && corrAxis === "samples", linkage, max_display: maxDisplay, preprocess: request });
+        const r = await postSpectrumCorrelation({ matrix_job_id: matrixJobId, axis: corrAxis, method: corrMethod, reorder: reorder && corrAxis === "samples", linkage, max_display: maxDisplay, preprocess: request }, setElapsed);
         setCorrRes(r.results);
       } else if (method === "pca") {
         const r = await postSpectrumPca({ matrix_job_id: matrixJobId, n_components: k, scaler: pcaScaler, rotation: varimax ? "varimax" : "none", preprocess: request });
@@ -195,11 +225,11 @@ export function MultivariatePanel({
         onFactorResult("pca", METHOD_LABEL.pca, r.results);
       } else if (method === "nmf") {
         const scan = scanMax >= 2 ? Array.from({ length: scanMax }, (_, i) => i + 1) : null;
-        const r = await postSpectrumNmf({ matrix_job_id: matrixJobId, n_components: k, n_starts: nStarts, scan_k: scan, preprocess: request });
+        const r = await postSpectrumNmf({ matrix_job_id: matrixJobId, n_components: k, n_starts: nStarts, scan_k: scan, preprocess: request }, setElapsed);
         setNmfRes(r.results);
         onFactorResult("nmf", METHOD_LABEL.nmf, r.results);
       } else if (method === "mcr") {
-        const ids = fixedIds.split(",").map((s) => s.trim()).filter(Boolean);
+        const ids = fixedIds;
         const r = await postSpectrumMcr({
           matrix_job_id: matrixJobId,
           n_components: k,
@@ -210,7 +240,7 @@ export function MultivariatePanel({
           normalise_spec: true,
           fixed_spectrum_ids: ids.length ? ids : null,
           preprocess: request,
-        });
+        }, setElapsed);
         setMcrRes(r.results);
         onFactorResult("mcr", METHOD_LABEL.mcr, r.results);
       } else {
@@ -222,7 +252,7 @@ export function MultivariatePanel({
           reference: cosRef,
           max_display: maxDisplay,
           preprocess: request,
-        });
+        }, setElapsed);
         setCosRes(r.results);
       }
     } catch (e) {
@@ -492,8 +522,40 @@ export function MultivariatePanel({
                   <Check checked={nonnegSpec} onChange={setNonnegSpec} label="Spectra ≥ 0" />
                   <Check checked={closure} onChange={setClosure} label="Closure (sum = 1)" title="Contributions of each spectrum sum to 1" />
                   <Check checked={unimodal} onChange={setUnimodal} label="Unimodal spectra" title="Each component spectrum has a single maximum" />
-                  <Field wide label="Fixed spectra (comma-separated ids)" title="Spectrum ids of this matrix held fixed as the first components">
-                    <input type="text" value={fixedIds} onChange={(e) => setFixedIds(e.target.value)} placeholder="optional" />
+                  <Field wide label="Fixed spectra (known components)" title="Measured spectra of this matrix held fixed as the first components">
+                    <select
+                      value=""
+                      disabled={!spectra.length || fixedIds.length >= k}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v && !fixedIds.includes(v)) setFixedIds((o) => [...o, v]);
+                      }}
+                    >
+                      <option value="">{spectra.length ? "Add a spectrum…" : "Loading spectra…"}</option>
+                      {spectra
+                        .filter((it) => !fixedIds.includes(it.id))
+                        .map((it) => (
+                          <option key={it.id} value={it.id}>
+                            {it.label}
+                          </option>
+                        ))}
+                    </select>
+                    {fixedIds.length ? (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: "4px" }}>
+                        {fixedIds.map((id) => (
+                          <button
+                            key={id}
+                            type="button"
+                            className="mini"
+                            title="Remove"
+                            onClick={() => setFixedIds((o) => o.filter((v) => v !== id))}
+                          >
+                            {spectra.find((it) => it.id === id)?.label ?? id} ✕
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {spectraNote ? <span className="hint">{spectraNote}</span> : null}
                   </Field>
                 </>
               ) : null}
@@ -507,8 +569,15 @@ export function MultivariatePanel({
                     </select>
                   </Field>
                   {pert === "observation_column" ? (
-                    <Field label="Column" title={analysisRunId ? `Column of analysis run ${analysisRunId}` : "Select an analysis run in the header first"}>
-                      <input type="text" value={pertCol} onChange={(e) => setPertCol(e.target.value)} placeholder="e.g. potential_V" />
+                    <Field label="Perturbation column" title={analysisRunId ? `Column of analysis run ${analysisRunId}` : "Select an analysis run in the header first"}>
+                      <select value={pertCol} disabled={!observationColumns.length} onChange={(e) => setPertCol(e.target.value)}>
+                        <option value="">{observationColumns.length ? "— select a column —" : "no columns (select a run)"}</option>
+                        {observationColumns.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
                     </Field>
                   ) : null}
                   <Field label="Reference spectrum">
@@ -548,7 +617,7 @@ export function MultivariatePanel({
             ) : null}
 
             <button type="button" className="mv-run" disabled={busy || !matrixJobId} onClick={() => void run()}>
-              {busy ? "Running…" : `Run ${METHOD_LABEL[method]}`}
+              {busy ? (method === "pca" ? "Running…" : `Running… ${elapsed} s`) : `Run ${METHOD_LABEL[method]}`}
             </button>
           </div>
 

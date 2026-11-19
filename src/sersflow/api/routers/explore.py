@@ -59,6 +59,7 @@ from sersflow.api.services.explore_stats import (
 )
 from sersflow.api.services.matrix_export_runner import execute_matrix_export_job, import_matrix_job_from_csv
 from sersflow.api.services.observation_export import load_axis_and_meta_for_spectra
+from sersflow.infra.datasets_store import spectrum_export_lookup
 from sersflow.api.schemas.sessions import SubsetStrategy
 from sersflow.api.services.sessions_service import pipeline_hash, subset_hash
 from sersflow.api.services.technique_guard import (
@@ -696,11 +697,35 @@ def _prep(Y, x, pre, **kw):
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
-def _save_matrix_analysis(mj, matrix_job_id: str, kind: str, prefix: str, filename: str, result: dict, input_ref: dict):
-    subdir = f"explore/{prefix}_{matrix_job_id}"[:120]
+_MATRIX_RESULT_FILES = {
+    "spectrum_correlation": "spectrum_correlation.json",
+    "nmf": "nmf.json",
+    "mcr_als": "mcr_als.json",
+    "cos2d": "cos2d.json",
+}
+
+
+def _dispatch_matrix_analysis(
+    mj,
+    matrix_job_id: str,
+    kind: str,
+    prefix: str,
+    compute,
+    meta: dict,
+    input_ref: dict,
+    run_async: bool,
+) -> ExploreJobResponse:
+    """Run ``compute()`` (the heavy part) now, or in a background thread when ``run_async``.
+
+    Slow analyses (NMF scans, MCR-ALS on big matrices) can exceed a reverse proxy's timeout, so
+    clients may start them asynchronously and poll ``GET /explore/runs/{explore_id}``.
+    """
+    from uuid import uuid4
+
+    filename = _MATRIX_RESULT_FILES[kind]
+    subdir = f"explore/{prefix}_{matrix_job_id}"[:100] + f"_{uuid4().hex[:8]}"
     adir = _artifact_subdir(subdir)
     os.makedirs(adir, exist_ok=True)
-    save_json(os.path.join(adir, filename), result)
     eid = create_explore_run(
         dataset_id=mj.dataset_id,
         kind=kind,
@@ -709,9 +734,80 @@ def _save_matrix_analysis(mj, matrix_job_id: str, kind: str, prefix: str, filena
         artifact_subdir=subdir,
         input_ref=input_ref,
     )
-    finish_explore_run(explore_id=eid, status="completed", error=None)
-    prune_explore_runs(dataset_id=mj.dataset_id)
+
+    def work() -> dict:
+        try:
+            result = compute()
+            result["matrix_preprocessing"] = meta
+            save_json(os.path.join(adir, filename), result)
+            finish_explore_run(explore_id=eid, status="completed", error=None)
+            prune_explore_runs(dataset_id=mj.dataset_id)
+            return result
+        except Exception as e:  # noqa: BLE001 - recorded on the run, re-raised for the sync path
+            finish_explore_run(explore_id=eid, status="failed", error=f"{type(e).__name__}: {e}")
+            raise
+
+    if run_async:
+
+        def bg() -> None:
+            try:
+                work()
+            except Exception:  # noqa: BLE001 - already recorded on the run
+                pass
+
+        Thread(target=bg, daemon=True, name=f"explore-{kind}-{eid}").start()
+        return ExploreJobResponse(explore_id=eid, artifact_dir=adir, results={"status": "running"})
+    try:
+        result = work()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return ExploreJobResponse(explore_id=eid, artifact_dir=adir, results=result)
+
+
+@router.get("/runs/{explore_id}")
+def get_explore_run_result(explore_id: str, request: Request) -> dict[str, Any]:
+    """Status of an explore run and, once completed, its result JSON (for async analyses)."""
+    user_id = current_user_id(request)
+    rec = get_explore_run_for_user(explore_id, user_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Explore run not found")
+    out: dict[str, Any] = {
+        "explore_id": rec.explore_id,
+        "kind": rec.kind,
+        "status": rec.status,
+        "error": rec.error,
+        "artifact_dir": os.path.join(artifacts_root(), rec.artifact_subdir),
+    }
+    filename = _MATRIX_RESULT_FILES.get(rec.kind)
+    if rec.status == "completed" and filename:
+        try:
+            with open(os.path.join(artifacts_root(), rec.artifact_subdir, filename), encoding="utf-8") as fh:
+                out["results"] = json.load(fh)
+        except (OSError, ValueError) as e:
+            raise HTTPException(status_code=500, detail=f"result unreadable: {e}") from e
+    return out
+
+
+@router.get("/matrix-jobs/{matrix_job_id}/spectra")
+def list_matrix_job_spectra(matrix_job_id: str, request: Request, limit: int = 5000) -> dict[str, Any]:
+    """Spectrum ids of a matrix job with a readable label (file, record, axes) for selection menus."""
+    user_id = current_user_id(request)
+    mj, _Y, _x, sids = _load_matrix(matrix_job_id, user_id, min_rows=1)
+    lookup = spectrum_export_lookup(mj.dataset_id)
+    items = []
+    for i, sid in enumerate(sids[: max(1, min(int(limit), 20000))]):
+        info = lookup.get(sid) or {}
+        path = str(info.get("relative_path") or "").replace("\\", "/").split("/")[-1]
+        rec_i = info.get("record_index")
+        bits = [f"#{i}"]
+        if path:
+            bits.append(path + (f"[{rec_i}]" if rec_i not in (None, "") else ""))
+        for key, tag in (("axis_z", "z"), ("axis_time_s", "t"), ("axis_map_x", "x"), ("axis_map_y", "y")):
+            v = info.get(key)
+            if isinstance(v, (int, float)):
+                bits.append(f"{tag}={v:g}")
+        items.append({"id": sid, "index": i, "label": " · ".join(bits)})
+    return {"items": items, "n": len(sids), "truncated": len(sids) > len(items)}
 
 
 @router.post("/spectrum-correlation", response_model=ExploreJobResponse)
@@ -719,17 +815,13 @@ def post_spectrum_correlation(payload: SpectrumCorrelationRequest, request: Requ
     user_id = current_user_id(request)
     mj, Y, x, sids = _load_matrix(payload.matrix_job_id, user_id, min_rows=3)
     Yp, xp, meta = _prep(Y, x, payload.preprocess, allow_center=False)
-    try:
-        result = correlation_matrix(
+    return _dispatch_matrix_analysis(
+        mj, payload.matrix_job_id, "spectrum_correlation", "spcorr",
+        lambda: correlation_matrix(
             Yp, xp, sids, axis=payload.axis, method=payload.method,
             reorder=payload.reorder, linkage=payload.linkage, max_display=payload.max_display,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    result["matrix_preprocessing"] = meta
-    return _save_matrix_analysis(
-        mj, payload.matrix_job_id, "spectrum_correlation", "spcorr", "spectrum_correlation.json",
-        result, payload.model_dump(),
+        ),
+        meta, payload.model_dump(), payload.run_async,
     )
 
 
@@ -738,16 +830,13 @@ def post_spectrum_nmf(payload: SpectrumNMFRequest, request: Request) -> ExploreJ
     user_id = current_user_id(request)
     mj, Y, x, sids = _load_matrix(payload.matrix_job_id, user_id)
     Yp, xp, meta = _prep(Y, x, payload.preprocess, require_nonneg=True)
-    try:
-        result = run_nmf(
+    return _dispatch_matrix_analysis(
+        mj, payload.matrix_job_id, "nmf", "nmf",
+        lambda: run_nmf(
             Yp, xp, sids, n_components=payload.n_components, n_starts=payload.n_starts,
             scan_k=payload.scan_k, seed=payload.seed,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    result["matrix_preprocessing"] = meta
-    return _save_matrix_analysis(
-        mj, payload.matrix_job_id, "nmf", "nmf", "nmf.json", result, payload.model_dump(),
+        ),
+        meta, payload.model_dump(), payload.run_async,
     )
 
 
@@ -756,19 +845,19 @@ def post_spectrum_mcr(payload: SpectrumMCRRequest, request: Request) -> ExploreJ
     user_id = current_user_id(request)
     mj, Y, x, sids = _load_matrix(payload.matrix_job_id, user_id)
     Yp, xp, meta = _prep(Y, x, payload.preprocess, require_nonneg=True)
-    try:
-        result = run_mcr_als(
+    for sid in payload.fixed_spectrum_ids or []:
+        if str(sid) not in sids:
+            raise HTTPException(status_code=400, detail=f"fixed spectrum id {sid!r} not in the matrix")
+    return _dispatch_matrix_analysis(
+        mj, payload.matrix_job_id, "mcr_als", "mcr",
+        lambda: run_mcr_als(
             Yp, xp, sids, n_components=payload.n_components, nonneg_conc=payload.nonneg_conc,
             nonneg_spec=payload.nonneg_spec, closure=payload.closure,
             unimodal_spec=payload.unimodal_spec, normalise_spec=payload.normalise_spec,
             fixed_spectrum_ids=payload.fixed_spectrum_ids, solver=payload.solver,
             max_iter=payload.max_iter, seed=payload.seed,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    result["matrix_preprocessing"] = meta
-    return _save_matrix_analysis(
-        mj, payload.matrix_job_id, "mcr_als", "mcr", "mcr_als.json", result, payload.model_dump(),
+        ),
+        meta, payload.model_dump(), payload.run_async,
     )
 
 
@@ -793,16 +882,16 @@ def post_spectrum_2dcos(payload: Spectrum2DCOSRequest, request: Request) -> Expl
         t = np.arange(len(sids), dtype=float)
         label = "sample order"
     Yp, xp, meta = _prep(Y, x, payload.preprocess, allow_center=False)
-    try:
+
+    def compute() -> dict:
         result = twod_cos(
             Yp, xp, t, reference=payload.reference, perturbation_label=label, max_display=payload.max_display
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    result["n_spectra_without_perturbation"] = int((~np.isfinite(t)).sum())
-    result["matrix_preprocessing"] = meta
-    return _save_matrix_analysis(
-        mj, payload.matrix_job_id, "cos2d", "cos2d", "cos2d.json", result, payload.model_dump(),
+        result["n_spectra_without_perturbation"] = int((~np.isfinite(t)).sum())
+        return result
+
+    return _dispatch_matrix_analysis(
+        mj, payload.matrix_job_id, "cos2d", "cos2d", compute, meta, payload.model_dump(), payload.run_async,
     )
 
 

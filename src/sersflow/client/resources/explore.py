@@ -149,6 +149,9 @@ class ExploreResource(_Base):
         data = request_json(self._root.http, "POST", "/explore/spectrum-cluster", json_body=dump_json(payload))
         return ExploreJobResponse.model_validate(data)
 
+    def get_run_result(self, explore_id: str) -> dict[str, Any]:
+        return request_json(self._root.http, "GET", f"/explore/runs/{explore_id}")
+
     def spectrum_correlation(self, payload: SpectrumCorrelationRequest) -> ExploreJobResponse:
         data = request_json(self._root.http, "POST", "/explore/spectrum-correlation", json_body=dump_json(payload))
         return ExploreJobResponse.model_validate(data)

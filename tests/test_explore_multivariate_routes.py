@@ -119,3 +119,44 @@ def test_2dcos_observation_column(matrix_env, monkeypatch):
         matrix_env.req,
     ).results
     assert r["perturbation_label"] == "E_V" and r["resampled"]
+
+
+def test_async_dispatch_runs_in_background_and_records_status(matrix_env, monkeypatch):
+    import time
+
+    done = {}
+    monkeypatch.setattr(ex, "finish_explore_run", lambda **k: done.update(k))
+    out = ex.post_spectrum_nmf(
+        SpectrumNMFRequest(matrix_job_id="m", n_components=2, n_starts=1, run_async=True), matrix_env.req
+    )
+    assert out.results == {"status": "running"} and out.explore_id == "eid1"
+    for _ in range(100):
+        if done:
+            break
+        time.sleep(0.05)
+    assert done.get("status") == "completed"
+
+
+def test_async_failure_is_recorded(matrix_env, monkeypatch):
+    import time
+
+    done = {}
+    monkeypatch.setattr(ex, "finish_explore_run", lambda **k: done.update(k))
+    monkeypatch.setattr(ex, "run_nmf", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")))
+    ex.post_spectrum_nmf(SpectrumNMFRequest(matrix_job_id="m", run_async=True), matrix_env.req)
+    for _ in range(100):
+        if done:
+            break
+        time.sleep(0.05)
+    assert done.get("status") == "failed" and "boom" in done.get("error", "")
+
+
+def test_spectra_list_endpoint(matrix_env, monkeypatch):
+    monkeypatch.setattr(
+        ex, "spectrum_export_lookup",
+        lambda _d: {"s0": {"relative_path": "a/b/file.txt", "record_index": 3, "axis_z": 1.5}},
+    )
+    out = ex.list_matrix_job_spectra("m", matrix_env.req, limit=5)
+    assert out["n"] == 24 and out["truncated"] and len(out["items"]) == 5
+    assert out["items"][0]["label"] == "#0 · file.txt[3] · z=1.5"
+    assert out["items"][1]["label"] == "#1"

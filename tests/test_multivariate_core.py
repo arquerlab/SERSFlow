@@ -143,3 +143,23 @@ def test_correlation_channels_keep_x_order_and_block_average():
     assert np.all(np.diff(xs) > 0)
     rs = correlation_matrix(Y, x, sids, axis="samples", reorder=True)
     assert rs["reordered"] and sorted(rs["order"]) == list(range(30))
+
+
+def test_mcr_hals_matches_nnls_quality_and_is_not_slower():
+    import time
+
+    rng = np.random.default_rng(5)
+    n, p, k = 150, 600, 3
+    x = np.linspace(100, 1000, p)
+    S = np.stack([np.exp(-0.5 * ((x - c) / 18) ** 2) for c in (250, 550, 800)])
+    C = rng.uniform(0, 1, (n, k))
+    Y = C @ S + 0.002 * rng.standard_normal((n, p)) + 0.01
+    ids = [f"s{i}" for i in range(n)]
+    t0 = time.perf_counter()
+    fast = run_mcr_als(Y, x, ids, n_components=k, solver="hals")
+    t_fast = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    exact = run_mcr_als(Y, x, ids, n_components=k, solver="nnls")
+    t_exact = time.perf_counter() - t0
+    assert fast["r2"] > 0.99 and abs(fast["r2"] - exact["r2"]) < 5e-3
+    assert t_fast < t_exact * 1.5 + 0.5

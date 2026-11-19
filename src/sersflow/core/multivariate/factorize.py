@@ -33,7 +33,7 @@ def run_nmf(
     *,
     n_components: int = 3,
     n_starts: int = 5,
-    max_iter: int = 1000,
+    max_iter: int = 500,
     scan_k: list[int] | None = None,
     seed: int = 0,
 ) -> dict[str, Any]:
@@ -45,11 +45,11 @@ def run_nmf(
     n, p = Y64.shape
     kmax = min(n, p)
 
-    def fit(k: int) -> tuple[np.ndarray, np.ndarray, float, list[float]]:
+    def fit(k: int, starts: int | None = None) -> tuple[np.ndarray, np.ndarray, float, list[float]]:
         best = None
         errs: list[float] = []
-        for i in range(max(1, n_starts)):
-            kw: dict[str, Any] = dict(n_components=k, max_iter=max_iter, tol=1e-5)
+        for i in range(max(1, n_starts if starts is None else starts)):
+            kw: dict[str, Any] = dict(n_components=k, max_iter=max_iter, tol=1e-4)
             if i == 0:
                 kw["init"] = "nndsvda"
             else:
@@ -99,7 +99,7 @@ def run_nmf(
     if scan_k:
         scan = []
         for kk in sorted({int(v) for v in scan_k if 1 <= int(v) <= kmax}):
-            _, _, e, _ = fit(kk)
+            _, _, e, _ = fit(kk, starts=min(2, max(1, n_starts)))  # the scan is a guide: keep it cheap
             Wk_lof = float(100.0 * e / max(np.linalg.norm(Y64), 1e-300))
             scan.append({"k": kk, "reconstruction_error": e, "lack_of_fit_pct": Wk_lof})
         out["scan"] = scan
@@ -117,10 +117,13 @@ def _unimodal(s: np.ndarray) -> np.ndarray:
     return out
 
 
-def _solve_rows(A: np.ndarray, B: np.ndarray, nonneg: bool, solver: str) -> np.ndarray:
+def _solve_rows(
+    A: np.ndarray, B: np.ndarray, nonneg: bool, solver: str, X0: np.ndarray | None = None
+) -> np.ndarray:
     """Solve min ||B_i - A x_i|| for every row i of B: returns X (n x k) with B ~ X @ A.T.
 
-    A: (p, k) design, B: (n, p).
+    A: (p, k) design, B: (n, p). ``solver="hals"`` is a vectorised non-negative coordinate descent
+    (warm-started from ``X0``); ``"nnls"`` is the exact active-set solve per row (slow on big matrices).
     """
     if not nonneg:
         X, *_ = np.linalg.lstsq(A, B.T, rcond=None)
@@ -128,6 +131,27 @@ def _solve_rows(A: np.ndarray, B: np.ndarray, nonneg: bool, solver: str) -> np.n
     if solver == "lstsq_clip":
         X, *_ = np.linalg.lstsq(A, B.T, rcond=None)
         return np.clip(X.T, 0.0, None)
+    if solver == "hals":
+        G = A.T @ A
+        H = B @ A
+        if X0 is not None and X0.shape == (B.shape[0], A.shape[1]):
+            X = np.clip(X0, 0.0, None)
+        else:
+            X0_, *_ = np.linalg.lstsq(A, B.T, rcond=None)
+            X = np.clip(X0_.T, 0.0, None)
+        diag = np.diag(G)
+        for _ in range(40):
+            moved = 0.0
+            for j in range(A.shape[1]):
+                if diag[j] <= 1e-300:
+                    continue
+                new = np.maximum(0.0, X[:, j] + (H[:, j] - X @ G[:, j]) / diag[j])
+                moved = max(moved, float(np.max(np.abs(new - X[:, j]), initial=0.0)))
+                X[:, j] = new
+            scale = float(np.max(np.abs(X), initial=1e-12))
+            if moved < 1e-7 * scale:
+                break
+        return X
     from scipy.optimize import nnls
 
     out = np.empty((B.shape[0], A.shape[1]))
@@ -148,7 +172,7 @@ def run_mcr_als(
     unimodal_spec: bool = False,
     normalise_spec: bool = True,
     fixed_spectrum_ids: list[str] | None = None,
-    solver: str = "nnls",
+    solver: str = "hals",
     max_iter: int = 200,
     tol: float = 1e-6,
     seed: int = 0,
@@ -178,7 +202,7 @@ def run_mcr_als(
     S_fixed = Y64[fixed_idx].copy() if nf else None
     if nf:
         # free components start from NMF of what the fixed spectra cannot explain
-        C0 = _solve_rows(S_fixed.T, Y64, True, solver)
+        C0 = _solve_rows(S_fixed.T, Y64, True, "hals")
         resid = np.clip(Y64 - C0 @ S_fixed, 0.0, None) + 1e-9
         S = np.zeros((k, p))
         S[:nf] = S_fixed
@@ -197,12 +221,12 @@ def run_mcr_als(
     converged = False
     it = 0
     for it in range(1, max_iter + 1):
-        C = _solve_rows(S.T, Y64, nonneg_conc, solver)
+        C = _solve_rows(S.T, Y64, nonneg_conc, solver, X0=C if it > 1 else None)
         if closure:
             tot = C.sum(axis=1, keepdims=True)
             tot[tot == 0] = 1.0
             C = C / tot
-        S_new = _solve_rows(C, Y64.T, nonneg_spec, solver).T
+        S_new = _solve_rows(C, Y64.T, nonneg_spec, solver, X0=S.T if it > 1 else None).T
         if unimodal_spec:
             for j in range(nf, k):
                 S_new[j] = _unimodal(S_new[j])

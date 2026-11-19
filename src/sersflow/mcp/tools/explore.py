@@ -400,6 +400,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         n_starts: int = 5,
         scan_k: list[int] | None = None,
         seed: int = 0,
+        run_async: bool = False,
         preprocess: dict | None = None,
     ) -> str:
         """POST /explore/spectrum-nmf — multi-start NMF; scan_k adds an error-vs-k scan (compact summary)."""
@@ -409,7 +410,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
             req = SpectrumNMFRequest(
                 matrix_job_id=matrix_job_id, n_components=n_components, n_starts=n_starts,
-                scan_k=scan_k, seed=seed, preprocess=preprocess,
+                scan_k=scan_k, seed=seed, run_async=run_async, preprocess=preprocess,
             )
             return summarize.explore_result(ctx.get_client().explore.spectrum_nmf(req))
 
@@ -425,9 +426,10 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
         unimodal_spec: bool = False,
         normalise_spec: bool = True,
         fixed_spectrum_ids: list[str] | None = None,
-        solver: Literal["nnls", "lstsq_clip"] = "nnls",
+        solver: Literal["hals", "nnls", "lstsq_clip"] = "hals",
         max_iter: int = 200,
         seed: int = 0,
+        run_async: bool = False,
         preprocess: dict | None = None,
     ) -> str:
         """POST /explore/spectrum-mcr — MCR-ALS with constraints; fixed_spectrum_ids hold measured
@@ -440,7 +442,7 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 matrix_job_id=matrix_job_id, n_components=n_components, nonneg_conc=nonneg_conc,
                 nonneg_spec=nonneg_spec, closure=closure, unimodal_spec=unimodal_spec,
                 normalise_spec=normalise_spec, fixed_spectrum_ids=fixed_spectrum_ids,
-                solver=solver, max_iter=max_iter, seed=seed, preprocess=preprocess,
+                solver=solver, max_iter=max_iter, seed=seed, run_async=run_async, preprocess=preprocess,
             )
             return summarize.explore_result(ctx.get_client().explore.spectrum_mcr(req))
 
@@ -468,6 +470,23 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
                 reference=reference, max_display=max_display, preprocess=preprocess,
             )
             return summarize.explore_result(ctx.get_client().explore.spectrum_2dcos(req))
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="get_explore_runs_result")
+    async def get_explore_runs_result(explore_id: str) -> str:
+        """GET /explore/runs/{explore_id} — status of an async spectrum-matrix analysis and, when
+        completed, a compact summary of its result (use after run_async=True)."""
+
+        def _run():
+            data = ctx.get_client().explore.get_run_result(explore_id)
+            res = data.get("results")
+            out = {k: v for k, v in data.items() if k != "results"}
+            if isinstance(res, dict):
+                out["result_summary"] = summarize.explore_result(
+                    ExploreJobResponse(explore_id=explore_id, artifact_dir=str(data.get("artifact_dir", "")), results=res)
+                )
+            return out
 
         return await tool_call(ctx, _run)
 

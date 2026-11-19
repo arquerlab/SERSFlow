@@ -464,3 +464,17 @@ def test_casa_calibration_requires_calib_line() -> None:
 
     with pytest.raises(ValueError, match="Calib M"):
         calibration_delta({"method": "casa_calibration", "_spectrum_labels": {"analyser_work_function_eV": 3.97}})
+
+
+def test_grouped_reference_band_without_group_by_raises_not_silent_zero():
+    from sersflow.core.preprocess.x_axis_calibration import compute_all_calibration_deltas
+
+    steps = [
+        {"name": "fitting", "step_id": "F", "params": {"xps_region": "all valence bands"}},
+        {"name": "x_axis_calibration", "step_id": "C", "params": {
+            "method": "grouped_reference_band", "fitting_step_id": "F", "pos_key": "fit_x_center",
+            "group_by": "", "reference_mode": "valence_band"}},
+    ]
+    with pytest.raises(ValueError, match="group_by"):
+        compute_all_calibration_deltas(steps=steps, spectrum_ids=["a"], labels_by_id={"a": {"xps_region": "Co 2p"}},
+                                       measure_for_fitting_step=lambda s, f, p, k: 0.0)

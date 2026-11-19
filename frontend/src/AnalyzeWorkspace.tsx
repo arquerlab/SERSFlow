@@ -3740,6 +3740,9 @@ export default function AnalyzeWorkspace() {
               onMethodChange={setMvMethod}
               resultsSlot={mvSlot}
               onFactorResult={(m, label, result) => setMvFactors((o) => ({ ...o, [m]: { label, result } }))}
+              observationColumns={Array.from(
+                new Set([...(schemaQ.data?.axis_keys ?? []), ...(selectedRun?.feature_columns ?? []), ...(schemaQ.data?.meta_keys ?? [])])
+              )}
             />
 
             {mvMethod === "classic" || mvIsFactor ? (

@@ -108,6 +108,7 @@ class SpectrumCorrelationRequest(BaseModel):
     reorder: bool = False
     linkage: Literal["average", "complete", "single", "ward"] = "average"
     max_display: int = Field(default=800, ge=100, le=2000)
+    run_async: bool = False  # start in the background; poll GET /explore/runs/{explore_id}
     preprocess: MatrixPreprocess | None = None
 
 
@@ -117,6 +118,7 @@ class SpectrumNMFRequest(BaseModel):
     n_starts: int = Field(default=5, ge=1, le=50)
     scan_k: list[int] | None = None
     seed: int = 0
+    run_async: bool = False  # start in the background; poll GET /explore/runs/{explore_id}
     preprocess: MatrixPreprocess | None = None
 
 
@@ -129,9 +131,10 @@ class SpectrumMCRRequest(BaseModel):
     unimodal_spec: bool = False
     normalise_spec: bool = True
     fixed_spectrum_ids: list[str] | None = None
-    solver: Literal["nnls", "lstsq_clip"] = "nnls"
+    solver: Literal["hals", "nnls", "lstsq_clip"] = "hals"
     max_iter: int = Field(default=200, ge=1, le=2000)
     seed: int = 0
+    run_async: bool = False  # start in the background; poll GET /explore/runs/{explore_id}
     preprocess: MatrixPreprocess | None = None
 
 
@@ -144,6 +147,7 @@ class Spectrum2DCOSRequest(BaseModel):
     perturbation_column: str | None = None
     reference: Literal["mean", "first", "last"] = "mean"
     max_display: int = Field(default=600, ge=100, le=2000)
+    run_async: bool = False  # start in the background; poll GET /explore/runs/{explore_id}
     preprocess: MatrixPreprocess | None = None
 
 
