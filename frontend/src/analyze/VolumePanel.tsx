@@ -21,14 +21,17 @@ import {
   sliceXZ,
   sliceYZ,
   stackFigure,
+  meanXZ,
   volumeCsvRows,
+  volumeFigure,
+  wholeMapProfile,
   zIndicesInRange,
   type PlotlyFig,
   type ProjectionMode,
   type VolumeRow,
 } from "./volumeModel";
 
-type ViewTab = "slices" | "montage" | "stack";
+type ViewTab = "slices" | "montage" | "stack" | "volume3d";
 type XyMode = "slice" | ProjectionMode;
 
 const XY_MODE_LABEL: Record<XyMode, string> = {
@@ -140,6 +143,9 @@ export function VolumePanel({ runId, featureColumns }: { runId: string; featureC
   const [stackLayers, setStackLayers] = useState(10);
   const [stackOpacity, setStackOpacity] = useState(0.85);
   const [reverseZ, setReverseZ] = useState(false);
+  const [vol3dMode, setVol3dMode] = useState<"voxels" | "volume">("voxels");
+  const [vol3dPct, setVol3dPct] = useState(40);
+  const [vol3dOpacity, setVol3dOpacity] = useState(0.7);
   const [spectraFig, setSpectraFig] = useState<PlotlyFig | null>(null);
   const [spectraMsg, setSpectraMsg] = useState("");
   // Figures and view controls render into the wide results pane; data controls stay in the sidebar.
@@ -299,8 +305,27 @@ export function VolumePanel({ runId, featureColumns }: { runId: string; featureC
       title: `${label}: stacked depth layers`,
       reverseZ,
     });
-    return { xy, xz, yz, prof, montage, stack };
-  }, [volume, cross, xyMode, slab, sharedScale, roiRadius, label, montageLayers, montageCols, stackLayers, stackOpacity, reverseZ]);
+    const vol3d = volumeFigure(v, {
+      mode: vol3dMode,
+      percentile: vol3dPct,
+      opacity: vol3dOpacity,
+      label,
+      title: `${label}: 3D volume${vol3dMode === "voxels" ? ` (voxels above the ${vol3dPct}th percentile)` : ""}`,
+      reverseZ,
+    });
+    const xzMean = planeFigure({
+      title: "XZ section (mean over Y)",
+      x: v.xs,
+      y: v.zs,
+      z: meanXZ(v),
+      xTitle: "x (µm)",
+      yTitle: Z_TITLE,
+      colorbarTitle: label,
+      range: shared,
+    });
+    const profAll = profileFigure(wholeMapProfile(v), label, `${label}: XY-averaged profile vs depth (mean ± std over the map)`);
+    return { xy, xz, yz, prof, montage, stack, vol3d, xzMean, profAll };
+  }, [volume, cross, xyMode, slab, sharedScale, roiRadius, label, montageLayers, montageCols, stackLayers, stackOpacity, reverseZ, vol3dMode, vol3dPct, vol3dOpacity]);
 
   function setPoint(patch: Partial<{ xi: number; yi: number; zi: number }>) {
     setCross((c) => ({ ...c, ...patch }));
@@ -474,6 +499,7 @@ export function VolumePanel({ runId, featureColumns }: { runId: string; featureC
                 ["slices", "Slices + depth profile"],
                 ["montage", "Montage of layers"],
                 ["stack", "3D stack of heatmaps"],
+                ["volume3d", "3D volume + overview"],
               ] as Array<[ViewTab, string]>
             ).map(([id, text]) => (
               <button key={id} type="button" className={tab === id ? "mini active" : "mini"} onClick={() => setTab(id)}>
@@ -606,6 +632,36 @@ export function VolumePanel({ runId, featureColumns }: { runId: string; featureC
                 Each plane is one depth layer drawn at its own z. Lower the opacity or show fewer layers to see through the stack.
               </p>
               <FigureCard id="volume_stack" fig={figs.stack} height={560} />
+            </>
+          ) : null}
+
+          {tab === "volume3d" ? (
+            <>
+              <div className="row" style={{ flexWrap: "wrap", gap: "10px", alignItems: "flex-end", marginTop: "10px" }}>
+                <label className="inline">
+                  Render
+                  <select value={vol3dMode} onChange={(e) => setVol3dMode(e.target.value as "voxels" | "volume")}>
+                    <option value="voxels">Voxel cloud</option>
+                    <option value="volume">Translucent volume (iso-surfaces)</option>
+                  </select>
+                </label>
+                <label className="inline" title="Only voxels at or above this percentile of the values are drawn / used as the lowest iso-surface.">
+                  Threshold percentile
+                  <input type="number" min={0} max={99} style={{ width: "60px" }} value={vol3dPct} onChange={(e) => setVol3dPct(Math.min(99, Math.max(0, Number(e.target.value) || 0)))} />
+                </label>
+                <label className="inline">
+                  Opacity
+                  <input type="range" min={0.05} max={1} step={0.05} value={vol3dOpacity} onChange={(e) => setVol3dOpacity(Number(e.target.value))} />
+                </label>
+                <label className="inline">
+                  <input type="checkbox" checked={reverseZ} onChange={(e) => setReverseZ(e.target.checked)} /> Reverse depth axis
+                </label>
+              </div>
+              <FigureCard id="volume_3d" fig={figs.vol3d} height={560} />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: "10px", marginTop: "10px" }}>
+                <FigureCard id="volume_xz_mean_over_y" fig={figs.xzMean} />
+                <FigureCard id="volume_xy_averaged_profile" fig={figs.profAll} />
+              </div>
             </>
           ) : null}
                 </div>,

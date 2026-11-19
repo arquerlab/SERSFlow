@@ -459,6 +459,123 @@ export function stackFigure(
   };
 }
 
+/** Quantile (0..1) of the finite voxel values; null when the volume has none. */
+export function volumeQuantile(v: Volume, q: number): number | null {
+  const vals: number[] = [];
+  for (const pl of v.values) for (const row of pl) for (const val of row) if (val !== null && Number.isFinite(val)) vals.push(val);
+  if (!vals.length) return null;
+  vals.sort((a, b) => a - b);
+  const p = Math.min(1, Math.max(0, q));
+  return vals[Math.round(p * (vals.length - 1))];
+}
+
+/** XZ section averaged over all Y rows -> [zi][xi] (null where no finite voxel). */
+export function meanXZ(v: Volume): (number | null)[][] {
+  return v.zs.map((_, z) =>
+    v.xs.map((__, x) => {
+      let s = 0;
+      let n = 0;
+      for (let y = 0; y < v.ys.length; y++) {
+        const val = v.values[z][y][x];
+        if (val !== null && Number.isFinite(val)) {
+          s += val;
+          n++;
+        }
+      }
+      return n ? s / n : null;
+    })
+  );
+}
+
+/** Depth profile over the WHOLE map (mean +/- std of every finite voxel at each depth). */
+export function wholeMapProfile(v: Volume): DepthProfile {
+  const r = Math.max(v.xs.length, v.ys.length);
+  return depthProfile(v, Math.floor(v.xs.length / 2), Math.floor(v.ys.length / 2), r);
+}
+
+/**
+ * True 3-D rendering of the volume: either a voxel cloud (voxels above a percentile, coloured by value; the same
+ * look as the reference Raman analysis) or Plotly's translucent iso-surface volume.
+ */
+export function volumeFigure(
+  v: Volume,
+  opts: { mode: "voxels" | "volume"; percentile: number; opacity: number; label: string; title: string; reverseZ?: boolean; zSpread?: number; colorscale?: string }
+): PlotlyFig {
+  const range = colorRange(v, true);
+  const thr = volumeQuantile(v, opts.percentile / 100);
+  const X: number[] = [];
+  const Y: number[] = [];
+  const Z: number[] = [];
+  const V: number[] = [];
+  for (let z = 0; z < v.zs.length; z++)
+    for (let y = 0; y < v.ys.length; y++)
+      for (let x = 0; x < v.xs.length; x++) {
+        const val = v.values[z][y][x];
+        if (val === null || !Number.isFinite(val)) continue;
+        X.push(v.xs[x]);
+        Y.push(v.ys[y]);
+        Z.push(v.zs[z]);
+        V.push(val);
+      }
+  const colorscale = opts.colorscale ?? "Viridis";
+  const hover = `x: %{x}<br>y: %{y}<br>z: %{z} µm<br>${opts.label}: %{customdata:.4g}<extra></extra>`;
+  let trace: any;
+  if (opts.mode === "volume") {
+    trace = {
+      type: "volume",
+      x: X,
+      y: Y,
+      z: Z,
+      value: V,
+      isomin: thr ?? range.zmin,
+      isomax: range.zmax,
+      opacity: Math.min(1, Math.max(0.02, opts.opacity)),
+      surface_count: 15,
+      colorscale,
+      colorbar: { title: { text: opts.label }, len: 0.7 },
+    };
+  } else {
+    const keep = V.map((val) => thr === null || val >= thr);
+    trace = {
+      type: "scatter3d",
+      mode: "markers",
+      x: X.filter((_, i) => keep[i]),
+      y: Y.filter((_, i) => keep[i]),
+      z: Z.filter((_, i) => keep[i]),
+      customdata: V.filter((_, i) => keep[i]),
+      marker: {
+        size: 4,
+        color: V.filter((_, i) => keep[i]),
+        colorscale,
+        cmin: range.zmin,
+        cmax: range.zmax,
+        opacity: Math.min(1, Math.max(0.05, opts.opacity)),
+        colorbar: { title: { text: opts.label }, len: 0.7 },
+        line: { width: 0 },
+      },
+      hovertemplate: hover,
+    };
+  }
+  const span = Math.max(1e-9, Math.max(...v.xs) - Math.min(...v.xs), Math.max(...v.ys) - Math.min(...v.ys));
+  const zRange = Math.max(1e-9, Math.max(...v.zs) - Math.min(...v.zs));
+  const zAspect = Math.min(1.6, Math.max(0.4, ((opts.zSpread ?? 1) * zRange) / span));
+  return {
+    data: [trace],
+    layout: {
+      title: { text: opts.title },
+      margin: { l: 0, r: 0, t: 40, b: 0 },
+      scene: {
+        xaxis: { title: { text: "x (µm)" } },
+        yaxis: { title: { text: "y (µm)" } },
+        zaxis: { title: { text: Z_TITLE }, autorange: opts.reverseZ ? "reversed" : true },
+        aspectmode: "manual",
+        aspectratio: { x: 1, y: 1, z: zAspect },
+        camera: { eye: { x: 1.6, y: -1.6, z: 0.9 } },
+      },
+    },
+  };
+}
+
 export function volumeCsvRows(v: Volume, label: string): Array<Record<string, string | number | null>> {
   const out: Array<Record<string, string | number | null>> = [];
   for (let z = 0; z < v.zs.length; z++)

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildVolume,
   depthProfile,
+  meanXZ,
   montageFigure,
   nearestIdx,
   pickLayers,
@@ -12,6 +13,8 @@ import {
   sliceYZ,
   stackFigure,
   volumeCsvRows,
+  volumeFigure,
+  wholeMapProfile,
   zIndicesInRange,
   type VolumeRow,
 } from "./volumeModel";
@@ -140,5 +143,24 @@ describe("helpers and figures", () => {
   });
   it("csv rows cover every voxel", () => {
     expect(volumeCsvRows(v, "A")).toHaveLength(24);
+  });
+  it("3D volume figure: voxel cloud keeps only voxels above the percentile; volume mode emits a volume trace", () => {
+    const all = volumeFigure(v, { mode: "voxels", percentile: 0, opacity: 0.7, label: "A", title: "t" });
+    expect(all.data[0].type).toBe("scatter3d");
+    expect(all.data[0].x).toHaveLength(24);
+    const top = volumeFigure(v, { mode: "voxels", percentile: 50, opacity: 0.7, label: "A", title: "t" });
+    expect(top.data[0].x.length).toBeLessThan(24);
+    expect(top.data[0].x.length).toBeGreaterThan(0);
+    const vol = volumeFigure(v, { mode: "volume", percentile: 50, opacity: 0.5, label: "A", title: "t" });
+    expect(vol.data[0].type).toBe("volume");
+    expect(vol.data[0].value).toHaveLength(24);
+  });
+  it("mean-over-Y section and whole-map profile have the volume's depth dimension", () => {
+    const m = meanXZ(v);
+    expect(m).toHaveLength(v.zs.length);
+    expect(m[0]).toHaveLength(v.xs.length);
+    const p = wholeMapProfile(v);
+    expect(p.z).toHaveLength(v.zs.length);
+    expect(p.n[0]).toBe(v.xs.length * v.ys.length);
   });
 });
