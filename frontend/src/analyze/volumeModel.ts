@@ -83,6 +83,7 @@ export function buildVolume(rows: VolumeRow[], opts: VolumeOptions = {}): Volume
   const ids: (string | null)[][][] = zsRaw.map(() => ysRaw.map(() => xsRaw.map(() => null)));
   let vmin = Infinity;
   let vmax = -Infinity;
+  const finite: number[] = [];
   for (const r of rows) {
     const ix = xi.get(key(r.x));
     const iy = yi.get(key(r.y));
@@ -94,7 +95,14 @@ export function buildVolume(rows: VolumeRow[], opts: VolumeOptions = {}): Volume
     if (v !== null) {
       if (v < vmin) vmin = v;
       if (v > vmax) vmax = v;
+      if (opts.ratio) finite.push(v);
     }
+  }
+  // Ratios blow up where the denominator is ~0: keep the colour scale on the central 98 % of voxels.
+  if (opts.ratio && finite.length > 50) {
+    finite.sort((a, b) => a - b);
+    vmin = finite[Math.floor(0.01 * (finite.length - 1))];
+    vmax = finite[Math.ceil(0.99 * (finite.length - 1))];
   }
   if (!Number.isFinite(vmin)) {
     vmin = 0;

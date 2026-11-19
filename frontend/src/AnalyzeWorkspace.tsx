@@ -1307,10 +1307,21 @@ export default function AnalyzeWorkspace() {
   }, [heatmapAvailableFiles, heatmapFileMode, heatmapSelectedFiles, heatmapSingleFile]);
 
   useEffect(() => {
-    if (!heatmapFeature && featureColumns.length) {
+    // A feature name left over from another run does not exist in this run: every value would be null.
+    if (featureColumns.length && (!heatmapFeature || !featureColumns.includes(heatmapFeature))) {
       setHeatmapFeature(featureColumns[0] ?? "");
     }
   }, [featureColumns, heatmapFeature]);
+
+  // Heatmap rows/files belong to one run: drop them when the run changes.
+  useEffect(() => {
+    heatmapLoadedKeyRef.current = "";
+    setHeatmapRows([]);
+    setHeatmapPlots([]);
+    setHeatmapSingleFile("");
+    setHeatmapSelectedFiles([]);
+    setHeatmapZ("mean");
+  }, [runId]);
 
   // Keep checkbox selections aligned with the *current* run. Persisted names from localStorage
   // or a previous run can be stale — unknown keys become NaN for every row and break /explore/*.

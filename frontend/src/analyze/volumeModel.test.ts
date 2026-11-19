@@ -52,6 +52,13 @@ describe("buildVolume and slices", () => {
     expect(m.values[0][0][0]).toBeNull();
     expect(m.values[1][0][0]).toBe(100);
   });
+  it("ratio colour range ignores extreme outliers", () => {
+    const rs: VolumeRow[] = [];
+    for (let i = 0; i < 200; i++) rs.push({ spectrum_id: `r${i}`, x: i % 10, y: Math.floor(i / 10) % 10, z: Math.floor(i / 100), a: 1 + (i % 5), b: 1 });
+    rs[7].b = 1e-9; // huge ratio
+    const v = buildVolume(rs, { ratio: true });
+    expect(v.vmax).toBeLessThan(10);
+  });
   it("ratio with zero or missing denominator is null", () => {
     const rs = rows();
     rs[0].b = 0;

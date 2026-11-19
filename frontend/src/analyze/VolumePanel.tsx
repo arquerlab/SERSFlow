@@ -147,8 +147,9 @@ export function VolumePanel({ runId, featureColumns }: { runId: string; featureC
   });
 
   useEffect(() => {
-    if (!featA && featureColumns.length) setFeatA(featureColumns[0]);
-  }, [featureColumns, featA]);
+    if (featureColumns.length && (!featA || !featureColumns.includes(featA))) setFeatA(featureColumns[0]);
+    if (featB && featureColumns.length && !featureColumns.includes(featB)) setFeatB("");
+  }, [featureColumns, featA, featB]);
 
   const ratioActive = useRatio && !!featB;
 
