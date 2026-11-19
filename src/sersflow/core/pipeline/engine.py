@@ -759,6 +759,8 @@ def _run_indexed_steps_for_spectrum(
             params.setdefault("technique_family", technique_family)
         if name == "metadata_filter" or (name == "x_axis_calibration" and str(params.get("method") or "").strip().lower() == "casa_calibration"):
             params["_spectrum_labels"] = labels_row
+        elif name in ("baseline", "baseline_curve") and params.get("casa_region_from_labels") in (True, "true", "True", 1, "1"):
+            params["_spectrum_labels"] = labels_row
 
         input_from = _step_input_from_raw(step)
         after_id = _step_after_step_id_raw(step)

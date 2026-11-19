@@ -235,12 +235,36 @@ def _xps_despike(xy: XY, params: dict[str, Any]) -> XY:
     return XY(x=xy.x, y=corrected, var=var, var_kind=xy.var_kind)
 
 
+def _baseline_step_kwargs(method: str, params: dict[str, Any]) -> dict[str, Any]:
+    """baseline_kwargs plus the CasaXPS region read from the spectrum labels (casa_region_from_labels)."""
+    kwargs = baseline_kwargs(method, params)
+    if not kwargs.get("casa_region_from_labels"):
+        return kwargs
+    labels = params.get("_spectrum_labels")
+    labels = labels if isinstance(labels, dict) else {}
+    lo, hi = labels.get("casa_region_be_min_eV"), labels.get("casa_region_be_max_eV")
+    if lo is None or hi is None:
+        raise ValueError(
+            "baseline casa_region_from_labels needs the block's VAMAS 'CASA region' line (labels "
+            "casa_region_be_min_eV / casa_region_be_max_eV); reload the VAMAS file or set region_min_x / region_max_x"
+        )
+    kwargs["casa_rule"] = True
+    kwargs["region_min_x"], kwargs["region_max_x"] = float(lo), float(hi)
+    kwargs["offset_low_pct"] = float(labels.get("casa_region_offset_low_pct") or 0.0)
+    kwargs["offset_high_pct"] = float(labels.get("casa_region_offset_high_pct") or 0.0)
+    aw = kwargs.get("avg_width")
+    if (aw is None or str(aw).strip().lower() in ("", "auto")) and labels.get("casa_region_av_width") is not None:
+        # CasaXPS Av Width N averaged +-(N-1) channels centred on the end channel (verified for N = 4).
+        kwargs["avg_width"] = max(int(round(float(labels["casa_region_av_width"]))) - 1, 0)
+    return kwargs
+
+
 def _baseline(xy: XY, params: dict[str, Any]) -> XY:
     if xy.y.size == 0:
         return xy
 
     method = str(params.get("method", "derpsalsa"))
-    kwargs = baseline_kwargs(method, params)
+    kwargs = _baseline_step_kwargs(method, params)
     corrected, _ = correct_baseline(
         xy.y.astype(float, copy=False),
         method=method,
@@ -502,7 +526,7 @@ def _baseline_curve(xy: XY, params: dict[str, Any]) -> XY:
         return xy
 
     method = str(params.get("method", "derpsalsa"))
-    kwargs = baseline_kwargs(method, params)
+    kwargs = _baseline_step_kwargs(method, params)
     _, info = correct_baseline(
         xy.y.astype(float, copy=False),
         method=method,

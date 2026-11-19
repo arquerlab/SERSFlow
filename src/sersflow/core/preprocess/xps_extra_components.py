@@ -4,6 +4,7 @@ Backgrounds and components added for CasaXPS parity (B1, L1, M1).
 * Endpoint levels with CasaXPS "Av Width" (+-N channels averaged at each region end) and percentage offsets that lower
   the background at the low-x / high-x end (CasaXPS Start/End Offset; Cookbook p.68, 171).
 * Static iterative Shirley and linear endpoint backgrounds using those levels.
+* ``casa_shirley``: the CasaXPS region Shirley rule (centred end averaging, |y - B| integrand), opt-in.
 * ``erfc_step_bg``: erfc step (CasaXPS Step backgrounds, Cookbook p.98): B = height/2 * erfc((pos - x)/a) + const,
   a = FWHM / (2 sqrt(ln 2)); positive height = intensity rises with x (with BE, e.g. a Fermi edge seen in BE).
   ``pos`` is the inflection (CasaXPS "Step"); the "Edge" position is pos - a*sqrt(pi)/2 (tangent at the inflection
@@ -100,6 +101,72 @@ def shirley_static(
         bg = new
     out = np.empty_like(bg)
     out[order] = bg
+    return out
+
+
+def casa_shirley(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    region_min_x: float | None = None,
+    region_max_x: float | None = None,
+    avg_width: Any = 3,
+    offset_low_pct: float = 0.0,
+    offset_high_pct: float = 0.0,
+    tol: float = 1e-10,
+    maxit: int = 200,
+) -> np.ndarray:
+    """
+    CasaXPS region "Shirley" background, reverse engineered on the Codel Co 2p exports (8 spectra, exported
+    Background reproduced to the 0.1 CPS rounding of the export). x is binding energy (background rises with x).
+
+    * Region = channels with ``region_min_x <= x <= region_max_x`` (None = the whole spectrum).
+    * End levels: mean of the data over +-``avg_width`` channels CENTRED on the first / last region channel,
+      reaching outside the region when the data extend there (CasaXPS "Av Width" 4 behaved as +-3 here), then
+      multiplied by ``1 - offset/100`` (CasaXPS Start/End Offset; Start = low KE = high BE end).
+    * Shape: B_i = I_lo + (I_hi - I_lo) * S_i / S, S_i = sum_{j<i} |y_j - B_j| (own channel excluded, ABSOLUTE
+      difference), S = sum over all region channels, iterated to convergence. B therefore starts exactly at I_lo
+      but stops just short of I_hi.
+    * Outside the region the background equals the data (as in the CasaXPS export), so the net signal is 0 there.
+    """
+    xf = np.asarray(x, dtype=float)
+    yf = np.asarray(y, dtype=float)
+    if xf.shape != yf.shape:
+        raise ValueError("x and y must have the same shape")
+    if xf.size == 0:
+        raise ValueError("empty spectrum")
+    order = np.argsort(xf, kind="stable")
+    xs, ys = xf[order], yf[order]
+    lo_x = -np.inf if region_min_x is None else float(region_min_x)
+    hi_x = np.inf if region_max_x is None else float(region_max_x)
+    if lo_x > hi_x:
+        lo_x, hi_x = hi_x, lo_x
+    idx = np.flatnonzero((xs >= lo_x) & (xs <= hi_x))
+    if idx.size < 2:
+        raise ValueError("CasaXPS Shirley region holds fewer than 2 channels")
+    i0, i1 = int(idx[0]), int(idx[-1])
+    w = resolve_avg_width(xs.size, avg_width)
+    if w < 0:
+        w = 3
+    lo_v = float(np.mean(ys[max(i0 - w, 0) : i0 + w + 1])) * (1.0 - float(offset_low_pct or 0.0) / 100.0)
+    hi_v = float(np.mean(ys[max(i1 - w, 0) : i1 + w + 1])) * (1.0 - float(offset_high_pct or 0.0) / 100.0)
+    yr = ys[i0 : i1 + 1]
+    bg = np.full_like(yr, lo_v)
+    for _ in range(int(maxit)):
+        g = np.abs(yr - bg)
+        c = np.cumsum(g)
+        total = c[-1]
+        if not np.isfinite(total) or total == 0.0:
+            break
+        new = lo_v + (hi_v - lo_v) * (c - g) / total
+        done = np.max(np.abs(new - bg)) <= tol * max(1.0, abs(hi_v - lo_v))
+        bg = new
+        if done:
+            break
+    full = ys.copy()
+    full[i0 : i1 + 1] = bg
+    out = np.empty_like(full)
+    out[order] = full
     return out
 
 

@@ -78,6 +78,50 @@ def parse_casa_calibration(comment_lines: list[str] | tuple[str, ...] | None) ->
     return None
 
 
+def parse_casa_region(
+    comment_lines: list[str] | tuple[str, ...] | None,
+    *,
+    photon_energy_eV: float | None = None,
+) -> dict[str, Any] | None:
+    """
+    First ``CASA region`` line of a block with its numeric fields, e.g. ``... 306.91016 326.33032 1 4 6 0 0 -450 0 0``:
+    KE start, KE end, then ``[1] 4`` = Av Width, ``6`` = Start Offset %, ``0`` = End Offset %, then four background
+    parameters. Field meaning verified on CasaXPS Shirley exports for Av Width (4 -> centred +-3 channels) and the
+    Start Offset (applied at the start = low-KE = high-BE end); the End Offset position is inferred (0 in all data
+    seen). ``be_min_eV`` / ``be_max_eV`` are ``photon energy - KE`` (CasaXPS calibrated frame) and the offsets are
+    also mapped onto the low-/high-BE ends.
+    """
+    for line in comment_lines or []:
+        s = str(line).strip()
+        if not s.startswith("CASA region"):
+            continue
+        m = _REGION_RE.match(s)
+        if not m:
+            continue
+        ke0, ke1 = _f(m.group("ke0")), _f(m.group("ke1"))
+        nums: list[float] = []
+        for tok in m.group("rest").split():
+            v = _f(tok)
+            if v is None:
+                break
+            nums.append(v)
+        out: dict[str, Any] = {"name": m.group("name"), "background": m.group("bg"), "ke_start_eV": ke0, "ke_end_eV": ke1, "fields": nums}
+        if len(nums) >= 4:
+            out["av_width"] = nums[1]
+            out["start_offset_pct"] = nums[2]
+            out["end_offset_pct"] = nums[3]
+        if photon_energy_eV is not None and ke0 is not None and ke1 is not None:
+            be0, be1 = _be(photon_energy_eV, ke0), _be(photon_energy_eV, ke1)
+            if be0 is not None and be1 is not None:
+                out["be_min_eV"], out["be_max_eV"] = min(be0, be1), max(be0, be1)
+                if "start_offset_pct" in out:
+                    start_is_high = be0 >= be1
+                    out["offset_high_pct"] = out["start_offset_pct"] if start_is_high else out["end_offset_pct"]
+                    out["offset_low_pct"] = out["end_offset_pct"] if start_is_high else out["start_offset_pct"]
+        return out
+    return None
+
+
 def parse_casa_comments(
     comment_lines: list[str] | tuple[str, ...] | None,
     *,

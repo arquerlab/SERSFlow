@@ -123,6 +123,19 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "tc": "Tougaard C parameter of the 4-PIESCS loss function.",
     "tcd": "Tougaard C' parameter (set with td for 2/3/4-PIESCS variants).",
     "td": "Tougaard D parameter of the 4-PIESCS loss function.",
+    "avg_width": "Channels averaged on each side of a Shirley/linear end point (None/'auto' = legacy rule).",
+    "offset_low_pct": "Lower the low-x (low BE) end level by this percentage (CasaXPS End Offset).",
+    "offset_high_pct": "Lower the high-x (high BE) end level by this percentage (CasaXPS Start Offset).",
+    "casa_rule": (
+        "CasaXPS region Shirley: end levels = mean of +-avg_width channels CENTRED on each region end (default 3, "
+        "CasaXPS 'Av Width 4'), integrand |y - B| summed below each channel, data kept outside the region."
+    ),
+    "region_min_x": "CasaXPS rule: low-x end of the background region (None = spectrum start); no crop needed.",
+    "region_max_x": "CasaXPS rule: high-x end of the background region (None = spectrum end).",
+    "casa_region_from_labels": (
+        "CasaXPS rule: take region bounds, Av Width and Start/End offsets from the block's VAMAS 'CASA region' line "
+        "(spectrum labels casa_region_*), so one pipeline reproduces per-spectrum CasaXPS regions."
+    ),
 }
 
 _INT_PARAMS = {
@@ -278,6 +291,12 @@ BASELINE_METHOD_SPECS: tuple[BaselineMethodSpec, ...] = (
             ("avg_width", None),
             ("offset_low_pct", 0.0),
             ("offset_high_pct", 0.0),
+            # CasaXPS region Shirley rule (opt-in, default off): centred end averaging, |y - B| integrand,
+            # region bounds inside the spectrum (no crop needed), or everything read from the VAMAS CASA region line.
+            ("casa_rule", False),
+            ("region_min_x", None),
+            ("region_max_x", None),
+            ("casa_region_from_labels", False),
         ],
         primary=("tol", "maxit", "avg_width"),
         label="Shirley",
@@ -428,7 +447,20 @@ def _correct_lmfitxps_baseline(
 
         aw = coerced.get("avg_width")
         offs = (float(coerced.get("offset_low_pct") or 0.0), float(coerced.get("offset_high_pct") or 0.0))
-        if (aw is None or str(aw).strip().lower() in ("", "auto")) and offs == (0.0, 0.0):
+        if coerced.get("casa_rule") or coerced.get("casa_region_from_labels"):
+            from sersflow.core.preprocess.xps_extra_components import casa_shirley
+
+            baseline = casa_shirley(
+                xx,
+                y,
+                region_min_x=coerced.get("region_min_x"),
+                region_max_x=coerced.get("region_max_x"),
+                avg_width=3 if aw is None or str(aw).strip().lower() in ("", "auto") else aw,
+                offset_low_pct=offs[0],
+                offset_high_pct=offs[1],
+                maxit=max(int(coerced["maxit"]), 200),
+            )
+        elif (aw is None or str(aw).strip().lower() in ("", "auto")) and offs == (0.0, 0.0):
             baseline = np.asarray(
                 shirley_calculate(xx, y, tol=coerced["tol"], maxit=coerced["maxit"], bounds=coerced["bounds"]),
                 dtype=float,

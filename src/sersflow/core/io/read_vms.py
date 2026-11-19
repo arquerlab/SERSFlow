@@ -300,6 +300,17 @@ def block_meta_dict(block: VamasBlock) -> dict[str, Any]:
     casa_cal = parse_casa_calibration(ef.get("block_comments"))
     if casa_cal is not None:
         out["casa_calibration_M_eV"] = casa_cal["M_eV"]
+    from sersflow.core.io.casa_fit import parse_casa_region
+
+    casa_reg = parse_casa_region(ef.get("block_comments"), photon_energy_eV=block.excitation_energy_eV)
+    if casa_reg is not None and "be_min_eV" in casa_reg:
+        # CasaXPS region (calibrated BE frame) for the baseline step's casa_region_from_labels option.
+        out["casa_region_background"] = casa_reg.get("background")
+        out["casa_region_be_min_eV"] = casa_reg["be_min_eV"]
+        out["casa_region_be_max_eV"] = casa_reg["be_max_eV"]
+        for key in ("av_width", "offset_low_pct", "offset_high_pct"):
+            if key in casa_reg:
+                out[f"casa_region_{key}"] = casa_reg[key]
     scans = _positive_float(ef.get("n_scans"))
     if scans is not None:
         out["n_scans"] = int(scans) if float(scans).is_integer() else scans
