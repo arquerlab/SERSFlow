@@ -370,6 +370,94 @@ def register(mcp: FastMCP, ctx: RuntimeContext) -> None:
 
         return await tool_call(ctx, _run)
 
+    @mcp.tool(name="post_explore_depth_align")
+    async def post_explore_depth_align(
+        analysis_run_id: str,
+        feature_column: str,
+        order_column: str = "axis_z",
+        position_columns: list[str] | None = None,
+        mode: Literal["edge", "argmax"] = "edge",
+        direction: Literal["down", "up"] = "down",
+        smooth: int = 3,
+        plateau_z_max: float | None = None,
+        low_z_range: list[float] | None = None,
+        search_z_min: float | None = None,
+        reference: list[float] | None = None,
+    ) -> str:
+        """POST /explore/depth-align: per-map-position interface edge (half-height crossing of one feature along z)
+        and z shifts relative to a reference position (default: the position closest to the centre, which keeps its z).
+        Windows default to the lowest third of z (plateau) and everything above it (low); set them for your sample."""
+
+        def _run():
+            from sersflow.api.schemas.explore import DepthAlignRequest
+
+            req = DepthAlignRequest(
+                analysis_run_id=analysis_run_id,
+                feature_column=feature_column,
+                order_column=order_column,
+                position_columns=position_columns or ["axis_map_x", "axis_map_y"],
+                mode=mode,
+                direction=direction,
+                smooth=smooth,
+                plateau_z_max=plateau_z_max,
+                low_z_range=low_z_range,
+                search_z_min=search_z_min,
+                reference=reference,
+            )
+            return summarize.depth_result(ctx.get_client().explore.depth_align(req))
+
+        return await tool_call(ctx, _run)
+
+    @mcp.tool(name="post_explore_depth_segments")
+    async def post_explore_depth_segments(
+        analysis_run_id: str,
+        feature_columns: list[str],
+        order_column: str = "axis_z",
+        method: Literal["contiguous", "kmeans"] = "contiguous",
+        n_segments: int = 4,
+        k_max: int = 6,
+        bin_width: float = 5.0,
+        winsor_pct: float | None = 99.0,
+        robust_clip: float | None = 5.0,
+        standardize: bool = True,
+        seed: int = 0,
+        n_init: int = 50,
+        per_position_check: bool = True,
+        position_columns: list[str] | None = None,
+        align: dict[str, Any] | None = None,
+        zone_names: list[str] | None = None,
+    ) -> str:
+        """POST /explore/segments: segment spectra along an ordered axis (no PCA). method="contiguous" = exact
+        dynamic-programming split into contiguous zones (cost vs K, boundaries, per-position boundary scatter);
+        method="kmeans" = plain k-means on the same features (silhouette vs K, contiguity). ``align`` (optional) is a
+        DepthAlignParams dict (feature_column, mode, plateau_z_max, low_z_range, search_z_min, reference, ...)
+        applied first so the aligned z is segmented. Features are winsorised / robust-scaled / standardised."""
+
+        def _run():
+            from sersflow.api.schemas.explore import SegmentsRequest
+
+            req = SegmentsRequest(
+                analysis_run_id=analysis_run_id,
+                feature_columns=feature_columns,
+                order_column=order_column,
+                method=method,
+                n_segments=n_segments,
+                k_max=k_max,
+                bin_width=bin_width,
+                winsor_pct=winsor_pct,
+                robust_clip=robust_clip,
+                standardize=standardize,
+                seed=seed,
+                n_init=n_init,
+                per_position_check=per_position_check,
+                position_columns=position_columns or ["axis_map_x", "axis_map_y"],
+                align=align,
+                zone_names=zone_names,
+            )
+            return summarize.depth_result(ctx.get_client().explore.segments(req))
+
+        return await tool_call(ctx, _run)
+
     @mcp.tool(name="post_explore_spectrum_correlation")
     async def post_explore_spectrum_correlation(
         matrix_job_id: str,

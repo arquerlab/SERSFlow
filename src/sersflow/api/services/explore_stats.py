@@ -366,6 +366,224 @@ def run_kmeans(X: np.ndarray, spectrum_ids: list[str], *, n_clusters: int = 3, s
     }
 
 
+def _jsonable(o: Any) -> Any:
+    """numpy -> python, NaN/inf -> None (strict JSON)."""
+    if isinstance(o, dict):
+        return {(k if isinstance(k, str) else str(k)): _jsonable(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_jsonable(v) for v in o]
+    if isinstance(o, np.ndarray):
+        return _jsonable(o.tolist())
+    if isinstance(o, (np.floating, float)):
+        f = float(o)
+        return f if np.isfinite(f) else None
+    if isinstance(o, np.integer):
+        return int(o)
+    return o
+
+
+def compute_depth_alignment(
+    z: np.ndarray, pos: np.ndarray, profile: np.ndarray, params: dict[str, Any]
+) -> dict[str, Any]:
+    """Per-position edge of ``profile`` along ``z`` and the shifts relative to a reference position.
+
+    ``pos`` is (n_rows, n_pos_cols). Returns aligned z per row (``z_aligned``) plus a per-position table.
+    """
+    from sersflow.core.multivariate import depth as dp
+
+    z = np.asarray(z, dtype=np.float64)
+    pos = np.asarray(pos, dtype=np.float64).reshape(len(z), -1)
+    keys = [tuple(float(v) for v in r) for r in pos]
+    rows_of: dict[tuple, list[int]] = {}
+    for i, k in enumerate(keys):
+        rows_of.setdefault(k, []).append(i)
+    edges: dict[tuple, float] = {}
+    for k, idx in rows_of.items():
+        ix = np.asarray(idx)
+        edges[k] = dp.interface_edge_z(
+            z[ix],
+            profile[ix],
+            mode=params.get("mode", "edge"),
+            smooth=int(params.get("smooth", 3)),
+            plateau_z_max=params.get("plateau_z_max"),
+            plateau_n=int(params.get("plateau_n", 6)),
+            low_z_range=tuple(params["low_z_range"]) if params.get("low_z_range") else None,
+            search_z_min=params.get("search_z_min"),
+            direction=params.get("direction", "down"),
+        )
+    ref = tuple(float(v) for v in params["reference"]) if params.get("reference") else None
+    res = dp.position_z_shifts(edges, ref)
+    z_al = dp.apply_shifts(z, keys, res["shifts"])
+    table = [{"position": list(k), "edge_z": edges[k], "shift": res["shifts"][k]} for k in edges]
+    sh = np.array([t["shift"] for t in table], dtype=float)
+    fin = sh[np.isfinite(sh)]
+    return {
+        "reference": [float(v) for v in res["reference"]],
+        "reference_edge_z": res["reference_edge_z"],
+        "n_positions": len(table),
+        "n_positions_without_edge": int(len(table) - len(fin)),
+        "shift_min": float(fin.min()) if fin.size else None,
+        "shift_max": float(fin.max()) if fin.size else None,
+        "shift_mean": float(fin.mean()) if fin.size else None,
+        "shift_std": float(fin.std(ddof=1)) if fin.size > 1 else None,
+        "positions": table,
+        "z_aligned": z_al,
+    }
+
+
+def compute_segments(
+    z: np.ndarray,
+    X: np.ndarray,
+    *,
+    method: str = "contiguous",
+    n_segments: int = 4,
+    k_max: int = 6,
+    bin_width: float = 5.0,
+    winsor_pct: float | None = 99.0,
+    robust_clip: float | None = 5.0,
+    standardize: bool = True,
+    seed: int = 0,
+    n_init: int = 50,
+    pos: np.ndarray | None = None,
+    per_position_check: bool = True,
+    names: list[str] | None = None,
+) -> dict[str, Any]:
+    """Segment rows (ordered by ``z``) from feature matrix ``X`` (rows with non-finite z / features removed).
+
+    Returns labels (0-based, increasing with z for ``contiguous``; k-means clusters are numbered by median z),
+    cuts, cost / silhouette versus K, per-segment medians.
+    """
+    from sersflow.core.multivariate import depth as dp
+
+    z = np.asarray(z, dtype=np.float64)
+    F = dp.prepare_features(X, winsor_pct=winsor_pct, robust_clip=robust_clip, standardize=standardize)
+    if len(z) < max(n_segments, 2):
+        raise ValueError("fewer spectra than segments")
+    k_max = max(int(k_max), int(n_segments))
+    out: dict[str, Any] = {"method": method, "n_segments": int(n_segments), "n_rows": int(len(z))}
+    if method == "contiguous":
+        b = dp.bin_ordered(z, F, bin_width)
+        sol = dp.contiguous_segments(b["F"], b["w"], k_max)
+        if n_segments not in sol:
+            raise ValueError("n_segments exceeds the number of distinct z bins")
+        cuts_by_k = {K: dp.cut_positions(b["z"], st) for K, (_, st) in sol.items()}
+        cost_by_k = {K: c for K, (c, _) in sol.items()}
+        cuts = cuts_by_k[n_segments]
+        labels = dp.segment_labels(z, cuts)
+        out.update(cuts=cuts, cuts_by_k=cuts_by_k, cost_by_k=cost_by_k, n_bins=int(len(b["z"])))
+        if per_position_check and pos is not None:
+            out["per_position_cuts"] = dp.per_position_cuts(z, F, pos, n_segments)
+    else:
+        from sklearn.metrics import silhouette_score
+
+        labels, inertia = dp.kmeans_ordered(F, z, n_segments, seed=seed, n_init=n_init)
+        cost_by_k: dict[int, float] = {}
+        sil_by_k: dict[int, float] = {}
+        for K in range(2, k_max + 1):
+            lab, ine = dp.kmeans_ordered(F, z, K, seed=seed, n_init=n_init)
+            cost_by_k[K] = ine
+            if len(np.unique(lab)) > 1:
+                sil_by_k[K] = float(silhouette_score(F, lab, sample_size=min(1500, len(z)), random_state=seed))
+        out.update(cost_by_k=cost_by_k, silhouette_by_k=sil_by_k, inertia=inertia)
+        # contiguity: fraction of z-sorted neighbours that share a label (1 = perfectly contiguous)
+        o = np.argsort(z, kind="stable")
+        out["contiguity"] = float(np.mean(labels[o][1:] == labels[o][:-1]))
+    seg = []
+    for c in range(int(labels.max()) + 1):
+        m = labels == c
+        if not m.any():
+            continue
+        row: dict[str, Any] = {
+            "segment": c,
+            "n": int(m.sum()),
+            "z_min": float(z[m].min()),
+            "z_max": float(z[m].max()),
+            "z_median": float(np.median(z[m])),
+        }
+        if names:
+            row["median_features"] = {n: float(np.nanmedian(X[m, j])) for j, n in enumerate(names)}
+        seg.append(row)
+    out["segments"] = seg
+    out["labels_array"] = labels
+    return out
+
+
+def run_depth_align(run_id: str, order_column: str, p: dict[str, Any]) -> dict[str, Any]:
+    cols = list(dict.fromkeys([order_column, p["feature_column"], *p["position_columns"]]))
+    M, sids, _ = load_explore_feature_matrix(run_id, cols)
+    col = {n: M[:, i] for i, n in enumerate(cols)}
+    z = col[order_column]
+    pos = np.column_stack([col[c] for c in p["position_columns"]])
+    ok = np.isfinite(z) & np.all(np.isfinite(pos), axis=1)
+    if not ok.any():
+        raise ValueError("order / position columns have no finite values")
+    res = compute_depth_alignment(z[ok], pos[ok], col[p["feature_column"]][ok], p)
+    z_al = res.pop("z_aligned")
+    res["spectrum_ids"] = [s for s, k in zip(sids, ok) if k]
+    res["z_original"] = z[ok]
+    res["z_aligned"] = z_al
+    res["order_column"] = order_column
+    return res
+
+
+def run_depth_segments(run_id: str, req: dict[str, Any]) -> dict[str, Any]:
+    feats = list(req["feature_columns"])
+    ocol = req["order_column"]
+    poscols = list(req["position_columns"]) if (req.get("align") or req.get("per_position_check")) else []
+    extra = [req["align"]["feature_column"]] if req.get("align") else []
+    uniq = list(dict.fromkeys([ocol, *poscols, *extra, *feats]))
+    M, sids, _ = load_explore_feature_matrix(run_id, uniq)
+    col = {n: M[:, i] for i, n in enumerate(uniq)}
+    z = col[ocol]
+    pos = np.column_stack([col[c] for c in poscols]) if poscols else None
+    ok = np.isfinite(z)
+    if pos is not None:
+        ok &= np.all(np.isfinite(pos), axis=1)
+    alignment = None
+    if req.get("align"):
+        ap = dict(req["align"])
+        alignment = compute_depth_alignment(z[ok], pos[ok], col[ap["feature_column"]][ok], ap)
+        z_use = np.full_like(z, np.nan)
+        z_use[ok] = alignment.pop("z_aligned")
+    else:
+        z_use = z
+    Xf = np.column_stack([col[c] for c in feats])
+    ok = ok & np.isfinite(z_use) & np.all(np.isfinite(Xf), axis=1)
+    n_dropped = int((~ok).sum())
+    if ok.sum() < 3:
+        raise ValueError("too few spectra with finite z and features")
+    res = compute_segments(
+        z_use[ok],
+        Xf[ok],
+        method=req["method"],
+        n_segments=req["n_segments"],
+        k_max=req["k_max"],
+        bin_width=req["bin_width"],
+        winsor_pct=req.get("winsor_pct"),
+        robust_clip=req.get("robust_clip"),
+        standardize=req["standardize"],
+        seed=req["seed"],
+        n_init=req["n_init"],
+        pos=pos[ok] if pos is not None else None,
+        per_position_check=bool(req.get("per_position_check")),
+        names=feats,
+    )
+    labels = res.pop("labels_array")
+    names = req.get("zone_names") or []
+    n_lab = int(labels.max()) + 1
+    res["zone_names"] = [names[i] if i < len(names) and names[i] else f"Segment {i + 1}" for i in range(n_lab)]
+    res["spectrum_ids"] = [s for s, k in zip(sids, ok) if k]
+    res["labels"] = [int(v) for v in labels]
+    res["z_used"] = z_use[ok]
+    res["z_original"] = z[ok]
+    res["order_column"] = ocol
+    res["feature_columns"] = feats
+    res["n_dropped_rows"] = n_dropped
+    if alignment is not None:
+        res["alignment"] = alignment
+    return res
+
+
 def save_json(path: str, obj: Any) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:

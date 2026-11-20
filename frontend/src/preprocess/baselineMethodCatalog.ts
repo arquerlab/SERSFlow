@@ -97,6 +97,7 @@ export const fallbackBaselineCatalog: BaselineMethodsResponse = {
     method("interp_pts", "miscellaneous", [], false),
     method("beads", "miscellaneous", [p("freq_cutoff", "number", 0.005, "primary")]),
     method("shirley", "lmfitxps", [p("tol", "number", 1e-5, "primary"), p("maxit", "int", 10, "primary")]),
+    method("shirley_casa", "lmfitxps", [p("av_width", "int", 4, "primary"), p("start_offset_pct", "number", 0, "primary"), p("end_offset_pct", "number", 0, "primary"), p("region_min_x", "number", null, "primary"), p("region_max_x", "number", null, "primary"), p("casa_region_from_labels", "boolean", true, "advanced")]),
     method("tougaard", "lmfitxps", [p("tb", "number", 2866, "primary"), p("tc", "number", 1643, "primary")]),
   ],
 };

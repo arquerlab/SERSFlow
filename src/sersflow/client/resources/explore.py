@@ -6,12 +6,14 @@ from typing import TYPE_CHECKING, Any, Literal
 from sersflow.api.schemas.explore import (
     ClusterRequest,
     CorrelationRequest,
+    DepthAlignRequest,
     ExploreJobResponse,
     FPCADiscreteRequest,
     FPCAFDARequest,
     MatrixExportRequest,
     MatrixExportResponse,
     PCARequest,
+    SegmentsRequest,
     Spectrum2DCOSRequest,
     SpectrumClusterRequest,
     SpectrumCorrelationRequest,
@@ -174,4 +176,12 @@ class ExploreResource(_Base):
 
     def cluster(self, payload: ClusterRequest) -> ExploreJobResponse:
         data = request_json(self._root.http, "POST", "/explore/cluster", json_body=dump_json(payload))
+        return ExploreJobResponse.model_validate(data)
+
+    def depth_align(self, payload: DepthAlignRequest) -> ExploreJobResponse:
+        data = request_json(self._root.http, "POST", "/explore/depth-align", json_body=dump_json(payload))
+        return ExploreJobResponse.model_validate(data)
+
+    def segments(self, payload: SegmentsRequest) -> ExploreJobResponse:
+        data = request_json(self._root.http, "POST", "/explore/segments", json_body=dump_json(payload))
         return ExploreJobResponse.model_validate(data)

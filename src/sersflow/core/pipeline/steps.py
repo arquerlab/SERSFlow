@@ -235,9 +235,37 @@ def _xps_despike(xy: XY, params: dict[str, Any]) -> XY:
     return XY(x=xy.x, y=corrected, var=var, var_kind=xy.var_kind)
 
 
+def _shirley_casa_kwargs(kwargs: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """shirley_casa: fill region / Av Width / offsets from the VAMAS CASA region labels unless given explicitly."""
+    if kwargs.get("casa_region_from_labels"):
+        labels = params.get("_spectrum_labels")
+        labels = labels if isinstance(labels, dict) else {}
+
+        def explicit(key: str) -> bool:
+            return params.get(key) is not None
+
+        for key, lab in (("region_min_x", "casa_region_be_min_eV"), ("region_max_x", "casa_region_be_max_eV")):
+            if not explicit(key) and labels.get(lab) is not None:
+                kwargs[key] = float(labels[lab])
+        if not explicit("start_offset_pct") and labels.get("casa_region_offset_high_pct") is not None:
+            kwargs["start_offset_pct"] = float(labels["casa_region_offset_high_pct"])
+        if not explicit("end_offset_pct") and labels.get("casa_region_offset_low_pct") is not None:
+            kwargs["end_offset_pct"] = float(labels["casa_region_offset_low_pct"])
+        if not explicit("av_width") and labels.get("casa_region_av_width") is not None:
+            kwargs["av_width"] = int(round(float(labels["casa_region_av_width"])))
+    if kwargs.get("region_min_x") is None or kwargs.get("region_max_x") is None:
+        raise ValueError(
+            "shirley_casa needs a region: set region_min_x / region_max_x, or load a VAMAS block with a CASA region "
+            "line (labels casa_region_be_min_eV / casa_region_be_max_eV) and keep casa_region_from_labels on"
+        )
+    return kwargs
+
+
 def _baseline_step_kwargs(method: str, params: dict[str, Any]) -> dict[str, Any]:
     """baseline_kwargs plus the CasaXPS region read from the spectrum labels (casa_region_from_labels)."""
     kwargs = baseline_kwargs(method, params)
+    if method.lower() == "shirley_casa":
+        return _shirley_casa_kwargs(kwargs, params)
     if not kwargs.get("casa_region_from_labels"):
         return kwargs
     labels = params.get("_spectrum_labels")

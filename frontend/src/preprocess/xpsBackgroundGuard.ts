@@ -8,7 +8,7 @@ export function dualXpsBackgroundConflict(steps: Array<{ name: string; enabled?:
     const params = (step.params ?? {}) as Record<string, unknown>;
     if (name === "baseline") {
       const method = String(params.method || "").trim().toLowerCase();
-      if (method === "shirley" || method === "tougaard") staticMethods.add(method);
+      if (method === "shirley" || method === "shirley_casa" || method === "tougaard") staticMethods.add(method);
     } else if (name === "fitting") {
       const comps = params.components;
       if (!Array.isArray(comps)) continue;

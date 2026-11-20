@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-_STATIC_XPS_BASELINE = frozenset({"shirley", "tougaard"})
+_STATIC_XPS_BASELINE = frozenset({"shirley", "shirley_casa", "tougaard"})
 _ACTIVE_XPS_BG = frozenset({"shirley_bg", "tougaard_bg"})
 
 

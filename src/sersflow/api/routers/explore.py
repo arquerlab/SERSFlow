@@ -12,12 +12,14 @@ from fastapi.responses import StreamingResponse
 from sersflow.api.schemas.explore import (
     ClusterRequest,
     CorrelationRequest,
+    DepthAlignRequest,
     ExploreJobResponse,
     FPCADiscreteRequest,
     FPCAFDARequest,
     MatrixExportRequest,
     MatrixExportResponse,
     PCARequest,
+    SegmentsRequest,
     Spectrum2DCOSRequest,
     SpectrumClusterRequest,
     SpectrumCorrelationRequest,
@@ -46,9 +48,12 @@ from sersflow.api.services.explore_plots import write_pca_plots
 from sersflow.api.services.explore_fda import run_fpca_fda
 from sersflow.api.services.explore_stats import (
     correlation_bundle,
+    _jsonable,
     drop_all_nan_columns,
     load_explore_feature_matrix,
     prepare_multivariate_matrix,
+    run_depth_align,
+    run_depth_segments,
     run_fpca_discrete,
     run_kmeans,
     run_kmeans_on_spectrum_matrix,
@@ -712,6 +717,8 @@ _MATRIX_RESULT_FILES = {
     "mcr_als": "mcr_als.json",
     "cos2d": "cos2d.json",
     "fpca_discrete": "fpca_discrete.json",
+    "depth_align": "depth_align.json",
+    "depth_segments": "depth_segments.json",
 }
 
 
@@ -977,3 +984,59 @@ def post_cluster(payload: ClusterRequest, request: Request) -> ExploreJobRespons
     finish_explore_run(explore_id=eid, status="completed", error=None)
     prune_explore_runs(dataset_id=rec.dataset_id)
     return ExploreJobResponse(explore_id=eid, artifact_dir=adir, results=result)
+
+
+def _run_depth_explore(kind: str, prefix: str, filename: str, payload, request: Request, compute) -> ExploreJobResponse:
+    from uuid import uuid4
+
+    user_id = current_user_id(request)
+    rec = get_run_for_user(payload.analysis_run_id, user_id)
+    if rec is None or rec.status != "completed":
+        raise HTTPException(status_code=400, detail="analysis run missing or not completed")
+    try:
+        result = _jsonable(compute())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    subdir = f"explore/{prefix}_{payload.analysis_run_id}"[:100] + f"_{uuid4().hex[:8]}"
+    adir = _artifact_subdir(subdir)
+    os.makedirs(adir, exist_ok=True)
+    save_json(os.path.join(adir, filename), result)
+    eid = create_explore_run(
+        dataset_id=rec.dataset_id,
+        kind=kind,
+        source_analysis_run_id=payload.analysis_run_id,
+        matrix_job_id=None,
+        artifact_subdir=subdir,
+        input_ref=payload.model_dump(),
+    )
+    finish_explore_run(explore_id=eid, status="completed", error=None)
+    prune_explore_runs(dataset_id=rec.dataset_id)
+    return ExploreJobResponse(explore_id=eid, artifact_dir=adir, results=result)
+
+
+@router.post("/depth-align", response_model=ExploreJobResponse)
+def post_depth_align(payload: DepthAlignRequest, request: Request) -> ExploreJobResponse:
+    """Per-position interface edge along an ordered axis and the z shifts relative to a reference position."""
+    params = payload.model_dump(exclude={"analysis_run_id", "order_column"})
+    return _run_depth_explore(
+        "depth_align",
+        "depth_al",
+        "depth_align.json",
+        payload,
+        request,
+        lambda: run_depth_align(payload.analysis_run_id, payload.order_column, params),
+    )
+
+
+@router.post("/segments", response_model=ExploreJobResponse)
+def post_segments(payload: SegmentsRequest, request: Request) -> ExploreJobResponse:
+    """Contiguous (dynamic-programming) segmentation or plain k-means of spectra along an ordered axis."""
+    req = payload.model_dump(exclude={"analysis_run_id"})
+    return _run_depth_explore(
+        "depth_segments",
+        "depth_seg",
+        "depth_segments.json",
+        payload,
+        request,
+        lambda: run_depth_segments(payload.analysis_run_id, req),
+    )

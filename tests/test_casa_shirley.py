@@ -104,3 +104,37 @@ def test_parse_casa_region_and_step_from_labels() -> None:
     assert y[100] - out.y[100] == pytest.approx(_OCP_CASA_BG[100], abs=0.06)
     with pytest.raises(ValueError, match="casa_region_from_labels"):
         _baseline(XY(x=x, y=y), {"method": "shirley", "casa_region_from_labels": True, "_spectrum_labels": {}})
+
+def test_shirley_casa_method_matches_export_with_casa_arguments() -> None:
+    x, y = _ocp_xy()
+    out, _ = correct_baseline(
+        y, method="shirley_casa", x=x, av_width=4, start_offset_pct=6.0, region_min_x=773.6828, region_max_x=793.10244
+    )
+    for i in (3, 100, 196):
+        assert y[i] - out[i] == pytest.approx(_OCP_CASA_BG[i], abs=0.06)
+    assert baseline_kwargs("shirley_casa", {})["casa_region_from_labels"] is True
+
+
+def test_shirley_casa_step_reads_labels_and_explicit_params_win() -> None:
+    x, y = _ocp_xy()
+    labels = {
+        "casa_region_be_min_eV": 773.6828,
+        "casa_region_be_max_eV": 793.10244,
+        "casa_region_av_width": 4,
+        "casa_region_offset_low_pct": 0.0,
+        "casa_region_offset_high_pct": 6.0,
+    }
+    out = _baseline(XY(x=x, y=y), {"method": "shirley_casa", "_spectrum_labels": labels})
+    assert y[196] - out.y[196] == pytest.approx(_OCP_CASA_BG[196], abs=0.06)
+    # an explicit start offset overrides the label
+    out2 = _baseline(XY(x=x, y=y), {"method": "shirley_casa", "start_offset_pct": 0.0, "_spectrum_labels": labels})
+    assert abs((y[196] - out2.y[196]) - _OCP_CASA_BG[196]) > 1.0
+    with pytest.raises(ValueError, match="needs a region"):
+        _baseline(XY(x=x, y=y), {"method": "shirley_casa", "_spectrum_labels": {}})
+
+
+def test_shirley_casa_counts_as_static_xps_baseline() -> None:
+    from sersflow.core.pipeline.xps_background_guard import _STATIC_XPS_BASELINE
+
+    assert "shirley_casa" in _STATIC_XPS_BASELINE
+

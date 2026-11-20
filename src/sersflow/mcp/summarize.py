@@ -246,3 +246,32 @@ def upload_list_item(item: Any) -> dict[str, Any]:
         "xps_regions": d.get("xps_regions"),
         "spectrum_count": d.get("spectrum_count"),
     }
+
+
+def depth_result(resp: Any) -> dict[str, Any]:
+    """Compact depth-align / segments summary: boundaries, cost curves, segment table, alignment shifts."""
+    d = _dump(resp)
+    r = d.get("results") or {}
+    keep = (
+        "method", "n_segments", "n_rows", "n_bins", "n_dropped_rows", "order_column", "feature_columns",
+        "cuts", "cuts_by_k", "cost_by_k", "silhouette_by_k", "inertia", "contiguity", "zone_names", "segments",
+        "reference", "reference_edge_z", "n_positions", "n_positions_without_edge",
+        "shift_min", "shift_max", "shift_mean", "shift_std",
+    )
+    out: dict[str, Any] = {"ok": True, "explore_id": d.get("explore_id")}
+    out.update({k: r[k] for k in keep if k in r})
+    al = r.get("alignment")
+    if isinstance(al, dict):
+        out["alignment"] = {k: v for k, v in al.items() if k not in ("positions",)}
+    if "positions" in r:
+        out["positions"] = r["positions"]
+    if "per_position_cuts" in r:
+        cuts = [c["cuts"] for c in r["per_position_cuts"] if c.get("cuts")]
+        if cuts:
+            import numpy as _np
+
+            a = _np.asarray(cuts, dtype=float)
+            out["per_position_cut_mean"] = a.mean(0).round(2).tolist()
+            out["per_position_cut_std"] = a.std(0, ddof=1).round(2).tolist() if len(a) > 1 else None
+    out["note"] = "Per-spectrum labels / z are in the explore run result (get_explore_runs_result)."
+    return out

@@ -39,6 +39,7 @@ import {
 import { buildClusterOnScoresScatter, buildClusterSizesBar } from "./analyze/clusterPlots";
 import { ParamPlotEditor } from "./analyze/ParamPlotEditor";
 import { VolumePanel } from "./analyze/VolumePanel";
+import { SegmentsPanel } from "./analyze/SegmentsPanel";
 import {
   buildParamPlot,
   cellToNumber,
@@ -98,6 +99,7 @@ type AnalyzeSection =
   | "exports"
   | "correlation"
   | "pca_cluster"
+  | "segments"
   | "heatmaps"
   | "meta_plot"
   | "spectrum_matrix"
@@ -108,6 +110,7 @@ const SECTIONS: { id: AnalyzeSection; label: string }[] = [
   { id: "exports", label: "Exports" },
   { id: "correlation", label: "Correlation / VIF" },
   { id: "pca_cluster", label: "PCA / Cluster" },
+  { id: "segments", label: "Clustering / Segmentation" },
   { id: "heatmaps", label: "Heatmaps" },
   { id: "meta_plot", label: "Plots" },
   { id: "spectrum_matrix", label: "Spectrum matrix" },
@@ -3143,6 +3146,16 @@ export default function AnalyzeWorkspace() {
               </>
             )}
           </div>
+        ) : null}
+
+        {section === "segments" ? (
+          emptyRun || selectedRun?.status !== "completed" ? (
+            <div style={{ marginTop: "14px" }}>
+              <AnalysisRunGateNotice runId={runId} selectedRun={selectedRun} />
+            </div>
+          ) : (
+            <SegmentsPanel runId={runId} featureColumns={featureColumns} axisColumns={schemaQ.data?.axis_keys ?? []} />
+          )
         ) : null}
 
         {section === "heatmaps" ? (
