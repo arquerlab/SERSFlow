@@ -70,6 +70,8 @@ class PipelineRunRequest(BaseModel):
     return_: PipelineReturnSpec = Field(default_factory=ReturnMetricsOnly, alias="return")
     up_to_step: str | None = None
     cache_namespace: str | None = None
+    # Session whose dataset resolves reference_transform reference spectra (inputs alone cannot).
+    session_id: str | None = None
 
 
 class MetricValue(BaseModel):

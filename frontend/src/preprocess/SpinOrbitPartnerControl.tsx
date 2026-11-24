@@ -26,6 +26,14 @@ export function SpinOrbitPartnerControl({ fp, componentId, fittingCatalog, onApp
   const valid = Number.isFinite(split) && split > 0 && (ratio == null || (Number.isFinite(ratio) && ratio > 0));
 
   async function add() {
+    if (!valid) {
+      setMsg(
+        !(Number.isFinite(split) && split > 0)
+          ? "Enter the splitting in eV first (binding energy of the partner minus this peak, e.g. 15.0 for Co 2p)."
+          : "FWHM ratio must be a positive number (or empty)."
+      );
+      return;
+    }
     setBusy(true);
     setMsg(null);
     try {
@@ -92,7 +100,7 @@ export function SpinOrbitPartnerControl({ fp, componentId, fittingCatalog, onApp
           <input type="checkbox" checked={lockArea} onChange={(e) => setLockArea(e.target.checked)} />
           Lock area ratio
         </label>
-        <button type="button" className="mini" disabled={!valid || busy} onClick={() => void add()}>
+        <button type="button" className="mini" disabled={busy} onClick={() => void add()}>
           {busy ? "Adding…" : "Add partner"}
         </button>
         {msg ? <div className="hint">{msg}</div> : null}

@@ -7,7 +7,14 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Request
 
 from sersflow.api.deps import current_user_id
-from sersflow.api.services.ownership import OwnershipError, assert_inputs_owner, paths_from_pipeline_inputs
+from sersflow.api.services.ownership import (
+    OwnershipError,
+    assert_inputs_owner,
+    get_dataset_for_user,
+    get_session_for_user,
+    paths_from_pipeline_inputs,
+)
+from sersflow.api.services.reference_runtime import hydrate_reference_transforms
 from sersflow.api.services.technique_guard import prepare_pipeline_for_run
 from sersflow.core.io.technique import assert_homogeneous_technique_families
 from sersflow.core.io.upload_registry import upload_root
@@ -68,6 +75,15 @@ def run_pipeline_endpoint(payload: PipelineRunRequest, request: Request) -> dict
             allow_empty_align=input_family is None,
         )
         cfg = EngineConfig(cache_namespace=payload.cache_namespace or "default")
+        if any(s.enabled and s.name == "reference_transform" for s in pipeline.steps):
+            rec = get_session_for_user(payload.session_id, user_id) if payload.session_id else None
+            ds = get_dataset_for_user(rec.dataset_id, user_id) if rec is not None else None
+            if ds is None:
+                raise ValueError(
+                    "reference_transform needs the session's dataset to resolve its reference spectrum "
+                    "(pass session_id)"
+                )
+            pipeline = hydrate_reference_transforms(pipeline, ds, cache_namespace=cfg.cache_namespace)
         final = run_pipeline(
             inputs=payload.inputs,
             pipeline=pipeline,

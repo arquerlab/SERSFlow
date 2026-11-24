@@ -331,7 +331,7 @@ export function previewSessionQc(sessionId: string, payload: SessionQcPreviewReq
   });
 }
 
-export type PipelineRunRequest = { inputs: SpectrumRef[]; pipeline: Pipeline; return: { kind: "final" } | { kind: "metrics_only"; metrics: string[] }; up_to_step?: string | null; cache_namespace?: string | null };
+export type PipelineRunRequest = { inputs: SpectrumRef[]; pipeline: Pipeline; return: { kind: "final" } | { kind: "metrics_only"; metrics: string[] }; up_to_step?: string | null; cache_namespace?: string | null; session_id?: string | null };
 export type PipelineRunFinalResponse = { items: SpectrumSeries[] };
 
 export function runPipeline(payload: PipelineRunRequest, init?: RequestInit) {

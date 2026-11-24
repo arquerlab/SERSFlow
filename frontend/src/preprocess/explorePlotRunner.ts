@@ -350,8 +350,8 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
       let baseOut: Awaited<ReturnType<typeof runPipeline>>;
       try {
         [rawIn, baseOut] = await Promise.all([
-          runPipeline({ inputs, pipeline: pipelineToInput, return: { kind: "final" }, cache_namespace: sessionId }, { signal }),
-          runPipeline({ inputs, pipeline: pipelineToBaselineCurve, return: { kind: "final" }, cache_namespace: sessionId }, { signal }),
+          runPipeline({ inputs, pipeline: pipelineToInput, return: { kind: "final" }, cache_namespace: sessionId, session_id: sessionId }, { signal }),
+          runPipeline({ inputs, pipeline: pipelineToBaselineCurve, return: { kind: "final" }, cache_namespace: sessionId, session_id: sessionId }, { signal }),
         ]);
       } catch (err) {
         throw err;
@@ -482,7 +482,7 @@ export async function runExplorePlot(deps: ExplorePlotRunnerDeps): Promise<void>
           inputs,
           pipeline: pipelineToInput,
           return: { kind: "final" },
-          cache_namespace: sessionId,
+          cache_namespace: sessionId, session_id: sessionId,
         },
         { signal }
       );
